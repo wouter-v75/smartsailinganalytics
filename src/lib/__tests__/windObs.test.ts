@@ -4,6 +4,7 @@ import {
   parseMfCsv, parseMfMarine, parseMfStationList, latestPerStation, isoFromMf,
   parseNdbc, parseNdbcStations, ndbcIsBuoy,
   parseNdbcHistory, toObsPoints, withinHours, parsePioupiou,
+  parseWeatherLinkStations, parseWeatherLinkCurrent,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -567,5 +568,93 @@ describe('parsePioupiou', () => {
     expect(parsePioupiou({ data: [null, 'x', 7] })).toHaveLength(0)
     const noWind = { data: [{ ...PIOU_LIVE.data[0], measurements: { date: '2026-10-22T15:25:56.000Z' } }] }
     expect(parsePioupiou(noWind)).toHaveLength(0)
+  })
+})
+
+// ── Davis WeatherLink ───────────────────────────────────────────────────────
+// Shapes from the v2 docs; NOT captured off the wire, because this needs an
+// account key and there is none yet. scripts/weatherlink-probe.ts replaces
+// these with a real payload the day a club shares a station — the same way the
+// Météo-France fixtures were pinned.
+const WL_STATIONS = {
+  stations: [
+    { station_id: 12345, station_name: 'Royal Yacht Squadron', latitude: 50.7606, longitude: -1.2978, elevation: 12 },
+    { station_id: 999, station_name: 'No anemometer here', latitude: 50.8, longitude: -1.3 },
+  ],
+}
+
+const WL_CURRENT = {
+  station_id: 12345,
+  sensors: [
+    { lsid: 1, sensor_type: 43, data_structure_type: 23, data: [{
+      ts: 1792658940, wind_speed_avg_last_10_min: 14.0,
+      wind_dir_scalar_avg_last_10_min: 230, wind_speed_hi_last_10_min: 21.0,
+    }] },
+    // A second sensor with no wind at all — most Davis kit is temp and rain.
+    { lsid: 2, sensor_type: 242, data_structure_type: 12, data: [{ ts: 1792658940, bar_sea_level: 29.9 }] },
+  ],
+}
+
+describe('parseWeatherLinkStations', () => {
+  it('keys the positions by station_id, as a string', () => {
+    const m = parseWeatherLinkStations(WL_STATIONS)
+    expect(m.get('12345')).toMatchObject({ name: 'Royal Yacht Squadron', lat: 50.7606, lon: -1.2978 })
+    expect(m.size).toBe(2)
+  })
+  it('survives junk', () => {
+    expect(parseWeatherLinkStations(null).size).toBe(0)
+    expect(parseWeatherLinkStations({ stations: [null, 7] }).size).toBe(0)
+  })
+})
+
+describe('parseWeatherLinkCurrent', () => {
+  const stations = parseWeatherLinkStations(WL_STATIONS)
+
+  it('reads the wind sensor and ignores the barometer beside it', () => {
+    const o = parseWeatherLinkCurrent(WL_CURRENT, stations)!
+    expect(o).toMatchObject({ id: 'wl:12345', source: 'pws', name: 'Royal Yacht Squadron', twdDeg: 230 })
+    expect(o.twsKn).toBeCloseTo(14.0 * 0.868976, 6)      // 12.2 kn, mph assumed
+    expect(o.gustKn!).toBeCloseTo(21.0 * 0.868976, 6)
+    expect(o.t).toBe('2026-10-22T08:49:00.000Z')
+  })
+
+  it('is the LOWEST-trust tier, whatever the instrument costs', () => {
+    // A Davis Vantage is a good anemometer on an unknown mast in an unknown
+    // garden. The violet tier is about siting, not about hardware.
+    const o = parseWeatherLinkCurrent(WL_CURRENT, stations)!
+    expect(o.source).toBe('pws')
+    expect(o.trust).toBe(OBS_SOURCES.pws.trust)
+    expect(o.trust).toBeLessThan(OBS_SOURCES.beacon.trust)
+    expect(o.heightM).toBeNull()
+    expect(obs10mKn(o)).toBeNull()
+  })
+
+  it('reads an older Vantage console, whose field names are shorter', () => {
+    // A station answering with the other generation's names would otherwise
+    // simply vanish from the map, with nothing to say why.
+    const vantage = { station_id: 12345, sensors: [{ data: [{ ts: 1792658940, wind_speed_avg: 10, wind_dir_of_prevail: 180, wind_speed_hi: 15 }] }] }
+    const o = parseWeatherLinkCurrent(vantage, stations)!
+    expect(o.twsKn).toBeCloseTo(10 * 0.868976, 6)
+    expect(o.twdDeg).toBe(180)
+  })
+
+  it('keeps the most recent sensor when two report wind', () => {
+    const two = { station_id: 12345, sensors: [
+      { data: [{ ts: 1792658000, wind_speed_avg: 5, wind_dir_last: 10 }] },
+      { data: [{ ts: 1792658940, wind_speed_avg: 9, wind_dir_last: 200 }] },
+    ] }
+    expect(parseWeatherLinkCurrent(two, stations)!.twdDeg).toBe(200)
+  })
+
+  it('returns null for a station with no anemometer, rather than a calm one', () => {
+    // Most Davis kit is temperature and rain. Drawing those as 0 kn would put
+    // a field of fake calms across the map.
+    const none = { station_id: 999, sensors: [{ data: [{ ts: 1792658940, temp: 55 }] }] }
+    expect(parseWeatherLinkCurrent(none, stations)).toBeNull()
+  })
+
+  it('returns null when the station is not in the list, so it has no position', () => {
+    expect(parseWeatherLinkCurrent({ station_id: 777, sensors: WL_CURRENT.sensors }, stations)).toBeNull()
+    expect(parseWeatherLinkCurrent(null, stations)).toBeNull()
   })
 })

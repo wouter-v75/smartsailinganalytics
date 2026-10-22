@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 import {
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
-  parseNdbc, parseNdbcStations, parsePioupiou, latestPerStation, withinNm, type WindObs,
+  parseNdbc, parseNdbcStations, parsePioupiou,
+  parseWeatherLinkStations, parseWeatherLinkCurrent,
+  latestPerStation, withinNm, type WindObs,
 } from '@/lib/windObs'
 
 // GET /api/obs?lat=43.275&lon=6.678&nm=40
@@ -194,6 +196,50 @@ async function pioupiouAround(): Promise<WindObs[]> {
   return parsePioupiou(await res.json())
 }
 
+// Davis WeatherLink — privately owned stations: clubs, race offices, coastal
+// houses. The violet `pws` tier, and the one part of PredictWind's network that
+// is copyable: theirs is fed by owners switching on this same integration.
+//
+// SCOPE: a key sees only what that ACCOUNT can see — stations it owns, ones
+// shared with it, or public ones it paid to upgrade. Per-partner, not global.
+// Absent entirely until both env vars are set.
+//
+// AUTH: api-key in the QUERY STRING, secret in the X-Api-Secret HEADER. Put the
+// secret anywhere else and it falls onto a legacy signed path that 401s about a
+// timestamp, which looks like a clock problem and is not one.
+const WL_BASE = 'https://api.weatherlink.com/v2'
+const WL_MAX_STATIONS = 25
+
+async function wlFetch(path: string, key: string, secret: string, revalidate: number) {
+  const sep = path.includes('?') ? '&' : '?'
+  return fetch(`${WL_BASE}${path}${sep}api-key=${encodeURIComponent(key)}`, {
+    headers: { 'X-Api-Secret': secret, 'User-Agent': UA },
+    next: { revalidate },
+  })
+}
+
+async function weatherlinkAround(): Promise<WindObs[]> {
+  const key = process.env.WEATHERLINK_API_KEY
+  const secret = process.env.WEATHERLINK_API_SECRET
+  if (!key || !secret) return []
+
+  const sRes = await wlFetch('/stations', key, secret, 86400)   // moves when a station is added
+  if (!sRes.ok) throw new Error(`weatherlink stations ${sRes.status}`)
+  const stations = parseWeatherLinkStations(await sRes.json())
+  const ids = Array.from(stations.keys()).slice(0, WL_MAX_STATIONS)
+  if (!ids.length) return []
+
+  // One call per station, which is fine precisely because the scope is small.
+  const settled = await Promise.allSettled(ids.map(async (id) => {
+    const r = await wlFetch(`/current/${encodeURIComponent(id)}`, key, secret, CACHE_S)
+    if (!r.ok) throw new Error(`weatherlink current ${id} ${r.status}`)
+    return parseWeatherLinkCurrent(await r.json(), stations)
+  }))
+  // A station with no anemometer returns null rather than failing — most Davis
+  // kit is temperature and rain, and that is not an observation here.
+  return settled.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []))
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireActiveUser()
   if (!gate.ok) return gate.response
@@ -211,6 +257,7 @@ export async function GET(req: NextRequest) {
     ['mf-marine', mfMarineAround()],
     ['ndbc', ndbcAround()],
     ['pioupiou', pioupiouAround()],
+    ['weatherlink', weatherlinkAround()],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
 

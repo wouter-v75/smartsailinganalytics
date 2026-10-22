@@ -690,6 +690,128 @@ export function parsePioupiou(payload: unknown): WindObs[] {
   return out
 }
 
+// ── Davis WeatherLink ───────────────────────────────────────────────────────
+// api.weatherlink.com/v2 — privately owned Davis stations: clubs, race offices,
+// coastal houses. THIS IS THE VIOLET `pws` TIER: the siting is unknown and
+// usually imperfect, so it is drawn and weighted as an amateur station however
+// good the instrument is.
+//
+// WHY IT IS WORTH THE TROUBLE. This is the one part of PredictWind's network
+// that is copyable. Their observations map is fed by owners enabling the Davis
+// WeatherLink integration and emailing their station to support — no licensed
+// feed involved. Davis is what yacht clubs, race committees and coastal houses
+// actually own, which is exactly where our gaps are (the Solent, Italy).
+//
+// SCOPE, which is the thing to understand before expecting much: a key sees
+// only the stations that ACCOUNT can see — ones it owns, ones shared with it,
+// or public ones it has paid to upgrade. It is a per-partner integration, not a
+// global network. One club sharing its station is one more barb on the map.
+//
+// AUTH: `api-key` as a QUERY PARAMETER and `X-Api-Secret` as a HEADER. Sending
+// the secret anywhere but a header drops the request onto a legacy signed path
+// and answers 401 complaining about a timestamp — which reads like a clock
+// problem and is not one.
+//
+// UNITS ARE NOT VERIFIED. Davis hardware is natively mph and the v2 API serves
+// US units, so that is the assumption, but no page in their docs states it and
+// there is no key here to check with. mph read as knots is only 1.15x — small
+// enough to look plausible all season, which is precisely how a unit error
+// survives. scripts/weatherlink-probe.ts prints the raw number against all
+// three readings so the first real key settles it.
+
+/** Davis serves US units: mph. UNVERIFIED — see the probe. */
+const MPH_TO_KN = 0.868976
+
+// Field names differ by station generation, and a station that answers with the
+// wrong generation's names simply vanishes. Vantage consoles use the short
+// forms; a WeatherLink Live ISS uses the _last_10_min ones.
+const WL_KEYS = {
+  speed: ['wind_speed_avg_last_10_min', 'wind_speed_avg', 'wind_speed_last'],
+  dir: ['wind_dir_scalar_avg_last_10_min', 'wind_dir_of_prevail', 'wind_dir_last', 'wind_dir'],
+  gust: ['wind_speed_hi_last_10_min', 'wind_speed_hi', 'wind_gust_10_min'],
+} as const
+
+export interface WlStation { id: string; name?: string; lat?: number; lon?: number; elevM?: number }
+
+/** `/v2/stations` → the positions and names, which the readings do not carry. */
+export function parseWeatherLinkStations(payload: unknown): Map<string, WlStation> {
+  const out = new Map<string, WlStation>()
+  const rows = (payload && typeof payload === 'object' && Array.isArray((payload as { stations?: unknown }).stations))
+    ? (payload as { stations: unknown[] }).stations : []
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    const id = o.station_id != null ? String(o.station_id) : null
+    if (!id) continue
+    out.set(id, {
+      id,
+      name: typeof o.station_name === 'string' ? o.station_name : undefined,
+      lat: num(o.latitude) ?? undefined,
+      lon: num(o.longitude) ?? undefined,
+      // `elevation` is feet in US units; left alone rather than converted on a
+      // guess, since nothing downstream uses it for arithmetic.
+      elevM: undefined,
+    })
+  }
+  return out
+}
+
+/**
+ * `/v2/current/{station_id}` → a WindObs, or null when that station has no
+ * anemometer. Many Davis stations are temperature-and-rain only, and a station
+ * with no wind is not an observation.
+ */
+export function parseWeatherLinkCurrent(payload: unknown, stations: Map<string, WlStation>): WindObs | null {
+  if (!payload || typeof payload !== 'object') return null
+  const o = payload as Record<string, unknown>
+  const id = o.station_id != null ? String(o.station_id) : null
+  if (!id) return null
+  const meta = stations.get(id)
+  if (!meta || meta.lat == null || meta.lon == null) return null   // nowhere to draw it
+
+  const sensors = Array.isArray(o.sensors) ? o.sensors : []
+  let best: { mph: number; dir: number | null; gust: number | null; ts: number } | null = null
+  for (const sRaw of sensors) {
+    if (!sRaw || typeof sRaw !== 'object') continue
+    const data = Array.isArray((sRaw as { data?: unknown }).data) ? (sRaw as { data: unknown[] }).data : []
+    for (const dRaw of data) {
+      if (!dRaw || typeof dRaw !== 'object') continue
+      const d = dRaw as Record<string, unknown>
+      const mph = pickNum(d, WL_KEYS.speed)
+      const ts = num(d.ts)
+      if (mph == null || ts == null) continue
+      // Several sensors can report wind; keep the most recent.
+      if (!best || ts > best.ts) {
+        best = { mph, dir: pickNum(d, WL_KEYS.dir), gust: pickNum(d, WL_KEYS.gust), ts }
+      }
+    }
+  }
+  if (!best) return null
+
+  const twsKn = best.mph * MPH_TO_KN
+  if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) return null
+  const gustKn = best.gust == null ? null : best.gust * MPH_TO_KN
+
+  return {
+    id: `wl:${id}`,
+    source: 'pws',
+    name: meta.name || `Davis ${id}`,
+    lat: meta.lat, lon: meta.lon,
+    // Davis stations are mounted wherever the owner could mount them. The API
+    // does not publish the anemometer height and a guess would be worse than
+    // none, so the reading stands as measured — which is also why this tier is
+    // weighted lowest.
+    heightM: null,
+    elevM: null,
+    surface: 'land',
+    twsKn,
+    twdDeg: best.mph === 0 || best.dir == null ? null : normDeg(best.dir),
+    gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+    t: new Date(best.ts * 1000).toISOString(),
+    trust: OBS_SOURCES.pws.trust,
+  }
+}
+
 /** Nearest-first, and never show a station from the next sea. */
 export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): WindObs[] {
   const cos = Math.cos((lat * Math.PI) / 180)
