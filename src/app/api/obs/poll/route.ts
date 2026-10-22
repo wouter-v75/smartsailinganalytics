@@ -42,7 +42,7 @@ function authorised(req: NextRequest): boolean {
 
 async function run(req: NextRequest) {
   if (!authorised(req)) {
-    return NextResponse.json({ error: 'not authorised' }, { status: 401 })
+    return NextResponse.json({ error: 'not authorised' }, { status: 401, headers: { 'Cache-Control': 'no-store' } })
   }
 
   const onlyRaw = (req.nextUrl.searchParams.get('only') || '').split(',').map((s) => s.trim()).filter(Boolean)
@@ -73,6 +73,11 @@ async function run(req: NextRequest) {
     .delete({ count: 'exact' }).lt('t', cutoff)
   if (!delErr) pruned = count ?? 0
 
+  // no-store, explicitly. The default for this route was
+  // `public, max-age=0, must-revalidate`, which does execute every time — but
+  // `public` on an endpoint that WRITES is looser than it should be, and a
+  // cached poll response would mean the cron quietly stops polling while
+  // every check still returns a cheerful ok.
   return NextResponse.json({
     ok: true,
     stored,
@@ -80,7 +85,7 @@ async function run(req: NextRequest) {
     retainDays: RETAIN_DAYS,
     results,
     at: new Date().toISOString(),
-  })
+  }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 export const GET = run
