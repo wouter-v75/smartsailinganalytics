@@ -430,6 +430,116 @@ export function parseMfStationList(csv: string): Map<string, { name?: string; la
   return out
 }
 
+// ── NDBC: US buoys and coastal stations ─────────────────────────────────────
+// www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt — KEYLESS, one bulk file,
+// ~865 stations, ~100 KB. The US counterpart of the Météo-France buoy feed and
+// the thing that makes the American venues usable: measured 22 Oct 2026, the
+// LA28 course area off San Pedro has EIGHT wind-reporting stations inside 25 nm
+// (the nearest 1.5 nm), and the San Juan Islands have seven inside 25 nm.
+//
+// Whitespace-separated, two `#` header lines, and `MM` wherever a value is
+// missing. Columns:
+//   STN LAT LON YYYY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD PRES PTDY
+//   ATMP WTMP DEWP VIS TIDE
+// WSPD and GST are m/s, WDIR degrees true, the stamp is UTC.
+//
+// TWO THINGS THE FEED GETS WRONG IF READ NAIVELY:
+//
+//  1. **Most rows have no wind.** Waverider and water-quality stations are in
+//     the same file with `MM` in every wind column — 14 stations within 25 nm of
+//     San Pedro, only 8 of them with an anemometer. A row with no WSPD is not an
+//     observation and is dropped.
+//  2. **Not everything in it floats.** A numeric id like 46088 is a moored buoy;
+//     FRDW1 and AGXC1 are fixed structures — a tide gauge on a pier, a light on
+//     a breakwater. Calling those "buoy" would claim trust 9 and a sea-level
+//     elevation for an instrument bolted to a lighthouse. The station table's
+//     TTYPE settles it, and without metadata the id shape is the fallback.
+
+/** NDBC marks every missing value `MM`, in any column. */
+const ndbcNum = (v: string | undefined): number | null => {
+  if (!v || v === 'MM') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * station_table.txt: `STATION_ID|OWNER|TTYPE|HULL|NAME|…`, pipe-separated.
+ * Ids are LOWERCASE in this file and uppercase in the observations, which is a
+ * silent way to join nothing at all.
+ */
+export function parseNdbcStations(text: string): Map<string, { name?: string; ttype?: string }> {
+  const out = new Map<string, { name?: string; ttype?: string }>()
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim() || line.startsWith('#')) continue
+    const p = line.split('|')
+    if (p.length < 5) continue
+    const id = p[0].trim().toLowerCase()
+    if (!id) continue
+    out.set(id, { ttype: p[2].trim() || undefined, name: p[4].trim() || undefined })
+  }
+  return out
+}
+
+/**
+ * Is this thing floating? TTYPE is authoritative where we have it — "Buoy",
+ * "Moored Buoy", "3-meter discus buoy" all float; "C-MAN Station", "Water Level
+ * Observation Network", "Oil Platform" do not. Falling back to the id shape:
+ * NDBC numbers its buoys (46088) and letters its fixed stations (SISW1).
+ */
+export function ndbcIsBuoy(id: string, ttype?: string): boolean {
+  if (ttype) return /buoy/i.test(ttype)
+  return /^\d+$/.test(id)
+}
+
+export function parseNdbc(
+  text: string,
+  meta: Map<string, { name?: string; ttype?: string }> = new Map(),
+): WindObs[] {
+  const out: WindObs[] = []
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim() || line.startsWith('#')) continue
+    const f = line.trim().split(/\s+/)
+    if (f.length < 11) continue
+    const [stn, latS, lonS, yS, moS, dS, hS, miS, wdirS, wspdS, gstS] = f
+    const lat = ndbcNum(latS); const lon = ndbcNum(lonS); const wspd = ndbcNum(wspdS)
+    if (lat == null || lon == null || wspd == null) continue   // no anemometer = not an observation
+
+    const y = ndbcNum(yS); const mo = ndbcNum(moS); const d = ndbcNum(dS)
+    const h = ndbcNum(hS); const mi = ndbcNum(miS)
+    if (y == null || mo == null || d == null || h == null || mi == null) continue
+    const t = new Date(Date.UTC(y, mo - 1, d, h, mi)).toISOString()
+
+    const m = meta.get(stn.toLowerCase()) || {}
+    const buoy = ndbcIsBuoy(stn, m.ttype)
+    const kind: ObsSourceKey = buoy ? 'buoy' : 'synop'
+    const dir = ndbcNum(wdirS)
+    const gst = ndbcNum(gstS)
+    const twsKn = wspd * MS_TO_KN
+    if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
+    const gustKn = gst == null ? null : gst * MS_TO_KN
+
+    out.push({
+      id: `ndbc:${stn}`,
+      source: kind,
+      name: m.name || stn,
+      lat, lon,
+      // NDBC does not put anemometer height in either file, and it genuinely
+      // varies — ~4 m on a discus buoy, 10-30 m on a lighthouse. Guessing is
+      // worse than not correcting, so to10m refuses and the number shows as
+      // measured. Same contract as the Météo-France buoys.
+      heightM: null,
+      elevM: buoy ? 0 : null,          // a buoy floats; a C-MAN sits on something
+      surface: buoy ? 'sea' : 'land',
+      twsKn,
+      twdDeg: wspd === 0 || dir == null ? null : normDeg(dir),
+      gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+      t,
+      trust: OBS_SOURCES[kind].trust,
+    })
+  }
+  return out
+}
+
 /** Nearest-first, and never show a station from the next sea. */
 export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): WindObs[] {
   const cos = Math.cos((lat * Math.PI) / 180)

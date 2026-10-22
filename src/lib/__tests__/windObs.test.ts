@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   parseMetar, parseFfvl, isoFromFfvl, to10m, obs10mKn, ageMinutes, isStale, withinNm, OBS_SOURCES,
   parseMfCsv, parseMfMarine, parseMfStationList, latestPerStation, isoFromMf,
+  parseNdbc, parseNdbcStations, ndbcIsBuoy,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -315,5 +316,121 @@ describe('parseMfStationList', () => {
     expect(parseMfStationList('').size).toBe(0)
     expect(parseMfStationList('nothing;useful\n1;2\n').size).toBe(0)
     expect(parseMfStationList(null as never).size).toBe(0)
+  })
+})
+
+// ── NDBC ────────────────────────────────────────────────────────────────────
+// Captured live from www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt on
+// 2026-10-22. Verbatim, including 46222 — a Waverider in San Pedro Bay with MM
+// in every wind column, which is most of what is in this file.
+const NDBC_LIVE = [
+  '#STN       LAT      LON  YYYY MM DD hh mm WDIR WSPD   GST WVHT  DPD APD MWD   PRES  PTDY  ATMP  WTMP  DEWP  VIS   TIDE',
+  '#text      deg      deg   yr mo day hr mn degT  m/s   m/s   m   sec sec degT   hPa   hPa  degC  degC  degC  nmi     ft',
+  '46088    48.332 -123.179 2026 10 22 08 50 260   6.0   8.0  0.6   4  3.2 242 1012.8    MM  10.6    MM   9.7   MM     MM',
+  '46222    33.614 -118.314 2026 10 22 08 56  MM    MM    MM  1.5  12  6.0 254     MM    MM    MM  22.8    MM   MM     MM',
+  'FRDW1    48.545 -123.012 2026 10 22 08 36  MM   0.0   1.0   MM  MM   MM  MM 1013.3    MM   7.9    MM    MM   MM     MM',
+  'SISW1    48.321 -122.831 2026 10 22 08 50 270   7.2   8.8   MM  MM   MM  MM 1012.5    MM  10.7    MM   9.7   MM     MM',
+].join('\n')
+
+const NDBC_STATIONS_LIVE = [
+  '# STATION_ID | OWNER | TTYPE | HULL | NAME | PAYLOAD | LOCATION | TIMEZONE | FORECAST | NOTE',
+  '#',
+  '46088|N|3-meter discus buoy w/ seal cage|3D02|NEW DUNGENESS - 17 NM NE of Port Angeles, WA',
+  '46222|R|Waverider Buoy||San Pedro, CA (092)',
+  'frdw1|O|Water Level Observation Network||9449880 - Friday Harbor, WA',
+  'sisw1|N|C-MAN Station||Smith Island, WA',
+].join('\n')
+
+describe('parseNdbcStations', () => {
+  it('reads the pipe table and lowercases the id', () => {
+    // The observations say SISW1 and the table says sisw1. Join on the raw case
+    // and every station silently loses its name and its type.
+    const m = parseNdbcStations(NDBC_STATIONS_LIVE)
+    expect(m.get('sisw1')).toEqual({ ttype: 'C-MAN Station', name: 'Smith Island, WA' })
+    expect(m.get('46088')!.ttype).toBe('3-meter discus buoy w/ seal cage')
+    expect(m.get('SISW1')).toBeUndefined()
+  })
+})
+
+describe('ndbcIsBuoy', () => {
+  it('believes TTYPE where there is one', () => {
+    expect(ndbcIsBuoy('46088', '3-meter discus buoy w/ seal cage')).toBe(true)
+    expect(ndbcIsBuoy('46222', 'Waverider Buoy')).toBe(true)
+    expect(ndbcIsBuoy('SISW1', 'C-MAN Station')).toBe(false)
+    // A tide gauge on a pier is not floating, whatever its neighbours are.
+    expect(ndbcIsBuoy('FRDW1', 'Water Level Observation Network')).toBe(false)
+    expect(ndbcIsBuoy('OILP1', 'Oil Platform')).toBe(false)
+  })
+  it('falls back to the id shape with no metadata', () => {
+    expect(ndbcIsBuoy('46088')).toBe(true)
+    expect(ndbcIsBuoy('SISW1')).toBe(false)
+  })
+})
+
+describe('parseNdbc', () => {
+  const meta = parseNdbcStations(NDBC_STATIONS_LIVE)
+
+  it('drops the stations with no anemometer', () => {
+    // 46222 is a Waverider: MM in every wind column. Most of this file is like
+    // that — 14 stations within 25 nm of San Pedro, 8 with wind.
+    const ids = parseNdbc(NDBC_LIVE, meta).map((o) => o.id)
+    expect(ids).not.toContain('ndbc:46222')
+    expect(ids).toEqual(['ndbc:46088', 'ndbc:FRDW1', 'ndbc:SISW1'])
+  })
+
+  it('reads a buoy as floating, in knots, at the stamped UTC minute', () => {
+    const [b] = parseNdbc(NDBC_LIVE, meta)
+    expect(b).toMatchObject({
+      id: 'ndbc:46088', source: 'buoy', surface: 'sea', elevM: 0,
+      lat: 48.332, lon: -123.179, twdDeg: 260,
+      name: 'NEW DUNGENESS - 17 NM NE of Port Angeles, WA',
+    })
+    expect(b.twsKn).toBeCloseTo(6.0 * 1.943844, 6)     // 11.7 kn
+    expect(b.gustKn!).toBeCloseTo(8.0 * 1.943844, 6)
+    expect(b.t).toBe('2026-10-22T08:50:00.000Z')
+    expect(b.trust).toBe(OBS_SOURCES.buoy.trust)
+  })
+
+  it('does NOT call a lighthouse or a tide gauge a buoy', () => {
+    // Trust 9 and elevM 0 would claim this instrument floats at sea level. It is
+    // bolted to a pier at Friday Harbor.
+    const o = parseNdbc(NDBC_LIVE, meta)
+    const frd = o.find((x) => x.id === 'ndbc:FRDW1')!
+    const sis = o.find((x) => x.id === 'ndbc:SISW1')!
+    expect(frd.source).toBe('synop')
+    expect(frd.surface).toBe('land')
+    expect(frd.elevM).toBeNull()
+    expect(sis.source).toBe('synop')
+    expect(sis.trust).toBe(OBS_SOURCES.synop.trust)
+    expect(sis.twsKn).toBeCloseTo(7.2 * 1.943844, 6)   // 14.0 kn at Smith Island
+  })
+
+  it('treats MM direction as unknown, and 0 kn as calm', () => {
+    const frd = parseNdbc(NDBC_LIVE, meta).find((x) => x.id === 'ndbc:FRDW1')!
+    expect(frd.twsKn).toBe(0)
+    expect(frd.twdDeg).toBeNull()      // the row really does say MM
+  })
+
+  it('corrects nothing, because NDBC does not publish anemometer height', () => {
+    // ~4 m on a discus buoy, 10-30 m on a lighthouse. Guessing is worse than
+    // leaving it as measured — same contract as the Météo-France buoys.
+    for (const o of parseNdbc(NDBC_LIVE, meta)) {
+      expect(o.heightM).toBeNull()
+      expect(obs10mKn(o)).toBeNull()
+    }
+  })
+
+  it('still works with no station table at all', () => {
+    const o = parseNdbc(NDBC_LIVE)
+    expect(o.find((x) => x.id === 'ndbc:46088')!.source).toBe('buoy')    // id shape
+    expect(o.find((x) => x.id === 'ndbc:SISW1')!.source).toBe('synop')
+    expect(o.find((x) => x.id === 'ndbc:SISW1')!.name).toBe('SISW1')     // code, not name
+  })
+
+  it('survives junk', () => {
+    expect(parseNdbc('')).toHaveLength(0)
+    expect(parseNdbc(null as never)).toHaveLength(0)
+    expect(parseNdbc('#only headers\n#second')).toHaveLength(0)
+    expect(parseNdbc('SHORT 1 2 3')).toHaveLength(0)
   })
 })

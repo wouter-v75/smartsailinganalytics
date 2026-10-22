@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 import {
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
-  latestPerStation, withinNm, type WindObs,
+  parseNdbc, parseNdbcStations, latestPerStation, withinNm, type WindObs,
 } from '@/lib/windObs'
 
 // GET /api/obs?lat=43.275&lon=6.678&nm=40
@@ -30,12 +30,52 @@ function bbox(lat: number, lon: number, nm: number) {
   return [r(lat - dLat), r(lon - dLon), r(lat + dLat), r(lon + dLon)]
 }
 
+// A LARGE bbox silently returns a PARTIAL set, and the omission is systematic
+// rather than random. Measured 22 Oct 2026 over SoCal: the whole 3.2°x2.3° box
+// answered 33 stations (KAJO..KTOA); its north half alone answered 32 and its
+// south half 3 — so the union is 35 and the whole box had quietly dropped two,
+// MMTJ among them. The cut lands at the end of the id sort order, which means
+// US K* stations crowd out everything foreign: M* (Mexico), C* (Canada), L*
+// (Europe). At a venue near a border that reads as "no stations over there",
+// which is exactly the wrong conclusion to draw from a map.
+//
+// So the box is split into tiles no larger than this and the answers merged.
+// At the default 40 nm that is still one request; it only costs more where it
+// would otherwise have lost data.
+const METAR_TILE_DEG = 1.5
+const METAR_MAX_TILES = 9
+
+function metarTiles(la0: number, lo0: number, la1: number, lo1: number) {
+  const nLat = Math.min(3, Math.max(1, Math.ceil((la1 - la0) / METAR_TILE_DEG)))
+  const nLon = Math.min(3, Math.max(1, Math.ceil((lo1 - lo0) / METAR_TILE_DEG)))
+  const out: Array<[number, number, number, number]> = []
+  for (let i = 0; i < nLat; i++) {
+    for (let j = 0; j < nLon && out.length < METAR_MAX_TILES; j++) {
+      out.push([
+        la0 + ((la1 - la0) * i) / nLat, lo0 + ((lo1 - lo0) * j) / nLon,
+        la0 + ((la1 - la0) * (i + 1)) / nLat, lo0 + ((lo1 - lo0) * (j + 1)) / nLon,
+      ])
+    }
+  }
+  return out
+}
+
 async function metarAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
   const [la0, lo0, la1, lo1] = bbox(lat, lon, nm)
-  const url = `https://aviationweather.gov/api/data/metar?bbox=${la0},${lo0},${la1},${lo1}&format=json`
-  const res = await fetch(url, { headers: { 'User-Agent': UA }, next: { revalidate: CACHE_S } })
-  if (!res.ok) throw new Error(`metar ${res.status}`)
-  return parseMetar(await res.json())
+  const settled = await Promise.allSettled(
+    metarTiles(la0, lo0, la1, lo1).map(async ([a, b, c, d]) => {
+      const url = `https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`
+      const res = await fetch(url, { headers: { 'User-Agent': UA }, next: { revalidate: CACHE_S } })
+      if (!res.ok) throw new Error(`metar ${res.status}`)
+      return parseMetar(await res.json())
+    }),
+  )
+  const ok = settled.filter((r) => r.status === 'fulfilled')
+  if (!ok.length) throw new Error('metar: every tile failed')
+  // Tiles share edges, so the same station can arrive twice.
+  const byId = new Map<string, WindObs>()
+  for (const r of ok) for (const o of (r as PromiseFulfilledResult<WindObs[]>).value) byId.set(o.id, o)
+  return Array.from(byId.values())
 }
 
 // FFVL is open data but NOT keyless — an unkeyed call answers "invalid FFVL key
@@ -115,6 +155,29 @@ async function mfMarineAround(): Promise<WindObs[]> {
   return out
 }
 
+// NDBC (National Data Buoy Center) — US buoys and coastal stations. KEYLESS,
+// one bulk file of ~865 stations, so it is always on and costs one request.
+//
+// This is what makes the American venues work. Measured 22 Oct 2026: the LA28
+// course area off San Pedro has 8 wind-reporting stations inside 25 nm (nearest
+// 1.5 nm), Long Beach 8 inside 30 nm, the San Juan Islands 7 inside 25 nm.
+// It stops at the border, though — nothing within 30 nm of Ensenada.
+const NDBC_OBS = 'https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt'
+const NDBC_STATIONS = 'https://www.ndbc.noaa.gov/data/stations/station_table.txt'
+
+async function ndbcAround(): Promise<WindObs[]> {
+  const [obsRes, stnRes] = await Promise.all([
+    fetch(NDBC_OBS, { headers: { 'User-Agent': UA }, next: { revalidate: CACHE_S } }),
+    // Names and TTYPE only; it moves when a station is commissioned, not hourly.
+    fetch(NDBC_STATIONS, { headers: { 'User-Agent': UA }, next: { revalidate: 86400 } }),
+  ])
+  if (!obsRes.ok) throw new Error(`ndbc ${obsRes.status}`)
+  // Without the table every station still reports — it falls back to the id
+  // shape for buoy-vs-fixed and shows the station code instead of a name.
+  const meta = stnRes.ok ? parseNdbcStations(await stnRes.text()) : new Map()
+  return parseNdbc(await obsRes.text(), meta)
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireActiveUser()
   if (!gate.ok) return gate.response
@@ -130,6 +193,7 @@ export async function GET(req: NextRequest) {
     ['metar', metarAround(lat, lon, nm)],
     ['ffvl', ffvlAround()],
     ['mf-marine', mfMarineAround()],
+    ['ndbc', ndbcAround()],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
 
