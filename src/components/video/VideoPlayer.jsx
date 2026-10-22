@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { HLS_CONFIG, loadHls } from '../../lib/hlsLoader';
 import { getVideoBlob } from '../../lib/localStore';
 import { interpRow } from '../../lib/logRowLookup';
-import { fallbackMagVar } from '../../lib/magVar';
+import { magVarDeg } from '../../lib/magVar';
 import { STAGE_TEXT, isMp4Url, playerStage } from '../../lib/playerStage';
 import { loadPolarFromLS, polarInterp, polarPerf, polarVMGTarget } from '../../lib/polarCalc';
 import { createQoe, platformOf, sendQoe } from '../../lib/qoe';
@@ -517,10 +517,15 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       const ref = (row?.twd!=null && isFinite(row.twd) && row.twd!==0) ? row.twd : a;
       const angDist = (x,y)=>{const d=Math.abs(x-y)%360;return d>180?360-d:d;};
       const lineSqrTrue = angDist(a,ref) <= angDist(b,ref) ? a : b;
+      // magVarDeg answers ANYWHERE now (WMM-2025), so the old `?? 0` is gone.
+      // Zero does not mean "unknown", it means "true and magnetic agree" — and
+      // that is what used to put a TRUE bearing under a magnetic label at every
+      // venue missing from the table. Null here means the POSITION was unusable,
+      // and then there is no magnetic bearing to show at all.
       const magvar = (row?.magvar!=null && isFinite(row.magvar))
         ? row.magvar
-        : (fallbackMagVar(row?.lat, row?.lon)?.varDeg ?? 0);
-      lineSqrMag = (lineSqrTrue - magvar + 360) % 360;
+        : magVarDeg(row?.lat, row?.lon);
+      lineSqrMag = magvar == null ? null : (lineSqrTrue - magvar + 360) % 360;
     }
   }
 
