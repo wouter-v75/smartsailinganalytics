@@ -63,23 +63,32 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // One box per venue, never one big one: a large bbox silently TRUNCATES and
   // the cut falls at the end of the id sort order, so foreign stations go
   // first. Measured over SoCal, 22 Oct 2026.
+  // ONE BOX PER VENUE, SEQUENTIALLY. Both halves of that were measured.
+  //
+  // One box per venue because a single large bbox silently TRUNCATES: over
+  // SoCal a 3.2x2.3 deg box answered 33 stations while its two halves answered
+  // 32 and 3, and the cut fell at the end of the id sort order — so the foreign
+  // stations went first and MMTJ vanished. Near a border that reads as "nothing
+  // over there".
+  //
+  // Sequentially because PARALLEL WAS TRIED AND WAS NOT FASTER. Eight boxes at
+  // once from Vercel took 20.1 s against 10.4 s and 16.9 s for the same eight
+  // in sequence; aviationweather.gov appears to throttle concurrent connections
+  // from one address, so the requests queue and nothing is gained for the extra
+  // moving parts. This is the slowest source either way, at roughly half the
+  // poll — well inside the function's 60 s budget. If venues ever double, the
+  // thing to try is a CONCURRENCY CAP of two or three, not full parallelism,
+  // and not a bigger box.
   metar: async () => {
-    // IN PARALLEL, not one after another. Measured on Vercel: eight sequential
-    // boxes took 16.9 s of an 18.8 s run — a quarter of the function's budget
-    // for one source, and it would grow with every venue added. The boxes are
-    // independent and eight at once is nothing against this endpoint's limits.
-    const settled = await Promise.allSettled(VENUES.map(async ([, la, lo]) => {
-      const [a, b, c, d] = bbox(la, lo, VENUE_NM)
-      const r = await get(`https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`)
-      return parseMetar(await r.json())
-    }))
     const out: WindObs[] = []
     const seen = new Set<string>()
-    // One venue's box failing must not lose the other seven; venues overlap, so
-    // the same station arrives more than once.
-    for (const r of settled) {
-      if (r.status !== 'fulfilled') continue
-      for (const o of r.value) if (!seen.has(o.id)) { seen.add(o.id); out.push(o) }
+    for (const [, la, lo] of VENUES) {
+      const [a, b, c, d] = bbox(la, lo, VENUE_NM)
+      try {
+        const r = await get(`https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`)
+        // Venues overlap, so the same station arrives more than once.
+        for (const o of parseMetar(await r.json())) if (!seen.has(o.id)) { seen.add(o.id); out.push(o) }
+      } catch { /* one venue's box failing must not lose the other seven */ }
     }
     return out
   },
