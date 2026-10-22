@@ -159,6 +159,45 @@ function report(kind: 'buoy' | 'ship', text: string, meta = new Map()) {
   }
 }
 
+
+// ── land stations ───────────────────────────────────────────────────────────
+// Same question as the buoys, and worth asking the same way rather than
+// assuming: `/liste-bouees` is documented as a station lookup and in fact
+// returns every observation, so `/liste-stations` may well do the same — in
+// which case the land data is already in the API we hold and the separate
+// "Observations Package" product is not needed at all. If it IS only a list,
+// the paquet paths are where the bulk feed lives. The matrix settles it.
+const LAND_BASES = [
+  'https://public-api.meteofrance.fr/public/DPObs/v2',
+  'https://public-api.meteofrance.fr/public/DPPaquetObs/v1',
+  'https://public-api.meteofrance.fr/public/DPPaquetObs/v2',
+]
+const LAND_PATHS = ['/liste-stations', '/paquet/horaire', '/paquet/infrahoraire-6m']
+
+/** Status, shape, and whether the wind is in it — without parsing into WindObs. */
+async function peek(base: string, path: string) {
+  const label = `${base.replace('https://public-api.meteofrance.fr/public/', '')}${path}`.padEnd(46)
+  let r: Response
+  try {
+    r = await fetch(`${base}${path}?format=csv`, { headers: { apikey: KEY!, 'User-Agent': UA } })
+  } catch (e) {
+    console.log(`  ${label} -> network error ${(e as Error).message}`)
+    return
+  }
+  const text = await r.text()
+  if (!r.ok) { console.log(`  ${label} -> ${r.status}  ${why(text)}`); return }
+
+  const head = header(text)
+  const rows = text.split(/\r?\n/).filter((l) => l.trim()).length - 1
+  const wind = head.includes('ff') && head.includes('dd')
+  console.log(`  ${label} -> 200  ${rows} row(s), ${head.length} col(s)  ${wind ? '*** HAS ff+dd ***' : '(no wind columns)'}`)
+  console.log(`     header: ${head.join(';').slice(0, 300)}`)
+  if (wind) {
+    const first = text.split(/\r?\n/)[1] || ''
+    console.log(`     row 1 : ${first.slice(0, 300)}`)
+  }
+}
+
 async function main() {
   console.log(`base ${BASE}\n`)
 
@@ -173,6 +212,16 @@ async function main() {
   const ships = await csv('/bateaux')
   if (ships) report('ship', ships, meta)
   else console.log('  no bulk /bateaux — ships may need id_station per vessel.')
+
+  console.log(`\n${'='.repeat(72)}\n=== LAND  which path, if any, gives every station in one call\n${'='.repeat(72)}`)
+  for (const base of LAND_BASES) {
+    for (const path of LAND_PATHS) await peek(base, path)
+  }
+  console.log(`
+Read the matrix above for a line marked *** HAS ff+dd ***: that is the bulk land
+feed, and whichever base it sits under is the API to subscribe to. A 404 on every
+DPPaquetObs line means the Package is not in your subscriptions yet; a 403 means
+it is, but the token predates it — regenerate the token AFTER subscribing.`)
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })
