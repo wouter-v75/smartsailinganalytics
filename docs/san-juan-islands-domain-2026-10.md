@@ -731,6 +731,54 @@ default, which §5h already proved produces identical data. `DRIVER=global` with
 - **Cron and `.env`** are deployment, not code, and should not be added until there is a grid to
   run. A second entry at ~14:41 UTC with its own `DOMAINS`/`NESTS`/`EVENT_VENUE`.
 
+## 5k. Phase 1 proved — the icosahedral chain works, and it is cheap
+
+Done while waiting on the Zonda grids, which is exactly the right use of that window: this was the
+single biggest unknown on the ICON-global road.
+
+**Staged:** `icon_grid_0026_R03B07_G.nc` at `/data/icon-global-static/` — 937 MB down in **under 8
+seconds** (~117 MB/s), 1.79 GB decompressed, 43 GB still free. Verified a real ICON grid:
+**2,949,120 cells**, `grid_root 3 / grid_level 7`, `uuidOfHGrid` present.
+
+**No prebuilt weights exist.** DWD's CDO library holds the grid file and nothing else, so we
+generate our own — which turns out not to matter at all (below).
+
+**The chain works end to end**, proven on a real global file remapped onto `solent_2km` (the same
+size as San Juan, so representative):
+
+```
+  setgrid  -> unstructured, points=2949120, nvertex=3
+              clon -3.141593..3.141593 radian, clat -1.56928..1.56928 radian
+  gencon   -> 2.95M global cells -> 7,884 LAM cells in 3 SECONDS, 249 MB weights
+  remap    -> u: min 1.0390  mean 7.3689  max 14.853 m/s, 0 missing
+```
+
+**Weight generation is 3 seconds, not "expensive".** That assumption shaped the earlier plan — it
+was wrong, and cheaply so. There is no reason to cache weights across cycles for performance; the
+per-pair caching stays for CORRECTNESS (the stale-weights collision), not speed.
+
+**`0 missing` matters too:** the conservative remap covers the whole LAM box from the global source,
+so there is no coastal gap to patch the way the SST path needs `setmisstonn`.
+
+**One real trap, and the existing code already avoids it.** Without `-f nc`, CDO infers GRIB output
+from the GRIB input and then:
+
+```
+  ECCODES ERROR : pack_bytes: Wrong size (20) for section2Padding
+  Warning (gribapiDefGridUnstructured): GRIB library doesn't support unstructured
+                                        grids, grid information will be lost!
+```
+
+That is the same eccodes padding error the CDO forum attributes to 2.2.0 — it appears on **2.1.1
+too**, on the GRIB *write* path. `remap_step` already passes `-f nc4`, so the data path is safe.
+Checked separately: `gen_weights` does **not** pass `-f nc4` and does not need to — CDO writes
+weights as netCDF regardless, and a remap through those weights returns bit-identical values
+(1.0390 / 7.3689 / 14.853). **No change required to §5h.**
+
+So phase 1 steps 1 and 3 are complete, and step 2 (pin CDO at 2.1.1) is now better motivated: 2.1.1
+demonstrably handles the global GRIB, and the padding error is a write-path hazard that `-f nc4`
+sidesteps rather than a version blocker.
+
 ## 6. Implementation plan
 
 Ordered so that nothing expensive is built before the thing that gates it, and nothing touches a
