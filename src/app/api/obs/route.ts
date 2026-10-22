@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
+import { getServerSupabase } from '@/lib/supabase/server'
 import { WEATHERLINK_EMBEDS } from '@/lib/windObsEmbeds'
-import { davisMapNear, davisMapStations } from '@/lib/obsSources'
+import { davisMapNear, davisMapStations, collectObservations } from '@/lib/obsSources'
 import {
+  OBS_STALE_MIN,
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
   parseNdbc, parseNdbcStations, parsePioupiou, dropDuplicatesOf,
   parseWeatherLinkStations, parseWeatherLinkCurrent, parseWeatherLinkEmbed,
@@ -272,6 +274,60 @@ async function davisMapAround(lat: number, lon: number, nm: number): Promise<Win
   return near.length ? davisMapStations(near) : []
 }
 
+// Frost is one call for every Norwegian station we read, so the live map can
+// afford it directly. It goes through collectObservations so there is ONE
+// definition of how to call it, shared with the poller — this route having its
+// own copy is what let frost and metoffice be stored for fifteen minutes at a
+// time while never once appearing on the map.
+async function frostLive(): Promise<WindObs[]> {
+  const { obs } = await collectObservations(['frost'])
+  return obs
+}
+
+/**
+ * Whatever the poller has stored recently, for the sources this route does NOT
+ * call live.
+ *
+ * Met Office is the case in point: 360 calls a day, so letting every map view
+ * fetch it would spend the budget on panning. The poller takes it hourly and
+ * the map reads the result. The same applies to anything rate-limited we add.
+ *
+ * It also makes the map survive an upstream outage — a station that answered
+ * ten minutes ago still draws, faded by age, instead of vanishing.
+ *
+ * Only rows newer than the staleness limit, and the live copy always wins.
+ */
+async function storedAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+  const sb = getServerSupabase()
+  const dLat = nm / 60
+  const dLon = nm / (60 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)))
+  const since = new Date(Date.now() - OBS_STALE_MIN * 60_000).toISOString()
+  const { data, error } = await sb
+    .from('wind_observations')
+    .select('station_id, t, source, name, lat, lon, tws_kn, gust_kn, twd_deg, height_m, surface, trust')
+    .gte('t', since)
+    .gte('lat', lat - dLat).lte('lat', lat + dLat)
+    .gte('lon', lon - dLon).lte('lon', lon + dLon)
+    .order('t', { ascending: false })
+    .limit(1500)
+  if (error || !Array.isArray(data)) return []
+  const rows: WindObs[] = data.map((r) => ({
+    id: r.station_id as string,
+    source: r.source as WindObs['source'],
+    name: (r.name as string) || (r.station_id as string),
+    lat: r.lat as number, lon: r.lon as number,
+    heightM: (r.height_m as number | null) ?? null,
+    elevM: null,
+    surface: (r.surface as 'sea' | 'land') || 'land',
+    twsKn: r.tws_kn as number,
+    twdDeg: (r.twd_deg as number | null) ?? null,
+    gustKn: (r.gust_kn as number | null) ?? null,
+    t: new Date(r.t as string).toISOString(),
+    trust: (r.trust as number) ?? 0,
+  }))
+  return latestPerStation(rows)
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireActiveUser()
   if (!gate.ok) return gate.response
@@ -290,8 +346,10 @@ export async function GET(req: NextRequest) {
     ['ndbc', ndbcAround()],
     ['pioupiou', pioupiouAround()],
     ['weatherlink', weatherlinkAround()],
-    ['wl-embed', weatherlinkEmbeds()],
+    ['davis', weatherlinkEmbeds()],
     ['davis-map', davisMapAround(lat, lon, nm)],
+    ['frost', frostLive()],
+    ['stored', storedAround(lat, lon, nm)],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
 
