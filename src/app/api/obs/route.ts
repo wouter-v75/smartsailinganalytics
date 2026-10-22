@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 import {
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
-  parseNdbc, parseNdbcStations, latestPerStation, withinNm, type WindObs,
+  parseNdbc, parseNdbcStations, parsePioupiou, latestPerStation, withinNm, type WindObs,
 } from '@/lib/windObs'
 
 // GET /api/obs?lat=43.275&lon=6.678&nm=40
@@ -178,6 +178,22 @@ async function ndbcAround(): Promise<WindObs[]> {
   return parseNdbc(await obsRes.text(), meta)
 }
 
+// Pioupiou / Windbird — KEYLESS, every station and its latest reading in one
+// call. Community wind sensors put up by flying and kiting clubs, run as an
+// open project by OpenWindMap after the original company went under.
+//
+// France and the Alps only: 16 fresh stations within 40 nm of St Tropez,
+// nearest 4.6 nm, and none at all at Porto Cervo, the Solent, La Spezia or
+// either American venue. Worth having for the Riviera, worth not expecting
+// anywhere else.
+const PIOUPIOU_URL = 'https://api.pioupiou.fr/v1/live-with-meta/all'
+
+async function pioupiouAround(): Promise<WindObs[]> {
+  const res = await fetch(PIOUPIOU_URL, { headers: { 'User-Agent': UA }, next: { revalidate: CACHE_S } })
+  if (!res.ok) throw new Error(`pioupiou ${res.status}`)
+  return parsePioupiou(await res.json())
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireActiveUser()
   if (!gate.ok) return gate.response
@@ -194,6 +210,7 @@ export async function GET(req: NextRequest) {
     ['ffvl', ffvlAround()],
     ['mf-marine', mfMarineAround()],
     ['ndbc', ndbcAround()],
+    ['pioupiou', pioupiouAround()],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
 

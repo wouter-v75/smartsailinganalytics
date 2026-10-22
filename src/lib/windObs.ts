@@ -614,6 +614,82 @@ export function parseNdbcHistory(text: string): ObsPoint[] {
   return out.sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
 }
 
+// ── Pioupiou / Windbird ─────────────────────────────────────────────────────
+// api.pioupiou.fr/v1/live-with-meta/all — KEYLESS, every station with its
+// metadata and latest reading in ONE call (~660 KB, 758 stations measured
+// 22 Oct 2026).
+//
+// Solar, SIGFOX-connected wind sensors put up by flying and kiting clubs and by
+// individuals. The company went bankrupt; OpenWindMap bought the network out of
+// liquidation and runs it as an open community project, which is why the data
+// is open at all. Same kind of thing as an FFVL balise — sited for a sport
+// rather than for measurement — so it carries the same `beacon` trust and
+// colour rather than pretending to be an official station.
+//
+// WHAT IT IS AND IS NOT WORTH. Measured against our venues: 16 fresh stations
+// within 40 nm of St Tropez, nearest 4.6 nm. ZERO at Porto Cervo, the Solent,
+// La Spezia, San Juan Islands or Long Beach. It is France (plus the Alps), and
+// nothing else — worth having for the Riviera and worth not expecting elsewhere.
+//
+// UNITS ARE km/h, which the distribution confirms rather than the docs: across
+// 668 fresh stations the fastest was 44, i.e. 23.8 kn. Read as m/s that is
+// 85 kn, and the 95th percentile would be 43 kn — a continent-wide storm that
+// was not happening.
+//
+// DIRECTION is where the wind comes FROM, same as everything else here. Checked
+// on the wire rather than assumed: at 15:30 UTC the three airports around
+// St Tropez reported 240-260 deg, and the Pioupiou stations between them read
+// 242-270.
+
+/** One Pioupiou/Windbird station record into a WindObs. */
+export function parsePioupiou(payload: unknown): WindObs[] {
+  const rows = (payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data))
+    ? (payload as { data: unknown[] }).data
+    : (Array.isArray(payload) ? payload : [])
+  const out: WindObs[] = []
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    const meta = (o.meta || {}) as Record<string, unknown>
+    const loc = (o.location || {}) as Record<string, unknown>
+    const me = (o.measurements || {}) as Record<string, unknown>
+
+    const lat = num(loc.latitude); const lon = num(loc.longitude)
+    const kmh = num(me.wind_speed_avg)
+    if (lat == null || lon == null || kmh == null) continue
+    // A station whose own GPS fix failed is somewhere unknown, and a barb drawn
+    // at an unknown place is worse than no barb.
+    if (loc.success === false) continue
+
+    const t = typeof me.date === 'string' ? isoFromMf(me.date) : null
+    if (!t) continue
+
+    const twsKn = kmh * 0.539957
+    if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
+    const gustKmh = num(me.wind_speed_max)
+    const gustKn = gustKmh == null ? null : gustKmh * 0.539957
+    const dir = num(me.wind_heading)
+    const id = num(o.id) ?? (typeof o.id === 'string' ? o.id : null)
+    if (id == null) continue
+
+    out.push({
+      id: `piou:${id}`,
+      source: 'beacon',
+      name: (typeof meta.name === 'string' && meta.name.trim()) || `Windbird ${id}`,
+      lat, lon,
+      heightM: null,                     // mast height is not published
+      elevM: null,
+      surface: 'land',
+      twsKn,
+      twdDeg: kmh === 0 || dir == null ? null : normDeg(dir),
+      gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+      t,
+      trust: OBS_SOURCES.beacon.trust,
+    })
+  }
+  return out
+}
+
 /** Nearest-first, and never show a station from the next sea. */
 export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): WindObs[] {
   const cos = Math.cos((lat * Math.PI) / 180)

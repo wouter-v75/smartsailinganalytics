@@ -3,7 +3,7 @@ import {
   parseMetar, parseFfvl, isoFromFfvl, to10m, obs10mKn, ageMinutes, isStale, withinNm, OBS_SOURCES,
   parseMfCsv, parseMfMarine, parseMfStationList, latestPerStation, isoFromMf,
   parseNdbc, parseNdbcStations, ndbcIsBuoy,
-  parseNdbcHistory, toObsPoints, withinHours,
+  parseNdbcHistory, toObsPoints, withinHours, parsePioupiou,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -505,5 +505,67 @@ describe('toObsPoints', () => {
     expect(pts[0].t).toBe('2026-10-21T02:00:00.000Z')
     expect(pts[1].t).toBe('2026-10-21T13:00:00.000Z')
     expect(Object.keys(pts[0]).sort()).toEqual(['gustKn', 't', 'twdDeg', 'twsKn'])
+  })
+})
+
+// ── Pioupiou / Windbird ─────────────────────────────────────────────────────
+// Captured from api.pioupiou.fr/v1/live-with-meta/all on 2026-10-22, verbatim.
+const PIOU_LIVE = {
+  doc: 'https://developers.pioupiou.fr/api/live/',
+  license: 'https://developers.pioupiou.fr/data-licensing',
+  data: [
+    {
+      id: 2217,
+      meta: { name: 'ALRM 83', description: 'aéromodélisme Roquebrune', picture: null },
+      location: { latitude: 43.474526, longitude: 6.615138, date: '2026-10-22T08:07:37.000Z', success: true, hdop: 1 },
+      measurements: {
+        date: '2026-10-22T15:25:56.000Z', pressure: null,
+        wind_heading: 247.5, wind_speed_avg: 9.5, wind_speed_max: 20, wind_speed_min: 3.25,
+      },
+      status: { date: '2026-10-22T15:25:56.000Z', snr: -1, state: 'on' },
+    },
+  ],
+}
+
+describe('parsePioupiou', () => {
+  it('reads the live station, km/h to knots', () => {
+    const [o] = parsePioupiou(PIOU_LIVE)
+    expect(o).toMatchObject({ id: 'piou:2217', source: 'beacon', name: 'ALRM 83', surface: 'land', twdDeg: 247.5 })
+    expect(o.twsKn).toBeCloseTo(9.5 * 0.539957, 6)      // 5.1 kn
+    expect(o.gustKn!).toBeCloseTo(20 * 0.539957, 6)     // 10.8 kn
+    expect(o.t).toBe('2026-10-22T15:25:56.000Z')
+    expect(o.trust).toBe(OBS_SOURCES.beacon.trust)
+  })
+
+  it('is a BEACON, not an official station and not a rooftop', () => {
+    // Sited for a sport rather than for measurement, exactly like an FFVL
+    // balise — so it shares that trust and that colour, and is visibly not one
+    // of the airports or buoys.
+    const [o] = parsePioupiou(PIOU_LIVE)
+    expect(o.source).toBe('beacon')
+    expect(OBS_SOURCES.beacon.trust).toBeLessThan(OBS_SOURCES.metar.trust)
+    expect(OBS_SOURCES.beacon.trust).toBeGreaterThan(OBS_SOURCES.pws.trust)
+    expect(o.heightM).toBeNull()      // mast height unpublished -> no correction
+  })
+
+  it('drops a station whose own GPS fix FAILED', () => {
+    // A barb drawn at an unknown position is worse than no barb at all.
+    const bad = { data: [{ ...PIOU_LIVE.data[0], location: { ...PIOU_LIVE.data[0].location, success: false } }] }
+    expect(parsePioupiou(bad)).toHaveLength(0)
+  })
+
+  it('treats calm as calm, not as a westerly', () => {
+    const calm = { data: [{ ...PIOU_LIVE.data[0], measurements: { ...PIOU_LIVE.data[0].measurements, wind_speed_avg: 0 } }] }
+    const [o] = parsePioupiou(calm)
+    expect(o.twsKn).toBe(0)
+    expect(o.twdDeg).toBeNull()
+  })
+
+  it('survives junk and a station with no reading', () => {
+    expect(parsePioupiou({ data: [] })).toHaveLength(0)
+    expect(parsePioupiou(null)).toHaveLength(0)
+    expect(parsePioupiou({ data: [null, 'x', 7] })).toHaveLength(0)
+    const noWind = { data: [{ ...PIOU_LIVE.data[0], measurements: { date: '2026-10-22T15:25:56.000Z' } }] }
+    expect(parsePioupiou(noWind)).toHaveLength(0)
   })
 })
