@@ -6,6 +6,8 @@
 // part worth pinning down, and a JSX file is not typechecked in this repo.
 
 import { OBS_SOURCES, obs10mKn, ageMinutes, OBS_STALE_MIN, type WindObs } from './windObs'
+import { barbSvg, kn1 } from './windBarb'
+import { trueToMagnetic } from './magVar'
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
@@ -24,22 +26,26 @@ export function ageOpacity(o: WindObs, nowMs: number = Date.now()): number {
 }
 
 /**
- * The marker: an arrow pointing at the wind's SOURCE (met convention, same as the
- * deck's barbs), the speed in knots beside it, coloured by network.
- * A variable or calm wind gets a ring instead — it has a speed but no direction,
- * and an arrow would invent one.
+ * The marker: a standard wind BARB pointing at the wind's source, coloured by
+ * network, with the exact speed beside it to one decimal.
+ *
+ * The barb replaced an arrow because a field of arrows has to be read one
+ * station at a time — each one needs its number parsed before it means anything.
+ * Feathers are read as a picture: you see where the breeze is up across the
+ * course without reading a single digit. The number stays because a barb is
+ * quantised to 5 kn and the difference between 12 and 14 matters to a trimmer.
+ *
+ * A variable or calm wind gets a ring — it has a speed but no direction, and a
+ * barb would invent one.
  */
 export function obsMarkerHtml(o: WindObs, nowMs: number = Date.now()): string {
   const src = OBS_SOURCES[o.source]
   const col = src?.colour || '#94A3B8'
   const op = ageOpacity(o, nowMs)
-  const kn = Math.round(o.twsKn)
-  const label = `<span style="font:700 11px/1 system-ui,sans-serif;color:${col};text-shadow:0 0 3px #000,0 0 2px #000">${kn}</span>`
-  const body = o.twdDeg == null
-    ? `<svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="5.5" fill="none" stroke="${col}" stroke-width="2"/></svg>`
-    : `<svg width="18" height="18" viewBox="0 0 18 18" style="transform:rotate(${o.twdDeg}deg)">`
-      + `<path d="M9 1 L9 17 M9 1 L5.5 6 M9 1 L12.5 6" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round"/></svg>`
-  return `<div style="display:flex;align-items:center;gap:2px;opacity:${op.toFixed(2)};pointer-events:auto">${body}${label}</div>`
+  const label = `<span style="font:700 10px/1 system-ui,sans-serif;color:${col};`
+    + `text-shadow:0 0 3px #000,0 0 2px #000;white-space:nowrap">${kn1(o.twsKn)}</span>`
+  return `<div style="display:flex;align-items:center;gap:1px;opacity:${op.toFixed(2)};`
+    + `pointer-events:auto;cursor:pointer">${barbSvg(o.twsKn, o.twdDeg, col, 1)}${label}</div>`
 }
 
 /**
@@ -51,9 +57,16 @@ export function obsTooltipLines(o: WindObs, nowMs: number = Date.now()): string[
   const src = OBS_SOURCES[o.source]
   const lines: string[] = [`${o.name} · ${src?.label || o.source}`]
 
-  const dir = o.twdDeg == null ? 'variable' : `${Math.round(o.twdDeg)}°`
-  const gust = o.gustKn != null ? `, gusting ${Math.round(o.gustKn)}` : ''
-  lines.push(`${o.twsKn.toFixed(1)} kn from ${dir}${gust}`)
+  // Direction in MAGNETIC as well as true, because magnetic is what the compass
+  // on the boat reads and what a crew calls a shift in. Magnetic is omitted
+  // rather than defaulted when the variation is unknown — a true bearing under a
+  // magnetic label is the bug magVar.ts exists to prevent.
+  const mag = o.twdDeg == null ? null : trueToMagnetic(o.twdDeg, o.lat, o.lon)
+  const dir = o.twdDeg == null
+    ? 'variable'
+    : `${Math.round(o.twdDeg)}°T${mag != null ? ` / ${Math.round(mag)}°M` : ''}`
+  const gust = o.gustKn != null ? `, gusting ${kn1(o.gustKn)}` : ''
+  lines.push(`${kn1(o.twsKn)} kn from ${dir}${gust}`)
 
   const v10 = obs10mKn(o)
   if (o.heightM == null) {
@@ -63,7 +76,7 @@ export function obsTooltipLines(o: WindObs, nowMs: number = Date.now()): string[
   } else if (Math.abs(o.heightM - 10) < 0.5) {
     lines.push('measured at 10 m — directly comparable')
   } else if (v10 != null) {
-    lines.push(`measured at ${o.heightM} m; ${v10.toFixed(1)} kn at 10 m`)
+    lines.push(`measured at ${o.heightM} m; ${kn1(v10)} kn at 10 m`)
   }
 
   if (o.surface === 'land') {

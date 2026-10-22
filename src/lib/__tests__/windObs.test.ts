@@ -3,6 +3,7 @@ import {
   parseMetar, parseFfvl, isoFromFfvl, to10m, obs10mKn, ageMinutes, isStale, withinNm, OBS_SOURCES,
   parseMfCsv, parseMfMarine, parseMfStationList, latestPerStation, isoFromMf,
   parseNdbc, parseNdbcStations, ndbcIsBuoy,
+  parseNdbcHistory, toObsPoints, withinHours,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -432,5 +433,77 @@ describe('parseNdbc', () => {
     expect(parseNdbc(null as never)).toHaveLength(0)
     expect(parseNdbc('#only headers\n#second')).toHaveLength(0)
     expect(parseNdbc('SHORT 1 2 3')).toHaveLength(0)
+  })
+})
+
+// ── history ─────────────────────────────────────────────────────────────────
+// Captured from www.ndbc.noaa.gov/data/realtime2/46088.txt on 2026-10-22.
+// Note the header: NO LAT/LON, so every column sits two places left of where it
+// is in latest_obs.txt.
+const NDBC_HISTORY = [
+  '#YY  MM DD hh mm WDIR WSPD GST  WVHT   DPD   APD MWD   PRES  ATMP  WTMP  DEWP  VIS PTDY  TIDE',
+  '#yr  mo dy hr mn degT m/s  m/s     m   sec   sec degT   hPa  degC  degC  degC  nmi  hPa    ft',
+  '2026 10 22 08 50 260  6.0  8.0   0.6     4   3.2 242 1012.8  10.6    MM   9.7   MM   MM    MM',
+  '2026 10 22 08 40 260  6.0  7.0    MM    MM    MM  MM 1012.7  10.6  10.9   9.7   MM   MM    MM',
+  '2026 10 22 08 30 250  5.0   MM    MM    MM    MM  MM 1012.8  10.6  10.8   9.6   MM   MM    MM',
+].join('\n')
+
+describe('parseNdbcHistory', () => {
+  it('reads the 10-minute trace, oldest first', () => {
+    const p = parseNdbcHistory(NDBC_HISTORY)
+    expect(p).toHaveLength(3)
+    expect(p[0].t).toBe('2026-10-22T08:30:00.000Z')
+    expect(p[2].t).toBe('2026-10-22T08:50:00.000Z')
+    expect(p[2].twsKn).toBeCloseTo(6.0 * 1.943844, 6)
+    expect(p[2].gustKn!).toBeCloseTo(8.0 * 1.943844, 6)
+    expect(p[2].twdDeg).toBe(260)
+  })
+
+  it('leaves a missing gust null rather than zero', () => {
+    expect(parseNdbcHistory(NDBC_HISTORY)[0].gustKn).toBeNull()
+  })
+
+  it('REFUSES a latest_obs row, which has two extra columns', () => {
+    // Read with history indices, latest_obs puts the station id where the YEAR
+    // goes. 46088 is not a year, and the guard is what stops a silent misread.
+    const latestObsRow = '46088    48.332 -123.179 2026 10 22 08 50 260   6.0   8.0  0.6'
+    expect(parseNdbcHistory(latestObsRow)).toHaveLength(0)
+  })
+
+  it('and parseNdbc REFUSES a history row, which is the same trap backwards', () => {
+    // With latest_obs indices, a history row's MONTH becomes the latitude and
+    // its DAY the longitude — a confident buoy at 10N 22E, in the Sahara.
+    const historyRow = '2026 10 22 08 50 260  6.0  8.0   0.6     4   3.2 242 1012.8'
+    expect(parseNdbc(historyRow)).toHaveLength(0)
+  })
+})
+
+describe('withinHours', () => {
+  const NOW = Date.parse('2026-10-22T09:00:00Z')
+  const pts = parseNdbcHistory(NDBC_HISTORY)
+
+  it('keeps what is inside the window', () => {
+    expect(withinHours(pts, 6, NOW)).toHaveLength(3)
+    expect(withinHours(pts, 0.4, NOW)).toHaveLength(2)   // 08:30 is 30 min back
+  })
+
+  it('drops a stamp from the FUTURE, which is a timezone, not a forecast', () => {
+    const future = [{ t: '2026-10-22T11:00:00Z', twsKn: 10, gustKn: null, twdDeg: 90 }]
+    expect(withinHours(future, 6, NOW)).toHaveLength(0)
+  })
+
+  it('survives an unparseable stamp', () => {
+    expect(withinHours([{ t: 'nope', twsKn: 10, gustKn: null, twdDeg: 90 }], 6, NOW)).toHaveLength(0)
+  })
+})
+
+describe('toObsPoints', () => {
+  it('reduces a station\'s observations to a trace, oldest first', () => {
+    const obs = parseMfMarine(parseMfCsv(MF_BUOY_CSV), 'buoy')
+    const pts = toObsPoints(obs)
+    expect(pts).toHaveLength(2)
+    expect(pts[0].t).toBe('2026-10-21T02:00:00.000Z')
+    expect(pts[1].t).toBe('2026-10-21T13:00:00.000Z')
+    expect(Object.keys(pts[0]).sort()).toEqual(['gustKn', 't', 'twdDeg', 'twsKn'])
   })
 })

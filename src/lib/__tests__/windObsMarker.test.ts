@@ -17,13 +17,15 @@ describe('ageOpacity', () => {
 })
 
 describe('obsMarkerHtml', () => {
-  it('rotates the arrow to the wind SOURCE and prints the speed', () => {
+  it('points the BARB at the wind source and prints the speed to 1 dp', () => {
     const h = obsMarkerHtml(metarAt('2026-10-18T08:55:00Z'), NOW)
-    expect(h).toContain('rotate(320deg)')
-    expect(h).toContain('>12<')
+    expect(h).toContain('rotate(320 22 22)')
+    expect(h).toContain('>12.0<')
+    // 12 kn rounds to 10: one full barb on the shaft, and no half.
+    expect((h.match(/<path/g) || []).length).toBe(2)   // shaft + one full feather
   })
 
-  it('draws a RING, not an arrow, when the direction is variable', () => {
+  it('draws a RING, not a barb, when the direction is variable', () => {
     // A variable wind has a speed but no direction. An arrow would invent one.
     const vrb = metarAt('2026-10-18T08:55:00Z', { wdir: 'VRB' })
     const h = obsMarkerHtml(vrb, NOW)
@@ -40,7 +42,9 @@ describe('obsTooltipLines', () => {
   it('says a 10 m station is directly comparable', () => {
     const l = obsTooltipLines(metarAt('2026-10-18T08:55:00Z'), NOW)
     expect(l[0]).toContain('Toulon/Hyères')
-    expect(l[1]).toBe('12.0 kn from 320°')
+    // True AND magnetic: magnetic is what the boat's compass reads and what a
+    // crew calls a shift in. Hyeres is +3.1 E, so 320 true is 317 magnetic.
+    expect(l[1]).toBe('12.0 kn from 320°T / 317°M')
     expect(l.join('\n')).toContain('directly comparable')
   })
 

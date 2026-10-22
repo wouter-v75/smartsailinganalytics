@@ -67,6 +67,7 @@ const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
 // Animated particle-flow wind layer (loaded after Leaflet — it extends L).
 import { obsMarkerHtml, obsTooltipHtml, obsLegend } from '../../lib/windObsMarker'
+import ObsStationPanel from './ObsStationPanel'
 
 const VELOCITY_JS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.js'
 const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.css'
@@ -155,6 +156,7 @@ export default function ForecastView({
   const obsLayerRef = useRef(null)
   const [showObs, setShowObs] = useState(false)
   const [obs, setObs] = useState([])
+  const [selectedObs, setSelectedObs] = useState(null)
   const [obsFailed, setObsFailed] = useState([])
   const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
@@ -510,14 +512,28 @@ export default function ForecastView({
     if (obsLayerRef.current) { try { map.removeLayer(obsLayerRef.current) } catch { /* */ } obsLayerRef.current = null }
     if (!showObs || !obs.length) return undefined
     const now = Date.now()
+    // iconSize/anchor follow the BARB's 44x44 box: the anchor is its centre, so
+    // the shaft grows out of the station's actual position. Anchored anywhere
+    // else the barb points from the wrong place, which is the one thing it is
+    // there to show.
     const group = L.layerGroup(obs.map((o) => L.marker([o.lat, o.lon], {
-      icon: L.divIcon({ html: obsMarkerHtml(o, now), className: 'ssa-obs', iconSize: [42, 18], iconAnchor: [9, 9] }),
+      icon: L.divIcon({ html: obsMarkerHtml(o, now), className: 'ssa-obs', iconSize: [78, 44], iconAnchor: [22, 22] }),
       keyboard: false,
-    }).bindTooltip(obsTooltipHtml(o, now), { direction: 'top', opacity: 0.95, sticky: true })))
+    })
+      .bindTooltip(obsTooltipHtml(o, now), { direction: 'top', opacity: 0.95, sticky: true })
+      .on('click', () => setSelectedObs(o))))
     group.addTo(map)
     obsLayerRef.current = group
     return () => { try { map.removeLayer(group) } catch { /* */ } }
   }, [obs, showObs, mapReady])
+
+  // The panel holds a COPY of the station, so a refresh five minutes later would
+  // leave it showing a stale reading beside a live trace. Re-point it at the new
+  // row for the same id, and drop it if that station stopped reporting.
+  useEffect(() => {
+    if (!showObs) { setSelectedObs(null); return }
+    setSelectedObs((cur) => (cur ? obs.find((o) => o.id === cur.id) || null : null))
+  }, [obs, showObs])
 
   // ── Map bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
@@ -789,14 +805,14 @@ export default function ForecastView({
           {viewMode === '2D' && (
             <button
               onClick={() => setShowObs((v) => !v)}
-              title="Live wind observations near point 1 — airports now, more networks as their keys arrive"
+              title="Live wind observations near point 1 — airports, buoys, ships and coastal stations. Click a barb for its last 6 hours."
               style={{
                 fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, flexShrink: 0, whiteSpace: 'nowrap',
                 cursor: 'pointer', border: `1px solid ${showObs ? '#0EA5E9' : '#1E3A5A'}`,
                 background: showObs ? '#0EA5E9' : 'transparent', color: showObs ? '#031018' : '#94A3B8',
               }}
             >
-              ◉ Obs{showObs && obs.length ? ` ${obs.length}` : ''}
+              ◉ Observations{showObs && obs.length ? ` ${obs.length}` : ''}
             </button>
           )}
           {/* 2D / 3D view toggle */}
@@ -860,8 +876,11 @@ export default function ForecastView({
                 : <div>No stations within 40 nm.</div>)}
               {/* An empty map and a network that did not answer look identical otherwise. */}
               {obsFailed.length > 0 && <div style={{ color: '#FCA5A5' }}>{obsFailed.join(', ')} unavailable</div>}
-              <div style={{ marginTop: 3, opacity: 0.8 }}>Tap a station — land readings run low.</div>
+              <div style={{ marginTop: 3, opacity: 0.8 }}>Click a barb for its last 6 h — land readings run low.</div>
             </div>
+          )}
+          {viewMode === '2D' && showObs && selectedObs && (
+            <ObsStationPanel obs={selectedObs} hours={6} onClose={() => setSelectedObs(null)} />
           )}
           {viewMode === '3D' && (
             (field && field.frames?.length)

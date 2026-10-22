@@ -501,6 +501,11 @@ export function parseNdbc(
     const f = line.trim().split(/\s+/)
     if (f.length < 11) continue
     const [stn, latS, lonS, yS, moS, dS, hS, miS, wdirS, wspdS, gstS] = f
+    // Refuse a realtime2 (history) row fed in here by mistake. It has no LAT/LON
+    // so every index shifts by two, and the MONTH would be read as a latitude —
+    // producing a confident buoy at 10N 22E, in the Sahara. The station id of a
+    // real row is never a four-digit year.
+    if (/^\d{4}$/.test(stn) && Number(stn) >= 1990 && Number(stn) <= 2200) continue
     const lat = ndbcNum(latS); const lon = ndbcNum(lonS); const wspd = ndbcNum(wspdS)
     if (lat == null || lon == null || wspd == null) continue   // no anemometer = not an observation
 
@@ -538,6 +543,75 @@ export function parseNdbc(
     })
   }
   return out
+}
+
+// ── history ─────────────────────────────────────────────────────────────────
+// What a station did over the last few hours, which is a different question
+// from what it says now — a 12 kn reading means one thing on a steady trace and
+// another on one that has climbed 6 kn in forty minutes.
+//
+// Deliberately NOT WindObs: a trace is one station, so repeating its name,
+// position, surface and trust on every sample would be sixty copies of the same
+// four facts. The caller already has the station.
+
+export interface ObsPoint {
+  /** ISO UTC. */
+  t: string
+  twsKn: number
+  gustKn: number | null
+  twdDeg: number | null
+}
+
+/** A station's own observations, as points, oldest first. */
+export function toObsPoints(obs: WindObs[]): ObsPoint[] {
+  return obs
+    .map((o) => ({ t: o.t, twsKn: o.twsKn, gustKn: o.gustKn, twdDeg: o.twdDeg }))
+    .sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
+}
+
+/** Trim to a window, and drop anything stamped in the future. */
+export function withinHours(pts: ObsPoint[], hours: number, nowMs: number = Date.now()): ObsPoint[] {
+  const from = nowMs - hours * 3600_000
+  return pts.filter((p) => {
+    const t = Date.parse(p.t)
+    return Number.isFinite(t) && t >= from && t <= nowMs + 5 * 60_000
+  })
+}
+
+/**
+ * NDBC's per-station file, www.ndbc.noaa.gov/data/realtime2/<STN>.txt — the last
+ * 45 days at 10-minute cadence.
+ *
+ * A DIFFERENT SHAPE from latest_obs.txt, which is the trap: there is no LAT/LON,
+ * so the row starts at the year and every column index shifts by two. Reading it
+ * with the other parser silently takes the MONTH as a latitude.
+ *   #YY  MM DD hh mm WDIR WSPD GST  WVHT ...
+ */
+export function parseNdbcHistory(text: string): ObsPoint[] {
+  const out: ObsPoint[] = []
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim() || line.startsWith('#')) continue
+    const f = line.trim().split(/\s+/)
+    if (f.length < 8) continue
+    const y = ndbcNum(f[0]); const mo = ndbcNum(f[1]); const d = ndbcNum(f[2])
+    const h = ndbcNum(f[3]); const mi = ndbcNum(f[4])
+    const wspd = ndbcNum(f[6])
+    if (y == null || mo == null || d == null || h == null || mi == null || wspd == null) continue
+    // A four-digit year is the giveaway that this really is the history format.
+    if (y < 1990 || y > 2200) continue
+    const twsKn = wspd * MS_TO_KN
+    if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
+    const dir = ndbcNum(f[5])
+    const gst = ndbcNum(f[7])
+    const gustKn = gst == null ? null : gst * MS_TO_KN
+    out.push({
+      t: new Date(Date.UTC(y, mo - 1, d, h, mi)).toISOString(),
+      twsKn,
+      gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+      twdDeg: wspd === 0 || dir == null ? null : normDeg(dir),
+    })
+  }
+  return out.sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
 }
 
 /** Nearest-first, and never show a station from the next sea. */
