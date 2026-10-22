@@ -38,6 +38,17 @@ const PUBLIC_ROUTES: Record<string, string> = {
     'the same 200 and the same sentence, so it cannot be used to enumerate a team. ' +
     'Its only effect is to send a recovery link TO THE ADDRESS GIVEN, throttled to ' +
     'one per address per minute.',
+  'obs/poll':
+    'a shared secret in x-obs-poll-secret (or Vercel Cron\'s Authorization: Bearer), ' +
+    'because the caller is a SCHEDULE and not a person — there is no session to check. ' +
+    'It refuses outright when OBS_POLL_SECRET is unset rather than running open, and ' +
+    'compares the whole secret rather than stopping at the first wrong character. ' +
+    'What holding it buys is narrow: the route takes no input but a list of source ' +
+    'NAMES it already knows, writes only readings fetched from the public networks ' +
+    'themselves, and returns counts. It cannot be made to store a number the caller ' +
+    'chose. Nothing in wind_observations is any team\'s data — it is other people\'s ' +
+    'public weather stations, and the table has no team_id, boat_id or session_id.',
+
   'access-request':
     'the public "Request access" form — the sender has no account and that is the point. ' +
     'It only ever INSERTS into access_requests and never reads anything back, and it is ' +
