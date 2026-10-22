@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 import {
-  parseMetar, parseFfvl, parseMfMarine, parseMfStationList, withinNm, type WindObs,
+  parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
+  latestPerStation, withinNm, type WindObs,
 } from '@/lib/windObs'
 
 // GET /api/obs?lat=43.275&lon=6.678&nm=40
@@ -54,89 +55,58 @@ async function ffvlAround(): Promise<WindObs[]> {
   return parseFfvl(await rel.json(), bal.ok ? await bal.json() : [])
 }
 
-// Météo-France DPObs — buoys and partner ships. The only sources here that sit
-// ON THE WATER, which is why they carry the highest trust in OBS_SOURCES.
+// Météo-France DPObs v2 — buoys and partner ships. The only sources here that
+// sit ON THE WATER, which is why they carry the highest trust in OBS_SOURCES.
 //
-// Shape of the problem: the list endpoints answer CSV and change about yearly;
-// the data endpoints answer JSON but take ONE STATION PER CALL. So the lists are
-// cached for a day and filtered to the venue FIRST, and only the handful that
-// survive cost a request each. Without that filter a 40 nm query would walk
-// every buoy in France to find the two that matter.
-const MF_BASE = 'https://public-api.meteofrance.fr/public/DPObs/v1'
-const MF_MAX_STATIONS = 8        // per kind; France has ~2-4 near any one venue
-
-// Observations land at round hour + 10'. Asking for the current hour before it
-// has been published returns the hour before anyway, but asking explicitly keeps
-// the cache key stable for everyone who calls within the same hour.
-function mfLatestHour(now = new Date()): string {
-  const d = new Date(now)
-  if (d.getUTCMinutes() < 10) d.setUTCHours(d.getUTCHours() - 1)
-  d.setUTCMinutes(0, 0, 0)
-  return d.toISOString().replace(/\.\d{3}Z$/, 'Z')
-}
+// Measured against the live API (scripts/mf-obs-probe.ts, 22 Oct 2026):
+//   **v1 is SUSPENDED** and answers 500 on every path. v2 only.
+//   **`/liste-bouees` is not a list** — it returns the full observations for
+//   every buoy over the retention window, so buoys cost ONE bulk call and zero
+//   per-station requests. That is why there is no station filter here: the
+//   caller's withinNm does the geography once, at the end, for every source.
+//   `/liste-bateaux` IS just a list (id;wigos;name), so ships need their own
+//   data call.
+const MF_BASE = 'https://public-api.meteofrance.fr/public/DPObs/v2'
 
 async function mfFetch(path: string, key: string, revalidate: number): Promise<Response> {
   return fetch(`${MF_BASE}${path}`, {
-    headers: { apikey: key, 'User-Agent': UA, Accept: 'application/json' },
+    headers: { apikey: key, 'User-Agent': UA },
     next: { revalidate },
   })
 }
 
-async function mfKind(
-  kind: 'buoy' | 'ship',
-  key: string,
-  lat: number,
-  lon: number,
-  nm: number,
-): Promise<WindObs[]> {
-  const [listPath, dataPath] = kind === 'buoy'
-    ? ['/liste-bouees', '/bouees']
-    : ['/liste-bateaux', '/bateaux']
-
-  const listRes = await mfFetch(listPath, key, 86400)      // metadata moves yearly
-  if (!listRes.ok) throw new Error(`mf ${kind} list ${listRes.status}`)
-  const meta = parseMfStationList(await listRes.text())
-
-  // Nearest-first, then capped. A ship's listed position is where it last
-  // reported, so this is a coarse pre-filter; withinNm re-checks the real
-  // position that comes back with the observation.
-  const cos = Math.cos((lat * Math.PI) / 180)
-  const near = Array.from(meta.entries())
-    .filter(([, m]) => m.lat != null && m.lon != null)
-    .map(([id, m]) => {
-      const dLat = (m.lat! - lat) * 60
-      const dLon = (m.lon! - lon) * 60 * cos
-      return { id, d2: dLat * dLat + dLon * dLon }
-    })
-    .filter((x) => x.d2 <= nm * nm)
-    .sort((a, b) => a.d2 - b.d2)
-    .slice(0, MF_MAX_STATIONS)
-
-  if (!near.length) return []
-
-  const date = mfLatestHour()
-  const settled = await Promise.allSettled(
-    near.map(async ({ id }) => {
-      const q = `?id_station=${encodeURIComponent(id)}&date=${encodeURIComponent(date)}&format=json`
-      const r = await mfFetch(`${dataPath}${q}`, key, CACHE_S)
-      if (!r.ok) throw new Error(`mf ${kind} ${id} ${r.status}`)
-      const body = await r.json()
-      return parseMfMarine(Array.isArray(body) ? body : [body], kind, meta)
-    }),
-  )
-  // One silent buoy must not take the other seven with it.
-  return settled.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+// `format` is REQUIRED — omitting it answers 400 "Vérifiez le paramètre format",
+// wrapped in WSO2 XML that reads like a bad key until you unpick it.
+async function mfCsv(path: string, key: string, revalidate: number): Promise<string> {
+  const res = await mfFetch(`${path}?format=csv`, key, revalidate)
+  if (!res.ok) throw new Error(`mf ${path} ${res.status}`)
+  return res.text()
 }
 
-// France only, and absent entirely until METEOFRANCE_API_KEY is set — same
-// contract as FFVL, so a venue outside France simply contributes nothing here.
-async function mfMarineAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+/** Buoys: one call, everything in it, newest row per station. */
+async function mfBuoys(key: string): Promise<WindObs[]> {
+  const rows = parseMfCsv(await mfCsv('/liste-bouees', key, CACHE_S))
+  return latestPerStation(parseMfMarine(rows, 'buoy'))
+}
+
+/**
+ * Ships: the list carries only id and name, so positions have to come from the
+ * data endpoint. Asked for in bulk — a moving ship cannot be pre-filtered by
+ * position anyway, since the only position it has is the one in the reading.
+ */
+async function mfShips(key: string): Promise<WindObs[]> {
+  const meta = parseMfStationList(await mfCsv('/liste-bateaux', key, 86400))
+  const rows = parseMfCsv(await mfCsv('/bateaux', key, CACHE_S))
+  return latestPerStation(parseMfMarine(rows, 'ship', meta))
+}
+
+// Absent entirely until METEOFRANCE_API_KEY is set — same contract as FFVL.
+// Not France-only despite the name: the buoy feed includes the overseas
+// territories (BOUEE_ANTILLES came back in the live sample).
+async function mfMarineAround(): Promise<WindObs[]> {
   const key = process.env.METEOFRANCE_API_KEY
   if (!key) return []
-  const [buoys, ships] = await Promise.allSettled([
-    mfKind('buoy', key, lat, lon, nm),
-    mfKind('ship', key, lat, lon, nm),
-  ])
+  const [buoys, ships] = await Promise.allSettled([mfBuoys(key), mfShips(key)])
   const out: WindObs[] = []
   if (buoys.status === 'fulfilled') out.push(...buoys.value)
   if (ships.status === 'fulfilled') out.push(...ships.value)
@@ -159,7 +129,7 @@ export async function GET(req: NextRequest) {
   const sources: Array<[string, Promise<WindObs[]>]> = [
     ['metar', metarAround(lat, lon, nm)],
     ['ffvl', ffvlAround()],
-    ['mf-marine', mfMarineAround(lat, lon, nm)],
+    ['mf-marine', mfMarineAround()],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
 

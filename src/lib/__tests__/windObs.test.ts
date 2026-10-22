@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   parseMetar, parseFfvl, isoFromFfvl, to10m, obs10mKn, ageMinutes, isStale, withinNm, OBS_SOURCES,
-  parseMfMarine, parseMfStationList, isoFromMf,
+  parseMfCsv, parseMfMarine, parseMfStationList, latestPerStation, isoFromMf,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -159,117 +159,161 @@ describe('OBS_SOURCES', () => {
 })
 
 // ── Météo-France marine ─────────────────────────────────────────────────────
-// Field names are the Météo-France/SYNOP convention (dd/ff/fxi). They are NOT
-// published for the marine endpoints, so these fixtures are the expected shape
-// rather than a captured payload — scripts/mf-obs-probe.ts replaces them with
-// the real thing, the way METAR_LIVE above was captured.
+// Captured live from DPObs v2 /liste-bouees on 2026-10-22 by
+// scripts/mf-obs-probe.ts. Header and rows verbatim — including the EMPTY pmer
+// cell in the first row, which is the whole reason parseMfCsv may not coerce a
+// blank to zero.
+const MF_BUOY_CSV = [
+  'lat;lon;geo_id_wmo;geo_id_wigos;name;reference_time;insert_time;validity_time;t;td;u;dd;ff;pmer;tmer;haut_vag;per_moy_vag;dir_vag;rafper;per',
+  '16.23;-59.16;4100230;0-250-0-97110001;BOUEE_ANTILLES;2026-10-21T02:08:05Z;2026-10-21T02:03:20Z;2026-10-21T02:00:00Z;302.15;297.95;78.0;110.0;3.9;;302.75;1.4;6.0;65.0;5.6;-10',
+  '16.23;-59.16;4100230;0-250-0-97110001;BOUEE_ANTILLES;2026-10-21T14:08:04Z;2026-10-21T14:03:22Z;2026-10-21T13:00:00Z;302.25;297.85;77.0;100.0;2.1;101470.0;302.75;1.3;7.0;60.0;3.4;-10',
+].join('\n')
 
-const MF_BUOY = [
-  { id_station: '6200001', nom_usuel: 'Golfe du Lion', lat: 42.1, lon: 4.7,
-    validity_time: '2026-10-22T09:00:00Z', dd: 290, ff: 9.3, fxi: 13.4 },
-]
+// /liste-bateaux, same day. Note it really IS a list: no position, no wind.
+const MF_SHIP_LIST_CSV = [
+  'geo_id_wmo;geo_id_wigos;name',
+  'ADFBKUM;0-22000-0-ADFBKUM;AKNOUL',
+  'CNGUSYM;0-22000-0-CNGUSYM;COTES DE LA MANCHE',
+].join('\n')
+
+describe('parseMfCsv', () => {
+  it('reads the live semicolon header', () => {
+    const rows = parseMfCsv(MF_BUOY_CSV)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ lat: 16.23, lon: -59.16, dd: 110, ff: 3.9, rafper: 5.6 })
+  })
+
+  it('leaves an EMPTY cell absent rather than reading it as zero', () => {
+    // Number('') is 0. A missing sea-level pressure silently becoming 0 Pa is
+    // exactly the kind of thing that is never noticed.
+    const [first, second] = parseMfCsv(MF_BUOY_CSV)
+    expect('pmer' in first).toBe(false)
+    expect(second.pmer).toBe(101470)
+  })
+
+  it('keeps an id as a STRING, whether it looks numeric or not', () => {
+    // geo_id_wmo is "4100230" for a buoy and "ADFBKUM" for a ship. Coercing the
+    // first would eat a leading zero and make the two kinds behave differently.
+    expect(parseMfCsv(MF_BUOY_CSV)[0].geo_id_wmo).toBe('4100230')
+    expect(parseMfCsv(MF_SHIP_LIST_CSV)[0].geo_id_wmo).toBe('ADFBKUM')
+  })
+
+  it('survives junk', () => {
+    expect(parseMfCsv('')).toHaveLength(0)
+    expect(parseMfCsv('only;a;header')).toHaveLength(0)
+    expect(parseMfCsv(null as never)).toHaveLength(0)
+  })
+})
 
 describe('parseMfMarine', () => {
-  it('converts m/s to knots and lands on the water', () => {
-    const [o] = parseMfMarine(MF_BUOY, 'buoy')
-    expect(o).toMatchObject({ id: 'mf-buoy:6200001', source: 'buoy', surface: 'sea', twdDeg: 290 })
-    expect(o.twsKn).toBeCloseTo(9.3 * 1.943844, 6)
-    expect(o.gustKn!).toBeCloseTo(13.4 * 1.943844, 6)
-    expect(o.t).toBe('2026-10-22T09:00:00.000Z')
-    expect(o.trust).toBe(OBS_SOURCES.buoy.trust)
+  it('reads the live buoy row', () => {
+    const o = parseMfMarine(parseMfCsv(MF_BUOY_CSV), 'buoy')
+    expect(o).toHaveLength(2)
+    expect(o[0]).toMatchObject({
+      id: 'mf-buoy:4100230', source: 'buoy', name: 'BOUEE_ANTILLES',
+      lat: 16.23, lon: -59.16, surface: 'sea', twdDeg: 110,
+    })
+    expect(o[0].twsKn).toBeCloseTo(3.9 * 1.943844, 6)      // 7.6 kn
+    expect(o[0].gustKn!).toBeCloseTo(5.6 * 1.943844, 6)    // rafper, not fxi
+    expect(o[0].t).toBe('2026-10-21T02:00:00.000Z')
+    expect(o[0].trust).toBe(OBS_SOURCES.buoy.trust)
   })
 
   it('publishes no anemometer height, and sits at sea level', () => {
     // No height = no correction (to10m refuses it), which is the honest answer:
     // MF does not say how high a buoy's anemometer is. elevM is 0 because the
-    // thing floats -- its ground level IS the water the race is on.
-    const [o] = parseMfMarine(MF_BUOY, 'buoy')
+    // thing floats — its ground level IS the water the race is on.
+    const [o] = parseMfMarine(parseMfCsv(MF_BUOY_CSV), 'buoy')
     expect(o.heightM).toBeNull()
     expect(o.elevM).toBe(0)
     expect(obs10mKn(o)).toBeNull()
   })
 
-  it('reads the same payload as a ship when told to', () => {
-    const [o] = parseMfMarine(MF_BUOY, 'ship')
-    expect(o.id).toBe('mf-ship:6200001')
-    expect(o.source).toBe('ship')
+  it('reads the same shape as a ship when told to', () => {
+    const [o] = parseMfMarine(parseMfCsv(MF_BUOY_CSV), 'ship')
+    expect(o.id).toBe('mf-ship:4100230')
     expect(o.trust).toBe(OBS_SOURCES.ship.trust)
     expect(OBS_SOURCES.ship.trust).toBeLessThan(OBS_SOURCES.buoy.trust)
   })
 
+  it('names a ship from the list, which is all the list carries', () => {
+    const meta = parseMfStationList(MF_SHIP_LIST_CSV)
+    const row = [{ geo_id_wmo: 'CNGUSYM', lat: 49.9, lon: -1.2, ff: 6, dd: 250, validity_time: '2026-10-21T13:00:00Z' }]
+    const [o] = parseMfMarine(row, 'ship', meta)
+    expect(o.name).toBe('COTES DE LA MANCHE')
+  })
+
   it('REFUSES a speed that implies the wrong unit', () => {
-    // The failure this adapter most has to fear: km/h read as m/s multiplies
-    // every speed by 3.6 and still looks plausible in light airs. 35 kn of real
-    // breeze comes back as 126 kn, so the tripwire is above any sailable wind.
-    const kmh = [{ ...MF_BUOY[0], ff: 70 }]              // 70 m/s = 136 kn
-    expect(parseMfMarine(kmh, 'buoy')).toHaveLength(0)
-    const ok = [{ ...MF_BUOY[0], ff: 25 }]               // 25 m/s = 48.6 kn, a real gale
-    expect(parseMfMarine(ok, 'buoy')).toHaveLength(1)
+    // The corroboration that ff is m/s is that t comes back as 302.15 K and pmer
+    // as 101470 Pa — the feed is SI throughout. If it were ever km/h, every
+    // speed would be 3.6x too big and still plausible in light airs.
+    const fast = parseMfCsv(MF_BUOY_CSV.replace(';3.9;;', ';70;;'))
+    expect(parseMfMarine(fast, 'buoy').filter((o) => o.t.endsWith('02:00:00.000Z'))).toHaveLength(0)
   })
 
   it('drops an implausible GUST without losing the mean wind', () => {
-    const [o] = parseMfMarine([{ ...MF_BUOY[0], fxi: 99 }], 'buoy')
+    const [o] = parseMfMarine([{ geo_id_wmo: 'X', lat: 16, lon: -59, ff: 3.9, rafper: 99, validity_time: '2026-10-21T02:00:00Z' }], 'buoy')
     expect(o.gustKn).toBeNull()
-    expect(o.twsKn).toBeCloseTo(9.3 * 1.943844, 6)
+    expect(o.twsKn).toBeCloseTo(3.9 * 1.943844, 6)
   })
 
-  it('treats calm as calm, not as a westerly', () => {
-    const [o] = parseMfMarine([{ ...MF_BUOY[0], ff: 0 }], 'buoy')
+  it('treats calm as calm, not as a southerly', () => {
+    const [o] = parseMfMarine([{ geo_id_wmo: 'X', lat: 16, lon: -59, ff: 0, dd: 180, validity_time: '2026-10-21T02:00:00Z' }], 'buoy')
     expect(o.twsKn).toBe(0)
     expect(o.twdDeg).toBeNull()
   })
 
-  it('places a row from the station list when it omits its own position', () => {
-    const meta = new Map([['6200001', { name: 'Golfe du Lion', lat: 42.1, lon: 4.7 }]])
-    const bare = [{ id_station: '6200001', validity_time: '2026-10-22T09:00:00Z', ff: 5, dd: 10 }]
-    const [o] = parseMfMarine(bare, 'buoy', meta)
-    expect([o.lat, o.lon]).toEqual([42.1, 4.7])
-    expect(o.name).toBe('Golfe du Lion')
-  })
-
-  it('survives junk and drops rows with no wind or no position', () => {
+  it('survives junk and drops rows with no wind, id or position', () => {
     expect(parseMfMarine([], 'buoy')).toHaveLength(0)
     expect(parseMfMarine(null as never, 'buoy')).toHaveLength(0)
     expect(parseMfMarine([null, 'x', 7] as never, 'buoy')).toHaveLength(0)
-    expect(parseMfMarine([{ ...MF_BUOY[0], ff: undefined }], 'buoy')).toHaveLength(0)
-    expect(parseMfMarine([{ id_station: 'X', ff: 5, validity_time: '2026-10-22T09:00:00Z' }], 'buoy')).toHaveLength(0)
+    expect(parseMfMarine([{ lat: 16, lon: -59, ff: 5, validity_time: '2026-10-21T02:00:00Z' }], 'buoy')).toHaveLength(0)
+    expect(parseMfMarine([{ geo_id_wmo: 'X', ff: 5, validity_time: '2026-10-21T02:00:00Z' }], 'buoy')).toHaveLength(0)
+  })
+})
+
+describe('latestPerStation', () => {
+  it('keeps the newest reading per buoy, not both', () => {
+    // The live file held the SAME buoy at 02:00 and 13:00. Drawing both puts
+    // this morning's wind on the map beside this afternoon's.
+    const all = parseMfMarine(parseMfCsv(MF_BUOY_CSV), 'buoy')
+    expect(all).toHaveLength(2)
+    const latest = latestPerStation(all)
+    expect(latest).toHaveLength(1)
+    expect(latest[0].t).toBe('2026-10-21T13:00:00.000Z')
+    expect(latest[0].twsKn).toBeCloseTo(2.1 * 1.943844, 6)
+  })
+
+  it('leaves distinct stations alone', () => {
+    const a = parseMfMarine([{ geo_id_wmo: 'A', lat: 1, lon: 1, ff: 5, validity_time: '2026-10-21T02:00:00Z' }], 'buoy')
+    const b = parseMfMarine([{ geo_id_wmo: 'B', lat: 2, lon: 2, ff: 5, validity_time: '2026-10-21T02:00:00Z' }], 'buoy')
+    expect(latestPerStation([...a, ...b])).toHaveLength(2)
   })
 })
 
 describe('isoFromMf', () => {
   it('keeps a zoned stamp', () => {
-    expect(isoFromMf('2026-10-22T09:00:00Z')).toBe('2026-10-22T09:00:00.000Z')
-    expect(isoFromMf('2026-10-22T11:00:00+02:00')).toBe('2026-10-22T09:00:00.000Z')
+    expect(isoFromMf('2026-10-21T02:00:00Z')).toBe('2026-10-21T02:00:00.000Z')
+    expect(isoFromMf('2026-10-21T04:00:00+02:00')).toBe('2026-10-21T02:00:00.000Z')
   })
   it('REFUSES a zone-less stamp rather than assuming UTC', () => {
     // CLAUDE.md's standing trap: every other clock in this project is venue-local
     // even when it is called UTC. If MF ever drops the Z, silence beats a reading
     // that is two hours out and looks fresh.
-    expect(isoFromMf('2026-10-22 09:00:00')).toBeNull()
+    expect(isoFromMf('2026-10-21 02:00:00')).toBeNull()
     expect(isoFromMf('not a time')).toBeNull()
   })
 })
 
 describe('parseMfStationList', () => {
-  it('reads a semicolon CSV with comma decimals', () => {
-    const csv = 'Id_station;Nom_usuel;Latitude;Longitude\n6200001;Golfe du Lion;42,100;4,700\n'
-    const m = parseMfStationList(csv)
-    expect(m.get('6200001')).toEqual({ name: 'Golfe du Lion', lat: 42.1, lon: 4.7 })
+  it('reads the live ship list', () => {
+    const m = parseMfStationList(MF_SHIP_LIST_CSV)
+    expect(m.size).toBe(2)
+    expect(m.get('ADFBKUM')).toEqual({ name: 'AKNOUL', lat: undefined, lon: undefined })
   })
-
-  it('reads a comma CSV with dot decimals', () => {
-    const m = parseMfStationList('id_station,nom,lat,lon\n6200002,Nice,43.5,7.2\n')
-    expect(m.get('6200002')).toEqual({ name: 'Nice', lat: 43.5, lon: 7.2 })
-  })
-
   it('returns an empty map rather than throwing on junk', () => {
     expect(parseMfStationList('').size).toBe(0)
-    expect(parseMfStationList('nothing;useful\n1;2\n').size).toBe(0)   // no id column
+    expect(parseMfStationList('nothing;useful\n1;2\n').size).toBe(0)
     expect(parseMfStationList(null as never).size).toBe(0)
-  })
-
-  it('keeps a station whose position is missing, so the data row can supply it', () => {
-    const m = parseMfStationList('id_station;nom\n6200003;Unknown\n')
-    expect(m.get('6200003')).toEqual({ name: 'Unknown', lat: undefined, lon: undefined })
   })
 })

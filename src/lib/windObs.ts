@@ -225,17 +225,30 @@ export function isoFromFfvl(s: string, offsetHours = 0): string | null {
 
 
 // ── Météo-France marine: buoys and partner ships ────────────────────────────
-// DPObs (public-api.meteofrance.fr/public/DPObs/v1), key in METEOFRANCE_API_KEY.
+// DPObs **v2** (public-api.meteofrance.fr/public/DPObs/v2), METEOFRANCE_API_KEY.
 //
-// WHY THESE TWO ARE THE PRIZE: every other network in this file measures over
-// LAND and then needs a height correction we usually cannot make, because the
-// mast height is unpublished. A buoy sits on the water, at the height the race
-// is, with nothing upwind of it. In OBS_SOURCES that is trust 9 against 7 for an
-// airport and 2 for a rooftop — and it is the only reading whose SURFACE is the
-// one the model is being checked over.
+// WHY THESE ARE THE PRIZE: every other network in this file measures over LAND
+// and then needs a height correction we usually cannot make, because the mast
+// height is unpublished. A buoy sits on the water, at the height the race is,
+// with nothing upwind of it. Trust 9, against 7 for an airport and 2 for a roof.
 //
-// Updated hourly at round hour + 10'. Buoy ids are 7 digits, ship ids 7
-// characters, both from the matching /liste-* endpoint. France only.
+// THREE THINGS LEARNED FROM THE WIRE (scripts/mf-obs-probe.ts, 22 Oct 2026),
+// each of which contradicts the obvious reading of the docs:
+//
+//  1. **v1 is SUSPENDED.** It answers 500 with
+//     `[State : SUSPENDED]` on every path. Only v2 serves. Subscribing to v1
+//     costs nothing and gains nothing.
+//  2. **`/liste-bouees` is NOT a station list.** Despite the name, it returns
+//     the full observations for EVERY buoy over the retention window — position,
+//     wind, pressure, sea state, the lot. So buoys cost ONE bulk call and no
+//     per-station requests at all. `/liste-bateaux`, confusingly, really is just
+//     a list: `geo_id_wmo;geo_id_wigos;name`, no position and no wind.
+//  3. **Everything is SI.** `t` comes back as 302.15 (K, = 29 °C at the Antilles
+//     buoy), `pmer` as 101470 (Pa). That is the corroboration that `ff` is m/s
+//     and not km/h — the single most expensive thing to get wrong here.
+//
+// The window holds SEVERAL rows per buoy (02:00 and 13:00 in the same file), so
+// a reader must take the newest per station or it draws this morning's wind.
 
 /** MF publishes wind in m/s (`ff`). Knots is what everything downstream speaks. */
 const MS_TO_KN = 1.943844
@@ -243,8 +256,8 @@ const MS_TO_KN = 1.943844
 // A unit error is the failure this file most has to fear: reading km/h as m/s
 // multiplies every speed by 3.6 and still produces a plausible-looking number on
 // a light day. 35 kn of real breeze then reads 126 kn, so anything past this is
-// refused rather than drawn. It is deliberately far above any sailable wind —
-// this is a units tripwire, not a weather filter.
+// refused rather than drawn. Deliberately far above any sailable wind — this is
+// a units tripwire, not a weather filter.
 const MAX_PLAUSIBLE_KN = 120
 
 const pickNum = (o: Record<string, unknown>, keys: readonly string[]): number | null => {
@@ -259,29 +272,60 @@ const pickStr = (o: Record<string, unknown>, keys: readonly string[]): string | 
   for (const k of keys) {
     const v = o[k]
     if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v)
   }
   return null
 }
 
-// Several spellings per quantity on purpose. The wind codes are not documented
-// publicly for the marine endpoints — `dd`/`ff`/`fxi` are the Météo-France and
-// SYNOP convention and are what we expect, but the alternatives cost nothing and
-// turn "the adapter returned zero rows" into "it just worked". Run
-// scripts/mf-obs-probe.ts against a real key to see which one answers, then this
-// list can be cut down to the truth.
+// Confirmed against the live v2 header on 22 Oct 2026:
+//   lat;lon;geo_id_wmo;geo_id_wigos;name;reference_time;insert_time;
+//   validity_time;t;td;u;dd;ff;pmer;tmer;haut_vag;per_moy_vag;dir_vag;rafper;per
+// `rafper` is the gust (rafale sur période) and is the one nobody would guess —
+// it is not fxi/fx/fxy, which is what the land stations use.
 const MF_KEYS = {
-  speed: ['ff', 'vitesse_vent', 'wind_speed', 'ffm', 'vent_moyen'],
-  dir: ['dd', 'direction_vent', 'wind_direction', 'ddm'],
-  gust: ['fxi', 'fx', 'fxy', 'rafale', 'wind_gust'],
+  speed: ['ff'],
+  dir: ['dd'],
+  gust: ['rafper', 'fxi', 'fx'],
   lat: ['lat', 'latitude'],
   lon: ['lon', 'longitude'],
-  id: ['id_station', 'numer_sta', 'num_sta', 'geo_id_insee', 'id'],
-  name: ['nom_usuel', 'nom', 'name', 'libelle'],
-  time: ['validity_time', 'reference_time', 'date', 'time'],
+  id: ['geo_id_wmo', 'geo_id_wigos', 'id_station', 'numer_sta'],
+  name: ['name', 'nom_usuel', 'nom'],
+  time: ['validity_time', 'reference_time'],
 } as const
 
 /**
- * One row of /bouees or /bateaux into a WindObs.
+ * Météo-France answers `format=csv` with a `;`-separated table, headers on line 1.
+ *
+ * Numeric cells are converted so the adapters can share one `num()` with the JSON
+ * sources, with two carve-outs that matter:
+ *   an EMPTY cell becomes undefined, never 0 — `Number('')` is 0, and a missing
+ *   pressure silently reading as zero is the kind of thing nobody notices;
+ *   an *_id_* column stays a STRING, because `geo_id_wmo` is "4100230" for a buoy
+ *   but "ADFBKUM" for a ship, and coercing would eat a leading zero.
+ */
+export function parseMfCsv(text: string): Record<string, unknown>[] {
+  const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim())
+  if (lines.length < 2) return []
+  const sep = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ','
+  const head = lines[0].split(sep).map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ''))
+  const out: Record<string, unknown>[] = []
+  for (const line of lines.slice(1)) {
+    const cells = line.split(sep)
+    const row: Record<string, unknown> = {}
+    head.forEach((h, i) => {
+      const raw = (cells[i] ?? '').trim().replace(/^"|"$/g, '')
+      if (!raw) return                                   // empty stays ABSENT, not 0
+      if (h.includes('id')) { row[h] = raw; return }      // ids are opaque strings
+      const n = Number(raw)
+      row[h] = Number.isFinite(n) ? n : raw
+    })
+    if (Object.keys(row).length) out.push(row)
+  }
+  return out
+}
+
+/**
+ * One row of Météo-France marine data into a WindObs.
  *
  * `kind` picks the source, and with it the trust and the legend colour — the
  * payloads are the same shape, so nothing else differs between a buoy and a ship.
@@ -299,12 +343,13 @@ export function parseMfMarine(
   for (const r of Array.isArray(rows) ? rows : []) {
     if (!r || typeof r !== 'object') continue
     const o = r as Record<string, unknown>
-    const rawId = pickStr(o, MF_KEYS.id) ?? (pickNum(o, MF_KEYS.id)?.toString() ?? null)
-    const m = (rawId && meta.get(rawId)) || {}
+    const rawId = pickStr(o, MF_KEYS.id)
+    if (rawId == null) continue
+    const m = meta.get(rawId) || {}
     const lat = pickNum(o, MF_KEYS.lat) ?? (m.lat ?? null)
     const lon = pickNum(o, MF_KEYS.lon) ?? (m.lon ?? null)
     const ms = pickNum(o, MF_KEYS.speed)
-    if (lat == null || lon == null || ms == null || rawId == null) continue
+    if (lat == null || lon == null || ms == null) continue
 
     const twsKn = ms * MS_TO_KN
     if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
@@ -338,52 +383,49 @@ export function parseMfMarine(
 }
 
 /**
- * Météo-France stamps `validity_time` as ISO. Unlike the log exports and FFVL
- * this one does carry its zone, so it is parsed as given rather than shifted —
- * but see CLAUDE.md on clocks: if the probe shows the newest observation sitting
- * an exact venue-offset in the future, this is the line that is wrong, not the
- * API. A bare "YYYY-MM-DD HH:MM:SS" with no zone is refused rather than assumed.
+ * The bulk feed carries the whole retention window — the live file held the same
+ * buoy at 02:00 and at 13:00. Keeping both would draw this morning's wind beside
+ * this afternoon's and let `withinNm` sort them into a meaningless order, so a
+ * station is reduced to its newest reading before anything else sees it.
+ */
+export function latestPerStation(obs: WindObs[]): WindObs[] {
+  const best = new Map<string, WindObs>()
+  for (const o of obs) {
+    const prev = best.get(o.id)
+    if (!prev || Date.parse(o.t) > Date.parse(prev.t)) best.set(o.id, o)
+  }
+  return Array.from(best.values())
+}
+
+/**
+ * Météo-France stamps `validity_time` as ISO with a Z, confirmed on the wire.
+ * Unlike the log exports and FFVL this one does carry its zone, so it is parsed
+ * as given rather than shifted — but see CLAUDE.md on clocks: a zone-less stamp
+ * is REFUSED rather than assumed to be UTC, because every other clock in this
+ * project is venue-local even when it is called UTC.
  */
 export function isoFromMf(s: string): string | null {
   const v = s.trim()
-  if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(v)) {
-    // No zone marker. Guessing costs an hour of silent error; say so instead.
-    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(v)) return null
-  }
+  if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(v) && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(v)) return null
   const d = Date.parse(v)
   return Number.isNaN(d) ? null : new Date(d).toISOString()
 }
 
 /**
- * The /liste-bouees and /liste-bateaux endpoints answer with CSV, not JSON.
- * Returns id -> position/name so a data row that omits its own coordinates can
- * still be placed, and so the caller can pick the handful of stations near the
- * venue BEFORE spending one request each on them.
+ * `/liste-bateaux` really IS a list — `geo_id_wmo;geo_id_wigos;name`, with no
+ * position and no wind. Returns id -> name so a ship's observation can be given
+ * a name, since the data rows carry the id and not much else.
  */
 export function parseMfStationList(csv: string): Map<string, { name?: string; lat?: number; lon?: number }> {
   const out = new Map<string, { name?: string; lat?: number; lon?: number }>()
-  const lines = String(csv || '').split(/\r?\n/).filter((l) => l.trim())
-  if (!lines.length) return out
-  const sep = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ','
-  const head = lines[0].split(sep).map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ''))
-  const col = (names: readonly string[]) => head.findIndex((h) => names.includes(h))
-  const iId = col(['id_station', 'numer_sta', 'num_sta', 'id'])
-  const iNm = col(['nom_usuel', 'nom', 'name', 'libelle'])
-  const iLa = col(['lat', 'latitude'])
-  const iLo = col(['lon', 'longitude'])
-  if (iId < 0) return out
-  for (const line of lines.slice(1)) {
-    const c = line.split(sep).map((x) => x.trim().replace(/^"|"$/g, ''))
-    const id = c[iId]
+  for (const row of parseMfCsv(csv)) {
+    const id = pickStr(row, MF_KEYS.id)
     if (!id) continue
-    const f = (i: number) => {
-      if (i < 0) return undefined
-      // MF CSVs use a comma decimal separator in some exports; only safe to swap
-      // when the separator itself is a semicolon, or "43,2" would already be split.
-      const v = Number(sep === ';' ? (c[i] || '').replace(',', '.') : c[i])
-      return Number.isFinite(v) ? v : undefined
-    }
-    out.set(id, { name: iNm >= 0 ? c[iNm] || undefined : undefined, lat: f(iLa), lon: f(iLo) })
+    out.set(id, {
+      name: pickStr(row, MF_KEYS.name) ?? undefined,
+      lat: pickNum(row, MF_KEYS.lat) ?? undefined,
+      lon: pickNum(row, MF_KEYS.lon) ?? undefined,
+    })
   }
   return out
 }
