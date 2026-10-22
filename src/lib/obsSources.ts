@@ -243,30 +243,64 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
 /**
  * Current conditions for a set of public-map Davis stations.
  *
- * Sequential on purpose: these are small calls to somebody else's public map,
- * and the METAR experiment earlier showed that firing a handful at once is not
- * reliably faster anyway. A station that fails is skipped, not fatal.
+ * EIGHT AT A TIME, measured. This used to be sequential, on a comment that
+ * generalised the METAR experiment — where tiling a bbox in parallel came out
+ * SLOWER — to this endpoint without ever testing it here. The two are not
+ * alike: METAR was a few large bbox queries against one search endpoint that
+ * serialises them anyway, while these are tiny independent per-station reads.
+ * Timed against the 36 nearest stations to Cowes on 22 Oct 2026:
+ *
+ *     sequential   8.4 s   (233 ms per call)
+ *     8 at once    1.15 s
+ *     12 at once   1.02 s
+ *
+ * So 8 is where the curve flattens; 12 buys 130 ms and opens half as many
+ * sockets again on somebody else's public map, which is not a trade worth
+ * making. Sequential was the whole reason the live map could only afford 8
+ * stations, which is why the Solent showed 6 of the 124 Davis stations
+ * within 20 nm of Cowes.
+ *
+ * A station that fails is skipped, not fatal.
  *
  * Anything that is really one of our curated embeds is dropped by POSITION —
  * the two sources id the same station differently, so nothing else connects
  * them, and the embed is the richer reading (10-minute mean, with a gust).
  */
+export const DAVIS_MAP_CONCURRENCY = 8
+
 export async function davisMapStations(list: DavisMapStation[]): Promise<WindObs[]> {
-  const out: WindObs[] = []
-  for (const st of list) {
-    try {
-      const r = await get(`https://www.weatherlink.com/map/data/station/${encodeURIComponent(st.id)}`)
-      const o = parseWeatherLinkMapStation(await r.json(), st.id)
-      // The index knows the position and the name; the detail call sometimes
-      // carries a blanker version of both.
-      if (o) out.push({ ...o, name: st.name || o.name, lat: st.lat, lon: st.lon })
-    } catch { /* one garden station being down is not an outage */ }
+  // Indexed, not pushed: the workers finish out of order and the caller's
+  // order is what the de-duplication downstream expects to be nearest-first.
+  const slots: Array<WindObs | null> = new Array(list.length).fill(null)
+  let next = 0
+  const worker = async () => {
+    for (;;) {
+      const i = next++
+      if (i >= list.length) return
+      const st = list[i]
+      try {
+        const r = await get(`https://www.weatherlink.com/map/data/station/${encodeURIComponent(st.id)}`)
+        const o = parseWeatherLinkMapStation(await r.json(), st.id)
+        // The index knows the position and the name; the detail call sometimes
+        // carries a blanker version of both.
+        if (o) slots[i] = { ...o, name: st.name || o.name, lat: st.lat, lon: st.lon }
+      } catch { /* one garden station being down is not an outage */ }
+    }
   }
-  return out
+  await Promise.all(Array.from({ length: Math.min(DAVIS_MAP_CONCURRENCY, list.length) }, worker))
+  return slots.filter((o): o is WindObs => o !== null)
 }
 
-/** The public-map stations near a point — what the live map needs, and no more. */
-export function davisMapNear(lat: number, lon: number, nm: number, max = 8): DavisMapStation[] {
+/**
+ * The public-map stations near a point — what the live map needs, and no more.
+ *
+ * The cap was 8 when each station cost 233 ms in series: 36 of them would have
+ * been eight seconds of the route's budget. At 8-way concurrency the same 36
+ * cost 1.15 s, so the cap is now set by what is worth DRAWING rather than by
+ * what we can afford to fetch. Windycator shows 24 around the Solent; 36
+ * clears that with room, and the declutterer thins them by zoom anyway.
+ */
+export function davisMapNear(lat: number, lon: number, nm: number, max = 36): DavisMapStation[] {
   const cos = Math.cos((lat * Math.PI) / 180)
   return DAVIS_MAP_STATIONS
     .map((s) => ({ s, d: Math.hypot((s.lat - lat) * 60, (s.lon - lon) * 60 * cos) }))

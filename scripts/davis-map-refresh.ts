@@ -15,6 +15,16 @@
 // 9, and one publishing no wind at all. Listed unchecked they would have been
 // absences on the map with nothing to say which.
 //
+// HOW MANY PER VENUE. This defaulted to 6, which was never a judgement about
+// coverage — it was the number that matched the live map's old fetch cap. There
+// are 124 public Davis stations within 20 nm of Cowes and the nearest 24 were
+// ALL live when measured on 22 Oct 2026, so 6 was throwing away a working
+// network: Windycator showed 24 stations around the Solent where SSA showed 6.
+// The default is now 24, which with two overlapping Solent venues puts the
+// area past Windycator. Raising it further costs the POLLER, not the map —
+// every station in this file is read every 15 minutes, so 24 per venue over
+// 12 venues is around 19,000 calls a day to somebody else's public endpoint.
+//
 // Run it when a venue is added, or once a season — station positions change
 // when somebody installs an anemometer, which is not often.
 
@@ -28,7 +38,7 @@ const flag = (n: string, d: string) => {
   const i = argv.indexOf(`--${n}`)
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : d
 }
-const PER = Number(flag('per', '6'))
+const PER = Number(flag('per', '24'))
 const NM = Number(flag('nm', '25'))
 const MAX_AGE_MIN = Number(flag('age', '180'))
 
@@ -99,9 +109,35 @@ async function main() {
   }
   const existing = (await import('node:fs')).readFileSync(path, 'utf8')
   const head = existing.slice(0, existing.indexOf('export const DAVIS_MAP_STATIONS'))
-  writeFileSync(path, `${head}export const DAVIS_MAP_STATIONS: DavisMapStation[] = [\n${rows}]\n`)
+
+  // The provenance block is GENERATED. The header used to carry a hand-written
+  // "built <date>" plus an instruction to update it and the dropped tally by
+  // hand, which is an instruction that is wrong the second time it is ignored.
+  const open = '// <generated>'
+  const close = '// </generated>'
+  const a = head.indexOf(open)
+  const b = head.indexOf(close)
+  if (a < 0 || b < a) {
+    console.error(`\nThe ${open} … ${close} block is missing from the header of`)
+    console.error('src/lib/windObsDavisMap.ts, so there is nowhere to record what this run')
+    console.error('found. Put it back rather than letting the file claim a stale tally.')
+    process.exit(1)
+  }
+  const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const perVenue = Array.from(byVenue.entries()).map(([v, l]) => `//   ${v}: ${l.length}`).join('\n')
+  const block = [
+    open,
+    `// ${kept.length} stations, the nearest ${PER} per venue within ${NM} nm, built ${when}.`,
+    `// ${dropped} of ${checked} candidates dropped as stale (over ${MAX_AGE_MIN} min), silent or`,
+    '// publishing no wind. Per venue:',
+    perVenue,
+    close,
+  ].join('\n')
+  const newHead = head.slice(0, a) + block + head.slice(b + close.length)
+
+  writeFileSync(path, `${newHead}export const DAVIS_MAP_STATIONS: DavisMapStation[] = [\n${rows}]\n`)
   console.log(`\nwrote ${kept.length} station(s) to src/lib/windObsDavisMap.ts`)
-  console.log('The header comment is kept — update its date and its dropped-station tally by hand.')
+  console.log('The provenance block in the header was rewritten too — nothing to update by hand.')
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })

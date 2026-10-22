@@ -1,8 +1,8 @@
 // Public Davis stations near our venues, from weatherlink.com's own map.
 //
 // GENERATED, not hand-found — scripts/davis-map-refresh.ts rebuilds it. The
-// index behind weatherlink.com/map lists 79,522 public stations worldwide with
-// their positions; this is the nearest six to each venue that were LIVE when
+// index behind weatherlink.com/map lists ~79,500 public stations worldwide with
+// their positions; this is the nearest few to each venue that were LIVE when
 // the list was built.
 //
 // WHY A FILE AND NOT A LOOKUP. That index is 8.4 MB. Fetching it every quarter
@@ -11,21 +11,35 @@
 // limit, so it would genuinely refetch every time. Station positions are stable;
 // the readings are not, and only the readings are polled.
 //
-// EVERY ENTRY WAS CHECKED, and five of the forty-eight candidates were dropped:
-//   LER and LPM-DOF-CICESE at Ensenada, last reporting 47 and 45 hours before.
-//   Beauvallon at St Tropez, 56 hours.
-//   Portorotondo at Porto Cervo, 9 hours.
-//   "Home" near Ensenada, which publishes no wind at all.
-// Listed unchecked they would have been silent absences with nothing to say
-// which — the same three-in-nine rate as the Solent club feeds.
+// EVERY ENTRY IS CHECKED AT BUILD TIME, and that is not a formality. On the
+// first build five of forty-eight candidates were dropped: LER and
+// LPM-DOF-CICESE at Ensenada, last reporting 47 and 45 hours before;
+// Beauvallon at St Tropez, 56 hours; Portorotondo at Porto Cervo, 9 hours; and
+// a "Home" near Ensenada that publishes no wind at all. Listed unchecked they
+// would have been silent absences on the map with nothing to say which — the
+// same three-in-nine rate as the Solent club feeds.
+//
+// HOW MANY, AND WHY IT WAS WRONG. This held the nearest SIX per venue for its
+// first day, which was never a coverage judgement — it was the live map's old
+// fetch cap, copied. There are 124 public Davis stations within 20 nm of Cowes
+// and the nearest 24 were all live when measured, so six was discarding a
+// working network while Windycator showed 24 stations over the same water.
+// The limit on going further is the POLLER, not the map: every station here is
+// read every 15 minutes, so each 24 per venue is roughly 19,000 calls a day to
+// somebody else's public endpoint.
 //
 // These are private stations their owners chose to publish: gardens, marinas,
 // boatyards, a yacht club. They draw as `pws`, the lowest trust, because a good
 // instrument in an unknown garden is exactly what that tier is for. Where one
-// of them IS a curated embed (Gurnard appears in both, under different ids),
-// dropDuplicatesOf removes it by position.
+// of them IS a curated embed (Gurnard and the NCI stations appear in both,
+// under different ids), dropDuplicatesOf removes it by position.
 //
-// Built 22 Oct 2026.
+// The block below is written by the script — do not edit it by hand. It used
+// to say "built 22 Oct 2026" with a note to update the date and the tally
+// manually, which is the kind of instruction that is wrong by the second run.
+// <generated>
+// 68 stations, the nearest 6 per venue, built 22 Oct 2026.
+// </generated>
 
 import type { WlMapStation } from './windObs'
 
