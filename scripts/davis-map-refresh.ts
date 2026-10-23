@@ -29,7 +29,8 @@
 // when somebody installs an anemometer, which is not often.
 
 import { writeFileSync } from 'node:fs'
-import { VENUES } from '../src/lib/obsSources'
+import { VENUES, stationsForPoll, POLL_EVERY_MIN } from '../src/lib/obsSources'
+import { decideVenues, FORCE_ALL } from '../src/lib/obsActivation'
 import { DAVIS_MAP_STATIONS } from '../src/lib/windObsDavisMap'
 import { parseWeatherLinkMapIndex, parseWeatherLinkMapStation } from '../src/lib/windObs'
 import { gradedPick, bandCounts, nmBetween, GRADED_DEFAULTS } from '../src/lib/obsDensity'
@@ -180,11 +181,20 @@ async function main() {
   }
 
   console.log(`\n${kept.length} kept (${rescued} carried without a live reading), ${dropped} dropped of ${checked} checked`)
-  // The number that decides whether this selection is reasonable: every
-  // station here is read on every poll.
-  const perDay = kept.length * (24 * 60 / 30)
-  console.log(`POLLER COST: ${kept.length} stations x 48 polls a day = ${perDay.toLocaleString('en-GB')} requests/day to weatherlink.com.`)
-  if (perDay > 20000) console.log('  ^ that is a lot for somebody else\'s public endpoint. Consider --maxsep 6 or --outer 35.')
+  // WHAT THIS SELECTION COSTS. Not simply kept x 48: since the activation
+  // gate, the far stations of a venue are only polled while that venue is
+  // DENSE. Reporting the dense figure alone would make a perfectly cheap
+  // selection look alarming, which is how a good default gets talked out of.
+  const asStations = kept.map((k) => ({ lat: k.lat, lon: k.lon }))
+  const idleCount = stationsForPoll(asStations, { venues: decideVenues(VENUES, {}) }).length
+  const denseCount = stationsForPoll(asStations, { venues: decideVenues(VENUES, { force: [FORCE_ALL] }) }).length
+  const perDay = (n: number) => (n * (24 * 60 / POLL_EVERY_MIN)).toLocaleString('en-GB')
+  console.log(`\nPOLLER COST, at the ${POLL_EVERY_MIN}-minute cadence:`)
+  console.log(`  idle (nobody racing)   ${String(idleCount).padStart(4)} stations = ${perDay(idleCount)} requests/day`)
+  console.log(`  every venue dense      ${String(denseCount).padStart(4)} stations = ${perDay(denseCount)} requests/day`)
+  console.log('  A venue only reaches the dense figure while an obs_venue_activation window')
+  console.log('  covers it, or a poll is called with ?domains=<key>.')
+  if (idleCount * 48 > 8000) console.log('  ^ the IDLE figure is the one to worry about; consider a tighter --inner.')
 
   const byVenue = new Map<string, typeof kept>()
   for (const k of kept) { const a = byVenue.get(k.venue) || []; a.push(k); byVenue.set(k.venue, a) }
