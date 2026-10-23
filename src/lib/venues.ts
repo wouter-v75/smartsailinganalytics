@@ -64,8 +64,21 @@ export const VENUES: Venue[] = [
   // SORRENTO was in the MOS venue list and NOT in this one, which is the
   // clearest sign the two had drifted: a venue with three years of fitted
   // coefficients that the observation network had never heard of.
-  { key: 'sorrento', name: 'Sorrento', lat: 40.60, lon: 14.42,
-    aliases: ['golfo di napoli', 'bay of naples', 'napoli'] },
+  // THE MIDDLE OF THE GULF OF NAPLES, 40.703947 / 14.215522 — the race area
+  // Wouter gave, not the town. It is 11.2 nm NW of [40.60, 14.42], which is
+  // where mos.js hardcoded the centre and therefore where the fitted Sorrento
+  // MOS has been matched until now.
+  //
+  // THAT MOVES THE MOS MATCH REGION. VENUE_MATCH_NM is 20, so the two centres
+  // are inside each other's radius and anything that matched before still
+  // matches — but a point 15 nm SE of the old centre is now 26 nm from this
+  // one and gets the raw forecast instead. The spec cannot tell us whether
+  // that is right: mos_sorrento.json records `venue`, `target_height_m`,
+  // `bands` and `models`, and NO POSITION, so where its three years of boat
+  // logs were actually sailed is not written down anywhere. Worth recording in
+  // the spec next time it is refitted.
+  { key: 'sorrento', name: 'Sorrento', lat: 40.703947, lon: 14.215522,
+    aliases: ['golfo di napoli', 'gulf of naples', 'bay of naples', 'napoli', 'naples'] },
   { key: 'la-spezia', name: 'La Spezia', lat: 44.10, lon: 9.83,
     aliases: ['golfo dei poeti', 'portovenere'] },
   { key: 'san-juan', name: 'San Juan Islands', lat: 48.5627, lon: -122.8946,
