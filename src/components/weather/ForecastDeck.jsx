@@ -23,7 +23,7 @@
 import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, fetchWindweightNearest, SSARACE_SOUNDING_LEVELS, ICON_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS, GFS_SOUNDING_LEVELS } from './openMeteo'
-import { matchVenue, specFor, mosSeries } from './mos'
+import { matchVenue, specFor, mosSeries, venueLabel } from './mos'
 import { tzAbbrev } from './venueTz'
 import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField, applyMosToField, scaleFieldSpeeds } from './windField'
 import { getWeatherSession } from './weatherSession'
@@ -1599,7 +1599,9 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
     setErr(''); setBusy(true)
     try {
       const P = window.PptxGenJS; if (!P) throw new Error('engine loading — retry shortly')
-      const venueName = (matchVenue(p1lat, p1lon) || 'venue').replace(/_/g, ' '); const tz = resolvedTz || 'UTC'
+      // The venue's real name, not a de-underscored key — the keys are
+      // hyphenated now, so the old replace(/_/g,' ') would print 'st-tropez'.
+      const venueName = venueLabel(matchVenue(p1lat, p1lon)) || 'venue'; const tz = resolvedTz || 'UTC'
       const venueKey = matchVenue(p1lat, p1lon); const spec = venueKey ? specFor(venueKey) : null
       const mosFor = (key, hourly) => { const id = MODELS[key]?.mosModel; return spec && id ? mosSeries(hourly, MODELS[key]?.heights || [10], spec, id, tz) : null }
       const mosZ = spec?.target_height_m || 30

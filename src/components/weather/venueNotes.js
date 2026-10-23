@@ -1,13 +1,18 @@
 // Per-venue MOS findings (prose) shown in the Venue MOS tab. Mirrors the
 // summaries in Smart Sailing Analytics/wind-verification/build_corrected.py.
 
-export const VENUE_LABEL = {
-  sorrento: 'Sorrento',
-  porto_cervo: 'Porto Cervo',
-  st_tropez: 'St Tropez',
-}
+// KEYED BY THE VENUE LIST (lib/venues.ts), hyphenated. This file used to keep
+// its own labels and its own key order — a fourth spelling of the same three
+// places, after MOS's, the observation network's and VENUE_COAST_NORMAL's.
+// The labels and the order now come from the one list, so a venue cannot
+// appear in the MOS picker under a key the spec table does not recognise.
+import { calibratedVenues, venueLabel } from './mos'
 
-export const VENUE_KEYS = ['sorrento', 'porto_cervo', 'st_tropez']
+export const VENUE_KEYS = calibratedVenues()
+
+export const VENUE_LABEL = Object.fromEntries(
+  VENUE_KEYS.map((k) => [k, venueLabel(k) || k]),
+)
 
 export const FINDINGS = {
   sorrento: {
@@ -23,7 +28,7 @@ export const FINDINGS = {
     rec: 'ECMWF or ICON-EU + diurnal (~3.5 kn). AROME is out of domain; ' +
       'ICON-2I shipped raw.',
   },
-  porto_cervo: {
+  'porto-cervo': {
     regime: 'Funnel / lee — mistral and gap-flow through the Bonifacio strait ' +
       '& Maddalena islands. Windier (median ~12 kn).',
     zones: 'Strongly direction-dependent (the headline). NW gap-flow ' +
@@ -38,7 +43,7 @@ export const FINDINGS = {
     rec: 'ARPEGE + sector (~2.7 kn) or a multi-model ensemble. AROME ' +
       'underperforms here (southern domain edge).',
   },
-  st_tropez: {
+  'st-tropez': {
     regime: 'Mixed — June sea-breeze (windier, ~12 kn) + October ' +
       'gradient/mistral (lighter). Most predictable venue (RMSE 2.3–3.4 kn).',
     zones: 'S–W (160–260°) is the problem regime — under-forecast 2–3 kn, ' +

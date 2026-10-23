@@ -13,37 +13,48 @@ import sorrento from './mos/mos_sorrento.json'
 import porto_cervo from './mos/mos_porto_cervo.json'
 import st_tropez from './mos/mos_st_tropez.json'
 import { wallHour } from './venueTz'
+import { venueAt, venueByKey, VENUE_MATCH_NM } from '../../lib/venues'
 
-const SPECS = { sorrento, porto_cervo, st_tropez }
-
-// Venue race-area centres. A point is matched to its NEAREST calibrated venue
-// only if within MATCH_RADIUS_NM of it; otherwise no MOS is applied (so a point
-// off La Spezia or anywhere without a fitted venue gets the raw forecast, never
-// a neighbouring venue's correction).
-const VENUE_CENTERS = {
-  sorrento: [40.60, 14.42],
-  porto_cervo: [41.13, 9.54],
-  st_tropez: [43.27, 6.62],
+// SPECS ARE KEYED BY VENUE KEY — the one in lib/venues.ts, hyphenated. This
+// file used to keep its own venue list, keyed with underscores, beside its own
+// copy of the centre positions; forecastDiagnostics then keyed VENUE_COAST_NORMAL
+// by THOSE keys while the observation network used hyphens. Three spellings of
+// the same places, nothing keeping them in step, and every mismatch silent:
+// a key that matches nothing is simply no correction.
+//
+// The JSON filenames keep their underscores; only the keys are shared.
+const SPECS = {
+  sorrento,
+  'porto-cervo': porto_cervo,
+  'st-tropez': st_tropez,
 }
-const MATCH_RADIUS_NM = 20
-const NM_PER_DEG = 60
 
+/**
+ * The venue key for a position, or null when it is not near a calibrated one.
+ *
+ * The position match, the radius and the venue centres all come from
+ * lib/venues.ts now. The radius still matters for the same reason it always
+ * did: outside it a point gets the raw forecast rather than a neighbour's
+ * correction, because a correction fitted off Saint-Tropez is worse than
+ * nothing at La Spezia.
+ */
 export function matchVenue(lat, lon) {
-  if (lat == null || lon == null || Number.isNaN(lat) || Number.isNaN(lon)) return null
-  const cosLat = Math.cos((lat * Math.PI) / 180)
-  let best = null
-  let bd = Infinity
-  for (const [v, [la, lo]] of Object.entries(VENUE_CENTERS)) {
-    const dLatNm = (lat - la) * NM_PER_DEG
-    const dLonNm = (lon - lo) * NM_PER_DEG * cosLat   // longitude shrinks with latitude
-    const dNm = Math.hypot(dLatNm, dLonNm)
-    if (dNm < bd) { bd = dNm; best = v }
-  }
-  return bd <= MATCH_RADIUS_NM ? best : null
+  const v = venueAt(lat, lon, VENUE_MATCH_NM)
+  return v ? v.key : null
+}
+
+/** The venue's display name — "St Tropez", not a de-underscored key. */
+export function venueLabel(key) {
+  return venueByKey(key)?.name || null
 }
 
 export function specFor(venue) {
-  return SPECS[venue] || null
+  return (venue && SPECS[venue]) || null
+}
+
+/** Venue keys that actually have fitted coefficients. */
+export function calibratedVenues() {
+  return Object.keys(SPECS)
 }
 
 // ── wind vectors (meteorological FROM convention) ──────────────────────

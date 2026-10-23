@@ -26,7 +26,7 @@ const dirOf = (f: any, i = 0) =>
   (((Math.atan2(-f.frames[0].u[i], -f.frames[0].v[i]) * 180) / Math.PI) % 360 + 360) % 360
 
 describe('applyMosToField — the deck/map path uses the same correction as the tables', () => {
-  const spec = specFor('porto_cervo')!
+  const spec = specFor('porto-cervo')!
   // Both SSA-Race resolutions inherit the icon_eu correction (mosApprox).
   const iconRaceMosId = MODELS.ICONRACE_1KM.mosModel
 
@@ -78,7 +78,7 @@ describe('applyMosToField — the deck/map path uses the same correction as the 
   })
 
   it('applies the diurnal term by local hour where one is fitted (St Tropez AROME)', () => {
-    const st = specFor('st_tropez')!
+    const st = specFor('st-tropez')!
     const id = MODELS.AROME.mosModel
     expect(st.models[id].type).toBe('diurnal')
     const morning = applyMosToField(fieldAt(14, 200, 'Sat 08:00'), st, id)
@@ -96,7 +96,7 @@ describe('applyMosToField — the deck/map path uses the same correction as the 
 })
 
 describe('the map says which number it is showing', () => {
-  const spec = specFor('porto_cervo')!
+  const spec = specFor('porto-cervo')!
   const mosId = MODELS.ICONRACE?.mosModel || 'icon_eu'
   it('tags a corrected field so the readout can name the correction', () => {
     const out: any = applyMosToField(fieldAt(16, 200), spec, mosId)
@@ -175,7 +175,7 @@ describe('scaleFieldSpeeds — re-anchoring a fitted correction to mast height',
     // This is what the 3D path now does, and it is mastKn()'s arithmetic:
     //   corrected_at_mast = MOS(v30) * (v_mast / v30)
     // rather than MOS(v_mast), which would feed a mast wind into a 30 m fit.
-    const spec = specFor('porto_cervo')!
+    const spec = specFor('porto-cervo')!
     const mosId = MODELS.ICONRACE_1KM.mosModel
     const at30: any = applyMosToField(fieldAt(14, 200), spec, mosId)
     const ratio = 1.08

@@ -68,8 +68,11 @@ export function circStd(dirs) {
 // Per-venue manual overrides (decision 2026-06-22: auto-derive + override). Keyed
 // by the venue key returned by mos.matchVenue(). Fill/adjust as venues are tuned.
 export const VENUE_COAST_NORMAL = {
-  // la_spezia: Gulf opens to the SSW → sea lies to the ~205-215°. TUNE on site.
-  la_spezia: 210,
+  // Keyed by the venue key in lib/venues.ts — HYPHENATED. This read
+  // `la_spezia` while the venue list said `la-spezia`, so the override never
+  // fired and every La Spezia point silently fell through to the DEM derive.
+  // 'la-spezia': Gulf opens to the SSW → sea lies to the ~205-215°. TUNE on site.
+  'la-spezia': 210,
   // Add Channel/Solent, Scandinavian venues as they come online.
 }
 

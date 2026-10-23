@@ -20,6 +20,7 @@ import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
 import { WEATHERFILE_STATIONS, type WeatherfileStation } from './windObsWeatherfile'
 import { CLUB_FEEDS, parseClubFeed, type ClubFeed } from './windObsClubs'
 import { gradedPick, nmBetween, type GradedOptions } from './obsDensity'
+import { VENUES } from './venues'
 import {
   decideVenues, IDLE_NM, IDLE_MIN_PER_VENUE,
   type ActivationInput, type VenueDecision,
@@ -33,82 +34,8 @@ export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
  * asks. 60 nm is generous for a race area and still cuts NDBC's 865 stations
  * and Pioupiou's 758 down to the hundred or so that could matter.
  */
-export interface Venue {
-  /**
-   * Stable slug. This is what a cron line, an activation row and a hand-run
-   * poll all name a venue by, so it must not change with the display name —
-   * renaming "St Tropez" to "Golfe de Saint-Tropez" must not silently stop a
-   * regatta's dense polling.
-   */
-  key: string
-  name: string
-  lat: number
-  lon: number
-  /** Overrides for the DENSE graded set; obsDensity defaults otherwise. */
-  dense?: GradedOptions
-  /**
-   * Other spellings that mean this venue, for matching the free-text
-   * `location` on a campaign session. Matching is on a normalised form —
-   * unaccented, lower case, punctuation stripped — so "Saint-Tropez" already
-   * covers "SAINT TROPEZ" and an en dash. What belongs here is a DIFFERENT
-   * NAME for the same water, not a different typography of the same name.
-   *
-   * Nothing is guessed by near-spelling: a location either matches or it is
-   * reported unmatched, because a regatta with no dense network and no
-   * complaint is the failure this exists to prevent.
-   */
-  aliases?: readonly string[]
-}
+export { VENUES, venueByKey, venueAt, VENUE_MATCH_NM, type Venue } from './venues'
 
-export const VENUES: Venue[] = [
-  { key: 'solent', name: 'Solent / Cowes', lat: 50.766, lon: -1.288,
-    aliases: ['the solent', 'cowes iow', 'isle of wight', 'rys', 'cowes week'] },
-  { key: 'lymington', name: 'Lymington', lat: 50.733, lon: -1.533,
-    aliases: ['lymington river', 'rlymyc', 'western solent'] },
-  // The middle of the Golfe de Saint-Tropez, off the point Wouter races
-  // around, not the town quay: 43.266897, 6.698371.
-  { key: 'st-tropez', name: 'St Tropez', lat: 43.266897, lon: 6.698371,
-    aliases: [
-      'saint tropez', 'golfe de saint tropez', 'golfe de st tropez',
-      'les voiles de saint tropez', 'les voiles de st tropez',
-      'giraglia', 'maxi worlds', 'maxi yacht rolex cup st tropez',
-    ] },
-  { key: 'porto-cervo', name: 'Porto Cervo', lat: 41.135, lon: 9.538,
-    aliases: ['costa smeralda', 'yccs', 'sardinia', 'maxi yacht rolex cup'] },
-  { key: 'la-spezia', name: 'La Spezia', lat: 44.10, lon: 9.83,
-    aliases: ['golfo dei poeti', 'portovenere'] },
-  { key: 'san-juan', name: 'San Juan Islands', lat: 48.5627, lon: -122.8946,
-    aliases: ['san juans', 'friday harbor', 'friday harbour', 'anacortes'] },
-  { key: 'long-beach', name: 'Long Beach / San Pedro', lat: 33.72, lon: -118.27,
-    aliases: ['los angeles', 'la28', 'alamitos bay', 'abyc', 'long beach ca'] },
-  // ENSENADA IS THE ONE VENUE WITH NOTHING NEAR IT, and it is not for want of
-  // looking (22 Oct 2026):
-  //   NDBC stops at the border — nothing within 30 nm, nearest wind 50 nm away
-  //     at the Tijuana River.
-  //   MMES, Ensenada's airport, publishes NO METAR at all: asked for five
-  //     Mexican stations by name, four answered and that was the one missing.
-  //     MMTJ (Tijuana), 50 nm north, is the closest METAR there is.
-  //   CONAGUA has an EMA 3 nm away — P. LOPEZ ZAMORA, id 68 — but its public
-  //     feed is DOWN, not merely awkward: GetInfoEMAS_v2 answers `info: null`
-  //     for it, ConsultaCluster.php returns 500, and all 321 stations in the
-  //     country are flagged `emaError`. Worth re-checking in a season; the
-  //     station is there and the endpoints are known.
-  // It stays in the list because the 60 nm filter still catches the Tijuana
-  // stations, which is context even if it is not course wind.
-  { key: 'ensenada', name: 'Ensenada', lat: 31.85, lon: -116.62,
-    aliases: ['bahia de todos santos', 'newport to ensenada', 'n2e'] },
-  // The Oslofjord corridor: Larvik up to Oslo, east to Sarpsborg and north to
-  // Gardermoen. Four points rather than one box, because the Davis station
-  // list is picked per venue and one centre would cluster them all together.
-  { key: 'viksfjord', name: 'Viksfjord / Larvik', lat: 59.03, lon: 10.15,
-    aliases: ['stavern', 'nevlunghavn'] },
-  { key: 'oslofjord', name: 'Oslofjord / Horten', lat: 59.42, lon: 10.48,
-    aliases: ['oslofjorden', 'moss', 'tonsberg', 'toensberg'] },
-  { key: 'oslo', name: 'Oslo', lat: 59.90, lon: 10.73,
-    aliases: ['indre oslofjord', 'kns', 'bygdoy'] },
-  { key: 'fredrikstad', name: 'Fredrikstad / Sarpsborg', lat: 59.22, lon: 10.95,
-    aliases: ['hvaler', 'vesteroy'] },
-]
 export const VENUE_NM = 60
 
 /**
