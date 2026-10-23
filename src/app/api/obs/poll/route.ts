@@ -28,7 +28,38 @@ import { campaignWindows } from '@/lib/obsCampaignWindows'
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
-const RETAIN_DAYS = 90
+/**
+ * How long observations are kept. THREE YEARS, and the number is a training
+ * set rather than a housekeeping choice.
+ *
+ * It was 90 days, which was a sensible default for a map that only ever asks
+ * "what is the wind doing now". It is hopeless for the thing these
+ * observations are being collected FOR: the verification literature puts a
+ * LOCAL wind MOS fit at 365-1816 days, and one study could not estimate a
+ * 15-parameter local EMOS at all on 161 days. At 90 days a per-venue fit is
+ * permanently out of reach.
+ *
+ * AND IT IS THE ONLY IRREVERSIBLE DECISION HERE. Everything else in this
+ * pipeline can be changed later and recomputed from stored rows. This cannot:
+ * the upstream networks keep between 24 hours and 45 days, and the Davis map
+ * stations and Pioupiou beacons keep NOTHING — their endpoints serve the
+ * current reading and no past. A day not stored is gone for good, so waiting
+ * one more season costs one more season, for ever.
+ *
+ * What it costs: roughly 12-15k rows a day across the whole network (most
+ * sources are one row per station per poll; WeatherFile and Hill Head publish
+ * five-minute series, so they contribute a few hundred each). Three years is
+ * of the order of 15 million rows and a few GB with both indexes — no
+ * partitioning, and the two indexes in 0101 already cover all three query
+ * shapes, including this sweep. Worth watching the project's disk, which is
+ * the one resource this does consume.
+ *
+ * NOT DONE, deliberately: a tiered scheme keeping native cadence only for the
+ * fit-tier stations and an hourly aggregate for the rest. It would save most
+ * of the volume, but it throws away the gust and lull structure that exposure
+ * inference needs, and the saving is not yet worth the irreversibility.
+ */
+const RETAIN_DAYS = 1095
 
 function authorised(req: NextRequest): boolean {
   const want = process.env.OBS_POLL_SECRET

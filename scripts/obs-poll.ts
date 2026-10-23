@@ -30,7 +30,10 @@ const flag = (n: string, d?: string) => {
   const i = argv.indexOf(`--${n}`)
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : d
 }
-const RETAIN_DAYS = Number(flag('retain', '90'))
+// Three years — see the comment on RETAIN_DAYS in src/app/api/obs/poll/route.ts.
+// A local wind MOS fit needs 365-1816 days, and the upstream networks keep
+// between nothing and 45 days, so a day not stored is gone for good.
+const RETAIN_DAYS = Number(flag('retain', '1095'))
 
 const env: Record<string, string> = (() => {
   const p = new URL('../.env.local', import.meta.url)

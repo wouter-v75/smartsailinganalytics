@@ -31,8 +31,12 @@
 -- reading was taken, not where the station is today.
 --
 -- RETENTION is enforced by the poller, not by the database: it deletes beyond
--- the window after each run. At ~250 stations every 30 minutes this is about
--- 12k rows a day, so 90 days is a few hundred MB and nothing needs partitioning.
+-- the window after each run. The window itself lives in RETAIN_DAYS in
+-- src/app/api/obs/poll/route.ts and is THREE YEARS, because these rows are a
+-- MOS training set and a local wind fit needs 365-1816 days of it. At ~12-15k
+-- rows a day that is of the order of 15 million rows and a few GB with both
+-- indexes below — no partitioning. Do not restate the number here: one place
+-- owns it, and a comment that disagrees with the code is worse than none.
 --
 -- RLS: any signed-in user reads; only the service key writes (the poller runs
 -- on the regatta box with the service key). Public weather is not per-team.

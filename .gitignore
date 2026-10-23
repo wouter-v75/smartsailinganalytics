@@ -108,3 +108,7 @@ media-in/*
 # for poking at a log or a Bunny response by hand. Root-level only, so a real
 # file named _something.js inside src/ is still tracked.
 /_*.js
+
+# Deep-research working folders (the delivered report lives in docs/)
+research_notes/
+reports/
