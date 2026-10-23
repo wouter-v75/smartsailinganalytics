@@ -5,7 +5,7 @@ import { WEATHERLINK_EMBEDS } from '@/lib/windObsEmbeds'
 import {
   davisMapNear, davisMapStations, collectObservations,
   portlogObs, portlogInReach, weatherfileObs, weatherfileNear,
-  clubsObs, clubsNear,
+  clubsObs, clubsNear, mfLandNear,
 } from '@/lib/obsSources'
 import { FORCE_ALL } from '@/lib/obsActivation'
 import {
@@ -319,6 +319,17 @@ async function clubsAround(lat: number, lon: number, nm: number): Promise<WindOb
   return latestPerStation(await clubsObs(near))
 }
 
+/**
+ * Météo-France LAND stations near the viewport — the national network, which
+ * at a French venue is the only thing in the inner circle.
+ *
+ * Six stations, not the poller's forty: a per-station endpoint is affordable
+ * here only because it is bounded. Absent entirely without the key.
+ */
+async function mfLandAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+  return withinNm(await mfLandNear(lat, lon, nm), lat, lon, nm)
+}
+
 async function frostLive(): Promise<WindObs[]> {
   // FORCED DENSE. Activation gates the POLLER, which runs unattended; a person
   // looking at the map is itself the answer to "is anybody interested in this
@@ -396,6 +407,7 @@ export async function GET(req: NextRequest) {
     ['portlog', portlogAround(lat, lon, nm)],
     ['weatherfile', weatherfileAround(lat, lon, nm)],
     ['clubs', clubsAround(lat, lon, nm)],
+    ['mf-land', mfLandAround(lat, lon, nm)],
     ['stored', storedAround(lat, lon, nm)],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))

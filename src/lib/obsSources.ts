@@ -11,7 +11,7 @@ import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
   parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
   parsePortlog, parsePortlogLatestUrl, parseWeatherfile,
-  parseMfCsv, parseMfStationList, parseMfLand, latestPerStation,
+  parseMfCsv, parseMfStationList, parseMfLand, latestPerStation, type MfStationMeta,
   parseMetOfficeLandObs, parseFrostObs,
   withinNm, type WindObs, type MetOfficeSite, type FrostSite,
 } from './windObs'
@@ -319,6 +319,37 @@ const RUNNERS: Record<SourceName, (ctx: PollContext) => Promise<WindObs[]>> = {
   },
 }
 
+
+
+/**
+ * Which of an UNGRADED pool to poll around one venue.
+ *
+ * stationsForPoll is for a fixed registry that was already graded when it was
+ * built. This is for a pool that was not — the Météo-France station list is
+ * every station in France — so a dense venue has to be thinned here, and an
+ * idle one still needs the nearest-few floor.
+ *
+ * THE FLOOR IS THE WHOLE POINT, and leaving it out of the Météo-France path
+ * cost exactly what it was written to prevent: CAP CAMARAT is 4.1 nm from the
+ * Golfe de Saint-Tropez and the idle radius is 3 nm, so grading to the idle
+ * radius alone excluded the single most useful station at the venue — the one
+ * station actually in the 5 nm circle — whenever no regatta was running.
+ */
+export function selectAroundVenue<T extends { lat: number; lon: number }>(
+  pool: readonly T[],
+  v: VenueDecision,
+): T[] {
+  if (v.mode === 'dense') return gradedPick(pool, v.lat, v.lon, { outerNm: v.radiusNm })
+  const ranked = pool
+    .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon))
+    .map((s) => ({ s, d: nmBetween(v.lat, v.lon, s.lat, s.lon) }))
+    .sort((a, b) => a.d - b.d)
+  const out: T[] = []
+  ranked.forEach((x, i) => {
+    if (x.d <= v.radiusNm || (i < IDLE_MIN_PER_VENUE && x.d <= VENUE_NM)) out.push(x.s)
+  })
+  return out
+}
 
 /**
  * Which of a fixed station registry to poll this run: anything inside the
@@ -633,6 +664,78 @@ export const MF_BASE_V2 = 'https://public-api.meteofrance.fr/public/DPObs/v2'
 /** Per-station calls, so the selection is deliberately not large. */
 export const MF_LAND_MAX = 40
 
+/**
+ * How many land stations the LIVE map fetches around a viewport.
+ *
+ * It was poller-only at first, on the reasoning that thirty stations is thirty
+ * calls. That reasoning was right about the poller and wrong about the map:
+ * the same route already makes 36 Davis calls per view, so six here is
+ * proportionate — and the alternative is that Cap Camarat, the only station
+ * inside the 5 nm circle at Saint-Tropez, does not appear until the next poll
+ * has run and stored it. "Not visible after reload" is the symptom.
+ */
+export const MF_LAND_LIVE_MAX = 6
+
+/**
+ * The station list: the metadata map AND the subset that has a position.
+ *
+ * Both come out of one fetch because both callers need both — the positions to
+ * choose stations and the metadata to name them and give them an altitude.
+ * Cached for a day; stations do not move.
+ */
+export async function mfLandStations(): Promise<{
+  meta: Map<string, MfStationMeta>
+  placed: Array<{ id: string; lat: number; lon: number }>
+} | null> {
+  const key = process.env.METEOFRANCE_API_KEY
+  if (!key) return null
+  const r = await fetch(`${MF_BASE_V2}/liste-stations?format=csv`, {
+    headers: { apikey: key, 'User-Agent': UA },
+    next: { revalidate: 86400 },
+  })
+  if (!r.ok) throw new Error(`mf /liste-stations ${r.status}`)
+  const meta = parseMfStationList(await r.text())
+  const placed = Array.from(meta.entries())
+    .filter(([, m]) => Number.isFinite(m.lat) && Number.isFinite(m.lon))
+    .map(([id, m]) => ({ id, lat: m.lat as number, lon: m.lon as number }))
+  return { meta, placed }
+}
+
+/**
+ * The nearest land stations to a point, for the live map. Cached per station
+ * for five minutes: the feed is six-minutely, so a shorter window would spend
+ * the rate limit re-fetching the same row.
+ */
+export async function mfLandNear(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+  const key = process.env.METEOFRANCE_API_KEY
+  if (!key) return []
+  const list = await mfLandStations()
+  if (!list) return []
+  const { meta, placed } = list
+
+  const near = placed
+    .map((s) => ({ s, d: nmBetween(lat, lon, s.lat, s.lon) }))
+    .filter((x) => x.d <= nm)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, MF_LAND_LIVE_MAX)
+    .map((x) => x.s)
+  if (!near.length) return []
+
+  const per = await mapPooled(near, DAVIS_MAP_CONCURRENCY, async (st) => {
+    try {
+      const r = await fetch(
+        `${MF_BASE_V2}/station/infrahoraire-6m?id_station=${encodeURIComponent(st.id)}&format=csv`,
+        { headers: { apikey: key, 'User-Agent': UA }, next: { revalidate: 300 } },
+      )
+      if (!r.ok) return null
+      return latestPerStation(parseMfLand(parseMfCsv(await r.text()), meta, { stationId: st.id }))
+    } catch {
+      return null // one station being down is not an outage
+    }
+  })
+  return per.flat()
+}
+
 export async function mfLandObs(ctx: PollContext): Promise<WindObs[]> {
   const key = process.env.METEOFRANCE_API_KEY
   if (!key) return []
@@ -656,9 +759,10 @@ export async function mfLandObs(ctx: PollContext): Promise<WindObs[]> {
   // Union across venues, nearest-venue-first, de-duplicated.
   const chosen = new Map<string, { id: string; lat: number; lon: number }>()
   for (const v of ctx.venues) {
-    // An idle venue grades only its inner circle, so an out-of-season venue
-    // costs a handful of calls rather than forty.
-    for (const s of gradedPick(placed, v.lat, v.lon, { outerNm: v.radiusNm })) {
+    // Dense grades the whole 50 nm; idle takes the inner circle PLUS the
+    // nearest few, which is what keeps Cap Camarat at 4.1 nm when the idle
+    // radius is 3.
+    for (const s of selectAroundVenue(placed, v)) {
       if (!chosen.has(s.id)) chosen.set(s.id, s)
     }
   }

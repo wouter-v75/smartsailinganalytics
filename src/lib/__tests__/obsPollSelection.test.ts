@@ -6,7 +6,9 @@
 // land — where every station is its own request, 48 times a day.
 
 import { describe, expect, it } from 'vitest'
-import { stationsForPoll, VENUES, keepRadiusNm, type PollContext } from '../obsSources'
+import {
+  stationsForPoll, selectAroundVenue, VENUES, keepRadiusNm, type PollContext,
+} from '../obsSources'
 import { decideVenues, IDLE_NM, FORCE_ALL } from '../obsActivation'
 import { DAVIS_MAP_STATIONS } from '../windObsDavisMap'
 import { WEATHERFILE_STATIONS } from '../windObsWeatherfile'
@@ -114,5 +116,52 @@ describe('keepRadiusNm', () => {
     // Bulk feeds are free to ask for, so a dense venue keeps more than it
     // even selects per-station.
     expect(keepRadiusNm(dense)).toBeGreaterThanOrEqual(GRADED_DEFAULTS.outerNm)
+  })
+})
+
+describe('selectAroundVenue (an ungraded pool, such as all of France)', () => {
+  // The Météo-France list is every station in the country, so it has to be
+  // thinned when dense AND floored when idle. Leaving out the floor is what
+  // hid Cap Camarat.
+  const LA = 43.266897
+  const LO = 6.698371
+  const CAMARAT = { id: '83101001', lat: 43.2005, lon: 6.6745 }   // 4.1 nm
+  const COGOLIN = { id: '83042001', lat: 43.25, lon: 6.53 }       // 8.2 nm
+  const FREJUS = { id: '83061001', lat: 43.4327, lon: 6.7358 }    // 9.9 nm
+  const PARIS = { id: '75114001', lat: 48.85, lon: 2.35 }         // far away
+  const pool = [CAMARAT, COGOLIN, FREJUS, PARIS]
+
+  const decisionFor = (opts: Parameters<typeof decideVenues>[1]) =>
+    decideVenues(VENUES, { ...opts, nowMs: NOW }).find((v) => v.key === 'st-tropez')!
+
+  it('keeps Cap Camarat when St Tropez is IDLE, though it is outside the 3 nm radius', () => {
+    // The regression. Cap Camarat is 4.1 nm out and the idle radius is 3, so
+    // a radius-only rule drops the single most useful station at the venue —
+    // the only one inside the 5 nm circle — whenever no regatta is running.
+    const kept = selectAroundVenue(pool, decisionFor({}))
+    expect(kept.map((s) => s.id)).toContain('83101001')
+  })
+
+  it('keeps it when St Tropez is DENSE too', () => {
+    const kept = selectAroundVenue(pool, decisionFor({ force: ['st-tropez'] }))
+    expect(kept.map((s) => s.id)).toContain('83101001')
+  })
+
+  it('does not drag in the other end of the country either way', () => {
+    for (const opts of [{}, { force: ['st-tropez'] }]) {
+      expect(selectAroundVenue(pool, decisionFor(opts)).map((s) => s.id)).not.toContain('75114001')
+    }
+  })
+
+  it('selects more when dense than when idle', () => {
+    const idle = selectAroundVenue(pool, decisionFor({})).length
+    const dense = selectAroundVenue(pool, decisionFor({ force: ['st-tropez'] })).length
+    expect(dense).toBeGreaterThanOrEqual(idle)
+  })
+
+  it('floors at the nearest few, not at everything in range', () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ id: `x${i}`, lat: LA + 0.2 + i * 0.01, lon: LO }))
+    const kept = selectAroundVenue(many, decisionFor({}))
+    expect(kept.length).toBeLessThanOrEqual(IDLE_MIN_PER_VENUE)
   })
 })
