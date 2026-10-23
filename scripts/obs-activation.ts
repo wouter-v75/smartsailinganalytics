@@ -36,6 +36,7 @@ import {
 import {
   decideVenues, windowCovers, FORCE_ALL, type ActivationWindow,
 } from '../src/lib/obsActivation'
+import { campaignWindows, matchVenueByName } from '../src/lib/obsCampaignWindows'
 import { DAVIS_MAP_STATIONS } from '../src/lib/windObsDavisMap'
 import { WEATHERFILE_STATIONS } from '../src/lib/windObsWeatherfile'
 import { CLUB_FEEDS } from '../src/lib/windObsClubs'
@@ -104,6 +105,7 @@ async function main() {
     endsAt: String(r.ends_at), reason: r.reason as string | null,
   }))
 
+  let campaignDerived: ActivationWindow[] = []
   const del = flag('delete')
   const venueKey = flag('venue')
   const from = flag('from')
@@ -157,6 +159,40 @@ async function main() {
     return
   }
 
+  // THE CAMPAIGN CALENDAR. Read every dated session with a location and show
+  // which venue each location resolves to — because the locations are free
+  // text and a location matching nothing means a regatta with no dense
+  // network. This is the audit worth running before trusting the derivation.
+  const { data: sess, error: sErr } = await sb.from('sessions')
+    .select('date, event, location, tz_offset_minutes')
+    .not('location', 'is', null)
+    .order('date', { ascending: true })
+  if (sErr) {
+    console.error(`\nCould not read sessions: ${sErr.message}`)
+  } else {
+    const rows = sess ?? []
+    const counts = new Map<string, number>()
+    for (const r of rows) {
+      const loc = String(r.location ?? '').trim()
+      if (loc) counts.set(loc, (counts.get(loc) ?? 0) + 1)
+    }
+    console.log(`\nCALENDAR LOCATIONS (${counts.size} distinct over ${rows.length} dated sessions)`)
+    const sortedLocs = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
+    for (const [loc, n] of sortedLocs) {
+      const key = matchVenueByName(loc, VENUES)
+      console.log(`  ${String(n).padStart(4)}x  ${loc.padEnd(32)} ${key ? `→ ${key}` : '→ NO VENUE — add an alias in VENUES, or this never goes dense'}`)
+    }
+    const derived = campaignWindows(rows, VENUES)
+    const live = derived.windows.filter((w) => windowCovers(w, Date.now()))
+    console.log(`\nDERIVED FROM THE CALENDAR: ${derived.windows.length} window(s), ${live.length} covering now`)
+    for (const w of derived.windows.slice(-12)) {
+      console.log(`  ${windowCovers(w, Date.now()) ? '▶ NOW ' : '      '}${w.venueKey.padEnd(14)}`
+        + ` ${w.startsAt.slice(0, 10)} → ${w.endsAt.slice(0, 10)}  ${w.reason ?? ''}`)
+    }
+    if (derived.windows.length > 12) console.log(`  (showing the last 12 of ${derived.windows.length})`)
+    campaignDerived = derived.windows
+  }
+
   // Read-only: the state of things.
   const now = Date.now()
   console.log(`\nSTORED WINDOWS (${rows.length})`)
@@ -175,7 +211,8 @@ async function main() {
     if (!live) console.log(`         id ${r.id}`)
   }
 
-  const decided = decideVenues(VENUES, { windows })
+  // Both sources, which is what the poller does.
+  const decided = decideVenues(VENUES, { windows: [...windows, ...campaignDerived] })
   console.log(`\nRIGHT NOW`)
   for (const d of decided) {
     const one = countFor({ venues: decideVenues(VENUES, { force: [d.key] }) })

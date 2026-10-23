@@ -6,6 +6,7 @@ import {
 import {
   parseForceParam, unknownForceKeys, type ActivationWindow,
 } from '@/lib/obsActivation'
+import { campaignWindows } from '@/lib/obsCampaignWindows'
 
 // POST|GET /api/obs/poll   — fetch the public networks and store what they say.
 //
@@ -84,6 +85,36 @@ async function run(req: NextRequest) {
       }))
     }
   }
+  // THE CAMPAIGN CALENDAR IS THE OTHER SOURCE OF WINDOWS, and the better one:
+  // the regatta's dates are already in `sessions` because somebody entered
+  // them on the Event/Regatta tab. Asking for them a second time in
+  // obs_venue_activation is asking to be told twice, and the second telling is
+  // the one that gets forgotten.
+  //
+  // Read with the service key, so it sees every team's calendar. That is not a
+  // privacy step sideways: nothing about a boat leaves here, it only decides
+  // WHERE public weather is collected.
+  //
+  // A week either side is plenty — padDays is 1 and gapDays 2, so if now falls
+  // inside a padded run there is a session within three days of it. The extra
+  // width is only so the window's reason can name the whole regatta.
+  let campaignUnmatched: Array<{ location: string; sessions: number }> = []
+  {
+    const dayMs = 86400_000
+    const from = new Date(Date.now() - 7 * dayMs).toISOString().slice(0, 10)
+    const to = new Date(Date.now() + 7 * dayMs).toISOString().slice(0, 10)
+    const { data, error } = await sb0.from('sessions')
+      .select('date, event, location, tz_offset_minutes')
+      .gte('date', from).lte('date', to)
+    if (error) {
+      windowError = [windowError, `sessions: ${error.message}`].filter(Boolean).join('; ')
+    } else {
+      const derived = campaignWindows(data ?? [], VENUES)
+      windows = [...windows, ...derived.windows]
+      campaignUnmatched = derived.unmatched
+    }
+  }
+
   const unknown = unknownForceKeys(VENUES, force)
 
   const { obs, results, venues } = await collectObservations(only, { windows, force })
@@ -127,6 +158,9 @@ async function run(req: NextRequest) {
     dense: venues.filter((v) => v.mode === 'dense').map((v) => ({ key: v.key, why: v.reason })),
     idle: venues.filter((v) => v.mode === 'idle').map((v) => v.key),
     ...(unknown.length ? { unknownDomains: unknown } : {}),
+    // A calendar location matching no venue means a regatta with no dense
+    // network and nothing to say so. Reported, not swallowed.
+    ...(campaignUnmatched.length ? { unmatchedLocations: campaignUnmatched } : {}),
     ...(windowError ? { activationError: windowError } : {}),
     at: new Date().toISOString(),
   }, { headers: { 'Cache-Control': 'no-store' } })
