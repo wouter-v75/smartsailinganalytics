@@ -76,9 +76,20 @@ async function main() {
   console.log(`${meta.size} stations`)
   console.log(`  header: ${header}`)
 
+  // `Pack` is in the list header. If it separates wind-capable stations from
+  // the rain-and-temperature ones it would save polling the latter at all —
+  // three of the ten nearest to the gulf answer with t and rr_per only.
+  const packOf = new Map<string, string>()
+  for (const line of csv.split(/\r?\n/).slice(1)) {
+    const c = line.split(';')
+    if (c.length >= 8 && c[0]) packOf.set(c[0].trim(), (c[7] || '').trim())
+  }
   const placed = Array.from(meta.entries())
     .filter(([, m]) => Number.isFinite(m.lat) && Number.isFinite(m.lon))
-    .map(([id, m]) => ({ id, name: m.name || '', lat: m.lat as number, lon: m.lon as number, alt: m.alt }))
+    .map(([id, m]) => ({
+      id, name: m.name || '', lat: m.lat as number, lon: m.lon as number, alt: m.alt,
+      pack: packOf.get(id) || '',
+    }))
   console.log(`  ${placed.length} with a position`)
   if (placed.length !== meta.size) {
     console.log('  ^ positions missing for some: check the header above for the lat/lon column names.')
@@ -103,6 +114,8 @@ async function main() {
     : [...(byId ? near.filter((s) => s.id === '83101001') : []), ...near.filter((s) => s.id !== '83101001')].slice(0, PROBE)
 
   console.log(`\nProbing ${targets.length} station(s) with /station/infrahoraire-6m:`)
+  const withWind: Array<{ id: string; name: string; pack?: string }> = []
+  const noWind: Array<{ id: string; name: string; pack?: string; hasWind: boolean }> = []
   let first = true
   for (const s of targets) {
     try {
@@ -113,21 +126,45 @@ async function main() {
         first = false
       }
       const rows = parseMfCsv(body)
-      const obs = parseMfLand(rows, meta)
+      const obs = parseMfLand(rows, meta, { stationId: s.id })
       if (!obs.length) {
-        console.log(`  ${s.d.toFixed(1).padStart(5)} nm  ${s.id}  ${(s.name || '').padEnd(28)} rows=${rows.length} but NO WIND PARSED`)
-        if (rows.length) console.log(`        keys present: ${Object.keys(rows[rows.length - 1]).join(',')}`)
+        const keys = rows.length ? Object.keys(rows[rows.length - 1]) : []
+        const hasWind = keys.includes('ff')
+        noWind.push({ id: s.id, name: s.name, pack: s.pack, hasWind })
+        console.log(`  ${s.d.toFixed(1).padStart(5)} nm  ${s.id}  ${(s.name || '').padEnd(28)}`
+          + ` ${(s.pack || '?').padEnd(8)} ${hasWind ? 'HAS ff BUT NOT PARSED — a column name is wrong' : 'no wind sensor (rain/temp only)'}`)
+        if (hasWind && keys.length) console.log(`        keys present: ${keys.join(',')}`)
         continue
       }
+      withWind.push({ id: s.id, name: s.name, pack: s.pack })
       const o = obs[obs.length - 1]
       const ageMin = Math.round((Date.now() - Date.parse(o.t)) / 60000)
       console.log(`  ${s.d.toFixed(1).padStart(5)} nm  ${s.id}  ${(s.name || '').padEnd(28)}`
+        + ` ${(s.pack || '?').padEnd(8)}`
         + ` ${o.twsKn.toFixed(1).padStart(5)} kn  ${o.twdDeg == null ? '---' : String(Math.round(o.twdDeg)).padStart(3)}°`
         + `  gust ${o.gustKn == null ? ' --' : o.gustKn.toFixed(1)}  ${String(ageMin).padStart(4)} min  ${o.elevM ?? '?'} m`)
     } catch (e) {
       console.log(`  ${s.d.toFixed(1).padStart(5)} nm  ${s.id}  ${(s.name || '').padEnd(28)} ${(e as Error).message}`)
     }
   }
+
+  // Does Pack predict wind? If it does, the poller can skip the others.
+  console.log(`\nWIND: ${withWind.length} of ${withWind.length + noWind.length} probed`)
+  const packs = new Map<string, { wind: number; dry: number }>()
+  for (const w of withWind) {
+    const k = w.pack || '?'
+    const e = packs.get(k) || { wind: 0, dry: 0 }; e.wind++; packs.set(k, e)
+  }
+  for (const w of noWind) {
+    const k = w.pack || '?'
+    const e = packs.get(k) || { wind: 0, dry: 0 }; e.dry++; packs.set(k, e)
+  }
+  console.log('  by Pack:')
+  for (const [k, v] of Array.from(packs.entries())) console.log(`    ${k.padEnd(10)} ${v.wind} with wind, ${v.dry} without`)
+  const clean = Array.from(packs.values()).every((v) => v.wind === 0 || v.dry === 0)
+  console.log(clean
+    ? '  Pack SEPARATES them cleanly — worth pre-filtering the poller on it.'
+    : '  Pack does NOT separate them, so wind capability has to be probed per station.')
 
   console.log(`
 READ IT IN THIS ORDER:

@@ -668,7 +668,7 @@ export async function mfLandObs(ctx: PollContext): Promise<WindObs[]> {
   const per = await mapPooled(list, DAVIS_MAP_CONCURRENCY, async (st) => {
     try {
       const csv = await mfGet(`/station/infrahoraire-6m?id_station=${encodeURIComponent(st.id)}&format=csv`)
-      return latestPerStation(parseMfLand(parseMfCsv(csv), meta))
+      return latestPerStation(parseMfLand(parseMfCsv(csv), meta, { stationId: st.id }))
     } catch {
       return null // one station being down is not an outage
     }

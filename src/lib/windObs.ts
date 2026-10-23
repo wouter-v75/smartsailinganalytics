@@ -293,10 +293,21 @@ const pickStr = (o: Record<string, unknown>, keys: readonly string[]): string | 
 const MF_KEYS = {
   speed: ['ff'],
   dir: ['dd'],
-  gust: ['rafper', 'fxi', 'fx'],
+  // `rafper` is the BUOY gust. The land stations use `raf10` — the maximum
+  // over the last ten minutes, with `ddraf10` as its direction. Neither fxi
+  // nor fx appears in the land payload at all, and they were in this list on
+  // an inference that cost the whole source: measured against
+  // /station/infrahoraire-6m on 23 Oct 2026.
+  gust: ['rafper', 'raf10', 'fxi', 'fx'],
   lat: ['lat', 'latitude'],
   lon: ['lon', 'longitude'],
-  id: ['geo_id_wmo', 'geo_id_wigos', 'id_station', 'numer_sta'],
+  // THE OBSERVATION ROWS AND THE STATION LIST DO NOT AGREE on what to call
+  // the station, which is the single thing that stopped mf-land working:
+  //   /liste-stations            Id_station;Id_omm;Nom_usuel;Latitude;...
+  //   /station/infrahoraire-6m   lat;lon;geo_id_insee;reference_time;...
+  // `geo_id_insee` was not in this list, so every land row was discarded for
+  // having no id before any of its wind was looked at.
+  id: ['geo_id_wmo', 'geo_id_wigos', 'geo_id_insee', 'id_station', 'numer_sta'],
   name: ['name', 'nom_usuel', 'nom'],
   time: ['validity_time', 'reference_time'],
   alt: ['alti', 'altitude', 'alt'],
@@ -463,12 +474,22 @@ export interface MfStationMeta { name?: string; lat?: number; lon?: number; alt?
  * Position and altitude come from the station list, not the reading: a land
  * station does not move, and the observation rows carry no geography.
  */
-export function parseMfLand(rows: unknown[], meta: Map<string, MfStationMeta>): WindObs[] {
+export function parseMfLand(
+  rows: unknown[],
+  meta: Map<string, MfStationMeta>,
+  opts: { stationId?: string } = {},
+): WindObs[] {
   const out: WindObs[] = []
   for (const r of Array.isArray(rows) ? rows : []) {
     if (!r || typeof r !== 'object') continue
     const o = r as Record<string, unknown>
-    const id = pickStr(o, MF_KEYS.id)
+    // WHEN WE ASKED FOR ONE STATION WE ALREADY KNOW WHICH IT IS. Preferring
+    // the caller's id over the row's is not belt-and-braces: the row names the
+    // station `geo_id_insee` while the list names it `Id_station`, and nothing
+    // promises those are the same string. The metadata lookup — name, altitude
+    // — is keyed on the LIST's id, so using the caller's keeps them in step
+    // whatever the row calls itself.
+    const id = opts.stationId ?? pickStr(o, MF_KEYS.id)
     if (id == null) continue
     const m = meta.get(id)
     const lat = pickNum(o, MF_KEYS.lat) ?? m?.lat ?? null

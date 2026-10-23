@@ -1,25 +1,39 @@
 import { describe, expect, it } from 'vitest'
 import { parseMfCsv, parseMfStationList, parseMfLand, OBS_SOURCES } from '../windObs'
 
-// Station list in the shape /liste-stations answers with. Cap Camarat is the
-// one this was written for: Meteo-France 83101001, 107 m on the headland.
+// BOTH FIXTURES ARE THE REAL HEADERS, taken off the live API on 23 Oct 2026
+// by scripts/mf-land-probe.ts. They were invented before that and both were
+// wrong in ways that silently emptied the source, so they are copied now
+// rather than reasoned about:
+//
+//   /liste-stations          Id_station;Id_omm;Nom_usuel;Latitude;Longitude;Altitude;Date_ouverture;Pack
+//   /station/infrahoraire-6m lat;lon;geo_id_insee;reference_time;insert_time;validity_time;t;td;u;dd;ff;ddraf10;raf10;rr_per;…
+//
+// The two do not agree on what to call the station, and the gust is raf10.
 const LIST = [
-  'Id_station;Nom_usuel;Latitude;Longitude;Altitude',
-  '83101001;CAP CAMARAT;43.186833;6.683333;107',
-  '83069001;LE LUC;43.384833;6.387167;80',
-  '83031003;CAVALAIRE;43.173000;6.533000;4',
+  'Id_station;Id_omm;Nom_usuel;Latitude;Longitude;Altitude;Date_ouverture;Pack',
+  '83101001;;CAP CAMARAT;43.2005;6.6745;107;1982-04-01;RADOME',
+  '83031001;07591;LE LUC;43.384833;6.387167;80;1950-01-01;RADOME',
+  '83042001;;COGOLIN_SAPC;43.25;6.53;10;2000-01-01;SAPC',
 ].join('\n')
 
-/** One /station/infrahoraire-6m row. No geography — that comes from the list. */
+/**
+ * One /station/infrahoraire-6m row for Cap Camarat, which is a WIND-ONLY
+ * station: its row carries dd, ff, ddraf10 and raf10 and no temperature at
+ * all, where Le Luc's carries t, td, u, pressure and the rest.
+ */
 const obsCsv = (over: Record<string, string> = {}) => {
   const f: Record<string, string> = {
-    numer_sta: '83101001',
+    lat: '43.2005',
+    lon: '6.6745',
+    geo_id_insee: '83101001',
+    reference_time: '2026-10-23T05:30:00Z',
+    insert_time: '2026-10-23T05:31:12Z',
     validity_time: '2026-10-23T05:30:00Z',
-    ff: '9.1',
     dd: '128',
-    fxi: '11.4',
-    t: '287.3',
-    pres: '98120',
+    ff: '9.1',
+    ddraf10: '131',
+    raf10: '11.4',
     ...over,
   }
   const keys = Object.keys(f)
@@ -32,8 +46,8 @@ describe('parseMfStationList', () => {
     expect(meta.size).toBe(3)
     const cc = meta.get('83101001')!
     expect(cc.name).toBe('CAP CAMARAT')
-    expect(cc.lat).toBeCloseTo(43.186833, 5)
-    expect(cc.lon).toBeCloseTo(6.683333, 5)
+    expect(cc.lat).toBeCloseTo(43.2005, 4)
+    expect(cc.lon).toBeCloseTo(6.6745, 4)
     // 107 m on a headland is not a sea-level wind, and this is the field the
     // pipeline already understands for that.
     expect(cc.alt).toBe(107)
@@ -43,25 +57,56 @@ describe('parseMfStationList', () => {
 describe('parseMfLand', () => {
   const meta = parseMfStationList(LIST)
 
-  it('reads ff as m/s, dd as degrees and fxi as the gust', () => {
+  it('reads ff as m/s, dd as degrees and RAF10 as the gust', () => {
     const [o] = parseMfLand(parseMfCsv(obsCsv()), meta)
     expect(o.twsKn).toBeCloseTo(9.1 * 1.943844, 4)
     expect(o.twdDeg).toBe(128)
+    // raf10, not fxi/fx/rafper. Getting this wrong loses the gust silently.
     expect(o.gustKn).toBeCloseTo(11.4 * 1.943844, 4)
   })
 
-  it('also accepts fx, which some stations use instead of fxi', () => {
-    const [o] = parseMfLand(parseMfCsv(obsCsv({ fxi: '', fx: '12.0' })), meta)
-    expect(o.gustKn).toBeCloseTo(12.0 * 1.943844, 4)
+  it('finds the station by geo_id_insee, which is what the rows carry', () => {
+    // The list says Id_station and the rows say geo_id_insee. This was the bug
+    // that returned nothing for every station in the network.
+    const [o] = parseMfLand(parseMfCsv(obsCsv()), meta)
+    expect(o.id).toBe('mf-land:83101001')
+    expect(o.name).toBe('CAP CAMARAT')
+    expect(o.elevM).toBe(107)
   })
 
-  it('takes position and altitude from the station list, since the row has none', () => {
-    const [o] = parseMfLand(parseMfCsv(obsCsv()), meta)
-    expect(o.lat).toBeCloseTo(43.186833, 5)
-    expect(o.lon).toBeCloseTo(6.683333, 5)
-    expect(o.elevM).toBe(107)
-    expect(o.name).toBe('CAP CAMARAT')
+  it('prefers the id the CALLER asked for over whatever the row calls itself', () => {
+    // A per-station query already knows which station it asked for, and the
+    // metadata is keyed on the list's id. Nothing promises the two strings
+    // match, so the caller's wins.
+    const odd = parseMfCsv(obsCsv({ geo_id_insee: '83101' }))
+    // Left to itself the row is a nameless station with no altitude...
+    const [loose] = parseMfLand(odd, meta)
+    expect(loose.name).toBe('MF 83101')
+    expect(loose.elevM).toBeNull()
+    // ...and told which station was asked for, it is Cap Camarat on a headland.
+    const [o] = parseMfLand(odd, meta, { stationId: '83101001' })
     expect(o.id).toBe('mf-land:83101001')
+    expect(o.name).toBe('CAP CAMARAT')
+    expect(o.elevM).toBe(107)
+  })
+
+  it('takes the altitude from the list, and the position from whichever has it', () => {
+    // The rows DO carry lat/lon, unlike the ship feed. The altitude only ever
+    // comes from the list.
+    const [o] = parseMfLand(parseMfCsv(obsCsv()), meta)
+    expect(o.lat).toBeCloseTo(43.2005, 4)
+    expect(o.lon).toBeCloseTo(6.6745, 4)
+    expect(o.elevM).toBe(107)
+    const noPos = parseMfCsv(obsCsv({ lat: '', lon: '' }))
+    expect(parseMfLand(noPos, meta)[0].lat).toBeCloseTo(43.2005, 4)
+  })
+
+  it('drops a rain-and-temperature station, which many of them are', () => {
+    // COGOLIN_SAPC, LES ARCS and LES MAYONS answer with t and rr_per only.
+    // Seven of the ten nearest to the Golfe de Saint-Tropez carry wind.
+    const tempOnly = ['lat;lon;geo_id_insee;validity_time;t;rr_per',
+      '43.25;6.53;83042001;2026-10-23T05:30:00Z;287.1;0'].join('\n')
+    expect(parseMfLand(parseMfCsv(tempOnly), meta)).toEqual([])
   })
 
   it('files it as a land synop station', () => {
@@ -85,15 +130,18 @@ describe('parseMfLand', () => {
   })
 
   it('keeps the mean when direction or gust are absent', () => {
-    const [o] = parseMfLand(parseMfCsv(obsCsv({ dd: '', fxi: '' })), meta)
+    const [o] = parseMfLand(parseMfCsv(obsCsv({ dd: '', raf10: '' })), meta)
     expect(o.twsKn).toBeCloseTo(9.1 * 1.943844, 4)
     expect(o.twdDeg).toBeNull()
     expect(o.gustKn).toBeNull()
   })
 
-  it('refuses a station it has no position for', () => {
-    const unknown = parseMfCsv(obsCsv({ numer_sta: '99999999' }))
-    expect(parseMfLand(unknown, meta)).toEqual([])
+  it('still parses a station missing from the list, using the row\u2019s own position', () => {
+    // No name and no altitude, but a real reading is better than none.
+    const [o] = parseMfLand(parseMfCsv(obsCsv({ geo_id_insee: '99999999' })), meta)
+    expect(o.id).toBe('mf-land:99999999')
+    expect(o.name).toBe('MF 99999999')
+    expect(o.elevM).toBeNull()
   })
 
   it('refuses an implausible speed', () => {
@@ -112,10 +160,10 @@ describe('parseMfLand', () => {
 
   it('returns one observation per row, so a station history comes through whole', () => {
     const multi = [
-      'numer_sta;validity_time;ff;dd',
-      '83101001;2026-10-23T05:00:00Z;8.0;120',
-      '83101001;2026-10-23T05:06:00Z;8.5;124',
-      '83101001;2026-10-23T05:12:00Z;9.0;128',
+      'lat;lon;geo_id_insee;validity_time;ff;dd',
+      '43.2005;6.6745;83101001;2026-10-23T05:00:00Z;8.0;120',
+      '43.2005;6.6745;83101001;2026-10-23T05:06:00Z;8.5;124',
+      '43.2005;6.6745;83101001;2026-10-23T05:12:00Z;9.0;128',
     ].join('\n')
     const out = parseMfLand(parseMfCsv(multi), meta)
     expect(out).toHaveLength(3)
