@@ -10,12 +10,13 @@
 import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
   parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
-  parsePortlog, parsePortlogLatestUrl,
+  parsePortlog, parsePortlogLatestUrl, parseWeatherfile,
   parseMetOfficeLandObs, parseFrostObs,
   withinNm, type WindObs, type MetOfficeSite, type FrostSite,
 } from './windObs'
 import { WEATHERLINK_EMBEDS } from './windObsEmbeds'
 import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
+import { WEATHERFILE_STATIONS, type WeatherfileStation } from './windObsWeatherfile'
 
 export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 
@@ -144,9 +145,9 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog' | 'weatherfile'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile']
 
 const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   ndbc: async () => {
@@ -205,6 +206,8 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   'davis-map': async () => davisMapStations(DAVIS_MAP_STATIONS),
 
   portlog: async () => portlogObs(),
+
+  weatherfile: async () => weatherfileObs(),
 
   // Met Office Land Observations — UK only, and HOURLY. The free plan allows
   // 360 calls a day and one call returns 48 hourly rows, so polling it on every
@@ -293,29 +296,46 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
  * the two sources id the same station differently, so nothing else connects
  * them, and the embed is the richer reading (10-minute mean, with a gust).
  */
-export const DAVIS_MAP_CONCURRENCY = 8
-
-export async function davisMapStations(list: DavisMapStation[]): Promise<WindObs[]> {
-  // Indexed, not pushed: the workers finish out of order and the caller's
-  // order is what the de-duplication downstream expects to be nearest-first.
-  const slots: Array<WindObs | null> = new Array(list.length).fill(null)
+/**
+ * Run `fn` over `list` with at most `limit` calls in flight, keeping the
+ * caller's order in the result. Indexed rather than pushed, because the
+ * workers finish out of order and the de-duplication downstream expects the
+ * nearest-first order it was given.
+ *
+ * `limit` is 8 by measurement, not taste — see DAVIS_MAP_CONCURRENCY.
+ */
+async function mapPooled<T, R>(
+  list: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R | null>,
+): Promise<R[]> {
+  const slots: Array<R | null> = new Array(list.length).fill(null)
   let next = 0
   const worker = async () => {
     for (;;) {
       const i = next++
       if (i >= list.length) return
-      const st = list[i]
-      try {
-        const r = await get(`https://www.weatherlink.com/map/data/station/${encodeURIComponent(st.id)}`)
-        const o = parseWeatherLinkMapStation(await r.json(), st.id)
-        // The index knows the position and the name; the detail call sometimes
-        // carries a blanker version of both.
-        if (o) slots[i] = { ...o, name: st.name || o.name, lat: st.lat, lon: st.lon }
-      } catch { /* one garden station being down is not an outage */ }
+      slots[i] = await fn(list[i])
     }
   }
-  await Promise.all(Array.from({ length: Math.min(DAVIS_MAP_CONCURRENCY, list.length) }, worker))
-  return slots.filter((o): o is WindObs => o !== null)
+  await Promise.all(Array.from({ length: Math.max(0, Math.min(limit, list.length)) }, worker))
+  return slots.filter((v): v is R => v !== null)
+}
+
+export const DAVIS_MAP_CONCURRENCY = 8
+
+export async function davisMapStations(list: DavisMapStation[]): Promise<WindObs[]> {
+  return mapPooled(list, DAVIS_MAP_CONCURRENCY, async (st) => {
+    try {
+      const r = await get(`https://www.weatherlink.com/map/data/station/${encodeURIComponent(st.id)}`)
+      const o = parseWeatherLinkMapStation(await r.json(), st.id)
+      // The index knows the position and the name; the detail call sometimes
+      // carries a blanker version of both.
+      return o ? { ...o, name: st.name || o.name, lat: st.lat, lon: st.lon } : null
+    } catch {
+      return null // one garden station being down is not an outage
+    }
+  })
 }
 
 /**
@@ -403,6 +423,65 @@ export async function portlogObs(): Promise<WindObs[]> {
   // Served as text/html despite being JSON, so .json() is not safe to trust.
   const raw = JSON.parse(await r.text()) as unknown
   return parsePortlog(raw, { seaSites: PORTLOG_SEA_SITES })
+}
+
+
+// ---------------------------------------------------------------------------
+// WeatherFile.com (the western Solent)
+// ---------------------------------------------------------------------------
+
+/**
+ * How much past to keep per poll. One call returns the whole day at five
+ * minutes, so asking for six hours means the 6-hour graph is COMPLETE from the
+ * first poll rather than filling in over the following six hours. Re-storing
+ * the overlap every run is idempotent — wind_observations is keyed
+ * (station_id, t).
+ */
+export const WEATHERFILE_HISTORY_H = 6
+
+/**
+ * Current conditions and recent history for WeatherFile locations.
+ *
+ * Returns NOTHING without WEATHERFILE_TOKEN, by design: the API needs a
+ * `wf-tkn`, their own page mints a six-character one against a PHP session,
+ * and automating that would be scripting around an access control on somebody
+ * else's commercial service. Absent the key this source is structurally inert,
+ * the same shape as a missing BUNNY_STORAGE_WRITE_KEY making the app read-only
+ * against Bunny. See windObsWeatherfile.ts for how to get a token.
+ */
+export async function weatherfileObs(
+  stations: WeatherfileStation[] = WEATHERFILE_STATIONS,
+  historyHours: number = WEATHERFILE_HISTORY_H,
+): Promise<WindObs[]> {
+  const token = process.env.WEATHERFILE_TOKEN
+  if (!token) return []
+  const from = Date.now() - historyHours * 3600_000
+
+  const per = await mapPooled(stations, DAVIS_MAP_CONCURRENCY, async (st) => {
+    try {
+      const r = await fetch(`https://weatherfile.com/api/V03/loc/${encodeURIComponent(st.locId)}/averages.json`, {
+        method: 'POST',
+        headers: { 'wf-tkn': token, 'User-Agent': UA },
+        cache: 'no-store',
+      })
+      if (!r.ok) return null
+      // Their own client JSON.parses a string response, so the content type is
+      // not something to rely on.
+      const rows = parseWeatherfile(JSON.parse(await r.text()), st)
+      return rows.filter((o) => Date.parse(o.t) >= from)
+    } catch {
+      return null // one club platform being down is not an outage
+    }
+  })
+  return per.flat()
+}
+
+/** The WeatherFile locations near a point — what the live map needs. */
+export function weatherfileNear(lat: number, lon: number, nm: number): WeatherfileStation[] {
+  const cos = Math.cos((lat * Math.PI) / 180)
+  return WEATHERFILE_STATIONS.filter(
+    (s) => Math.hypot((s.lat - lat) * 60, (s.lon - lon) * 60 * cos) <= nm,
+  )
 }
 
 /** Keep only what is near somewhere we sail, de-duplicated by station. */

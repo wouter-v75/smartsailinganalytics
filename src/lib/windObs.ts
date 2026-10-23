@@ -1411,3 +1411,74 @@ export function parsePortlogLatestUrl(html: string): string | null {
   const m = /latest_url\s*=\s*["']([^"']+GetLatest\.php[^"']*)["']/.exec(html)
   return m ? m[1] : null
 }
+
+// ---------------------------------------------------------------------------
+// WeatherFile.com averages.json
+// ---------------------------------------------------------------------------
+//
+// See windObsWeatherfile.ts for how the units and the clock were pinned down.
+// In short: wsa/wsh/wsl are mean/gust/lull in m/s, wda is the direction, `ts`
+// is UTC, and all three were confirmed against Windycator's independent read
+// of the same station at the same minute, to 0.1 kn.
+//
+// Returns EVERY row it is given, newest last. The caller keeps the newest for
+// the map and the rest become history — the same contract as the Met Office
+// land observations, and the reason one poll of this source fills a 6-hour
+// graph instead of starting it.
+
+/** How far ahead of now a row may be stamped before the feed is disbelieved. */
+export const WEATHERFILE_FUTURE_TOL_SEC = 600
+
+export function parseWeatherfile(
+  payload: unknown,
+  station: { locId: string; name: string; lat: number; lon: number; surface: 'sea' | 'land' },
+  nowMs: number = Date.now(),
+): WindObs[] {
+  if (!payload || typeof payload !== 'object') return []
+  const rows = (payload as { data?: unknown }).data
+  if (!Array.isArray(rows)) return []
+
+  const out: WindObs[] = []
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue
+    const row = r as Record<string, unknown>
+
+    const mean = num(row.wsa)
+    if (mean == null) continue
+    const twsKn = mean * MS_TO_KN
+    if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
+
+    // `ts` is "YYYY-MM-DD HH:MM:SS", UTC, with no marker saying so — hence the
+    // explicit Z rather than letting the runtime assume the server's zone.
+    const ts = typeof row.ts === 'string' ? row.ts.trim() : ''
+    const ms = Date.parse(`${ts.replace(' ', 'T')}Z`)
+    if (!Number.isFinite(ms)) continue
+    // A reading cannot be from the future. If this ever fires it means the feed
+    // started stamping local time, which is the one mistake that is invisible
+    // in the value itself.
+    if (ms > nowMs + WEATHERFILE_FUTURE_TOL_SEC * 1000) continue
+
+    const gust = num(row.wsh)
+    const gustKn = gust == null ? null : gust * MS_TO_KN
+    const dir = num(row.wda)
+
+    out.push({
+      id: `wf:${station.locId}`,
+      source: 'beacon',
+      name: station.name,
+      lat: station.lat,
+      lon: station.lon,
+      // The network publishes no anemometer heights, so nothing is corrected
+      // to 10 m — a platform rail and a clubhouse roof are not the same.
+      heightM: null,
+      elevM: null,
+      surface: station.surface,
+      twsKn,
+      twdDeg: dir == null ? null : ((dir % 360) + 360) % 360,
+      gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+      t: new Date(ms).toISOString(),
+      trust: OBS_SOURCES.beacon.trust,
+    })
+  }
+  return out
+}

@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 import { getServerSupabase } from '@/lib/supabase/server'
 import { WEATHERLINK_EMBEDS } from '@/lib/windObsEmbeds'
-import { davisMapNear, davisMapStations, collectObservations, portlogObs, portlogInReach } from '@/lib/obsSources'
+import {
+  davisMapNear, davisMapStations, collectObservations,
+  portlogObs, portlogInReach, weatherfileObs, weatherfileNear,
+} from '@/lib/obsSources'
 import {
   OBS_STALE_MIN,
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
@@ -293,6 +296,20 @@ async function portlogAround(lat: number, lon: number, nm: number): Promise<Wind
   return withinNm(await portlogObs(), lat, lon, nm)
 }
 
+/**
+ * WeatherFile — the western Solent, and nothing else covers it.
+ *
+ * Only the latest row per station reaches the map; the rest of what the call
+ * returns is history and belongs to the poller. Nothing is fetched at all when
+ * no station is in the viewport, or when WEATHERFILE_TOKEN is unset, in which
+ * case weatherfileObs returns an empty list without making a request.
+ */
+async function weatherfileAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+  const near = weatherfileNear(lat, lon, nm)
+  if (!near.length) return []
+  return latestPerStation(await weatherfileObs(near))
+}
+
 async function frostLive(): Promise<WindObs[]> {
   const { obs } = await collectObservations(['frost'])
   return obs
@@ -364,6 +381,7 @@ export async function GET(req: NextRequest) {
     ['davis-map', davisMapAround(lat, lon, nm)],
     ['frost', frostLive()],
     ['portlog', portlogAround(lat, lon, nm)],
+    ['weatherfile', weatherfileAround(lat, lon, nm)],
     ['stored', storedAround(lat, lon, nm)],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
