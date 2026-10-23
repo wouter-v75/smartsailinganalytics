@@ -1482,3 +1482,19 @@ export function parseWeatherfile(
   }
   return out
 }
+
+/**
+ * A speed in a STATED unit, to knots — null when the unit is not one we know.
+ *
+ * Exported because several feeds name their own unit and the right response to
+ * an unrecognised one is always the same: refuse it. A guessed unit is a 2x
+ * error that looks like weather.
+ */
+export function knFromUnit(value: number | null, unit: string | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null
+  const u = typeof unit === 'string' ? unit.trim().toLowerCase() : ''
+  const f = UNIT_TO_KN[u]
+  if (f == null) return null
+  const kn = value * f
+  return kn >= 0 && kn <= MAX_PLAUSIBLE_KN ? kn : null
+}

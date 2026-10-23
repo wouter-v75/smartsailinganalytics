@@ -5,6 +5,7 @@ import { WEATHERLINK_EMBEDS } from '@/lib/windObsEmbeds'
 import {
   davisMapNear, davisMapStations, collectObservations,
   portlogObs, portlogInReach, weatherfileObs, weatherfileNear,
+  clubsObs, clubsNear,
 } from '@/lib/obsSources'
 import {
   OBS_STALE_MIN,
@@ -310,6 +311,13 @@ async function weatherfileAround(lat: number, lon: number, nm: number): Promise<
   return latestPerStation(await weatherfileObs(near))
 }
 
+/** The open club and agency feeds near the viewport. Latest row each. */
+async function clubsAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+  const near = clubsNear(lat, lon, nm)
+  if (!near.length) return []
+  return latestPerStation(await clubsObs(near))
+}
+
 async function frostLive(): Promise<WindObs[]> {
   const { obs } = await collectObservations(['frost'])
   return obs
@@ -382,6 +390,7 @@ export async function GET(req: NextRequest) {
     ['frost', frostLive()],
     ['portlog', portlogAround(lat, lon, nm)],
     ['weatherfile', weatherfileAround(lat, lon, nm)],
+    ['clubs', clubsAround(lat, lon, nm)],
     ['stored', storedAround(lat, lon, nm)],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))

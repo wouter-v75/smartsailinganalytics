@@ -17,6 +17,7 @@ import {
 import { WEATHERLINK_EMBEDS } from './windObsEmbeds'
 import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
 import { WEATHERFILE_STATIONS, type WeatherfileStation } from './windObsWeatherfile'
+import { CLUB_FEEDS, parseClubFeed, type ClubFeed } from './windObsClubs'
 
 export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 
@@ -145,9 +146,9 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog' | 'weatherfile'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog' | 'weatherfile' | 'clubs'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile', 'clubs']
 
 const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   ndbc: async () => {
@@ -208,6 +209,8 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   portlog: async () => portlogObs(),
 
   weatherfile: async () => weatherfileObs(),
+
+  clubs: async () => clubsObs(),
 
   // Met Office Land Observations — UK only, and HOURLY. The free plan allows
   // 360 calls a day and one call returns 48 hourly rows, so polling it on every
@@ -482,6 +485,46 @@ export function weatherfileNear(lat: number, lon: number, nm: number): Weatherfi
   return WEATHERFILE_STATIONS.filter(
     (s) => Math.hypot((s.lat - lat) * 60, (s.lon - lon) * 60 * cos) <= nm,
   )
+}
+
+
+// ---------------------------------------------------------------------------
+// The open club and agency feeds
+// ---------------------------------------------------------------------------
+
+/**
+ * Hill Head, Netley, NCI Hengistbury Head and the two CCO piers.
+ *
+ * No key, no token, nobody's permission — which is the whole reason these are
+ * worth having. Four unrelated formats, so the parsing lives in
+ * windObsClubs.ts and this only fetches.
+ *
+ * Hill Head publishes 288 rows, a full 24 hours at five minutes, so the window
+ * is trimmed to the history we actually keep. One club's web host being down
+ * is not an outage.
+ */
+export const CLUBS_HISTORY_H = 6
+
+export async function clubsObs(
+  feeds: ClubFeed[] = CLUB_FEEDS,
+  historyHours: number = CLUBS_HISTORY_H,
+): Promise<WindObs[]> {
+  const from = Date.now() - historyHours * 3600_000
+  const per = await mapPooled(feeds, DAVIS_MAP_CONCURRENCY, async (f) => {
+    try {
+      const r = await get(f.url)
+      return parseClubFeed(f, await r.text()).filter((o) => Date.parse(o.t) >= from)
+    } catch {
+      return null
+    }
+  })
+  return per.flat()
+}
+
+/** The club feeds near a point — what the live map needs. */
+export function clubsNear(lat: number, lon: number, nm: number): ClubFeed[] {
+  const cos = Math.cos((lat * Math.PI) / 180)
+  return CLUB_FEEDS.filter((s) => Math.hypot((s.lat - lat) * 60, (s.lon - lon) * 60 * cos) <= nm)
 }
 
 /** Keep only what is near somewhere we sail, de-duplicated by station. */

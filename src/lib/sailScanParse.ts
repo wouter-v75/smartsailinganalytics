@@ -28,6 +28,8 @@
 // route can insert one sail_scans row per scan. Pure + dependency-free.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { wallClockToUtcMs } from './tzWallClock'
+
 export interface ParsedStripe {
   pos: number // stripe height %: 75 foot / 50 mid / 25 head
   draft: number | null
@@ -150,28 +152,6 @@ function sailCodeFromName(name: string | null): string | null {
 }
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
-
-// Offset (ms) of an IANA zone at a given UTC instant, via Intl — DST-aware and
-// independent of the server's own timezone.
-function tzOffsetMs(atUtcMs: number, tz: string): number {
-  const d = new Date(atUtcMs)
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
-  const p: Record<string, string> = {}
-  for (const part of dtf.formatToParts(d)) p[part.type] = part.value
-  let hour = +p.hour
-  if (hour === 24) hour = 0
-  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, hour, +p.minute, +p.second)
-  return asUTC - atUtcMs
-}
-
-// Interpret Y/M/D h:m:s as wall-clock time in `tz` and return the UTC instant.
-function wallClockToUtcMs(Y: number, Mo: number, D: number, h: number, mi: number, s: number, tz: string): number {
-  const guess = Date.UTC(Y, Mo - 1, D, h, mi, s)
-  return guess - tzOffsetMs(guess, tz)
-}
 
 // Parse a report date (+ optional time) string into both the raw local
 // wall-clock (as written) and the UTC ISO instant. Time defaults to local noon
