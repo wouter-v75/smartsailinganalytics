@@ -7,6 +7,7 @@ import {
   portlogObs, portlogInReach, weatherfileObs, weatherfileNear,
   clubsObs, clubsNear,
 } from '@/lib/obsSources'
+import { FORCE_ALL } from '@/lib/obsActivation'
 import {
   OBS_STALE_MIN,
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
@@ -319,7 +320,11 @@ async function clubsAround(lat: number, lon: number, nm: number): Promise<WindOb
 }
 
 async function frostLive(): Promise<WindObs[]> {
-  const { obs } = await collectObservations(['frost'])
+  // FORCED DENSE. Activation gates the POLLER, which runs unattended; a person
+  // looking at the map is itself the answer to "is anybody interested in this
+  // venue right now". Without this the live map would be clipped to the idle
+  // radius and Frost would cover 10 nm instead of 60.
+  const { obs } = await collectObservations(['frost'], { force: [FORCE_ALL] })
   return obs
 }
 

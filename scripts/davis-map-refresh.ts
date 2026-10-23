@@ -78,28 +78,28 @@ async function main() {
   const known = new Map(DAVIS_MAP_STATIONS.map((s) => [s.id, s]))
 
   const chosenVenues = VENUE
-    ? VENUES.filter(([v]) => v.toLowerCase().includes(VENUE.toLowerCase()))
+    ? VENUES.filter((v) => (v.key + ' ' + v.name).toLowerCase().includes(VENUE.toLowerCase()))
     : VENUES
   if (VENUE && !chosenVenues.length) {
     console.error(`\nNo venue matches ${JSON.stringify(VENUE)}. They are:`)
-    for (const [v] of VENUES) console.error(`  ${v}`)
+    for (const v of VENUES) console.error(`  ${v.key.padEnd(14)} ${v.name}`)
     process.exit(1)
   }
   if (VENUE) {
-    console.log(`\nOnly ${chosenVenues.map(([v]) => v).join(', ')} is being re-picked.`)
+    console.log(`\nOnly ${chosenVenues.map((v) => v.name).join(', ')} is being re-picked.`)
     console.log('Every other venue keeps the stations it already has.')
   }
 
   // Carry through the venues we are NOT touching. An existing row belongs to
   // whichever venue it is nearest, which is the same rule that put it there.
   if (VENUE) {
-    const touched = new Set(chosenVenues.map(([v]) => v))
+    const touched = new Set(chosenVenues.map((v) => v.name))
     for (const st of DAVIS_MAP_STATIONS) {
       let best = ''
       let bestD = Infinity
-      for (const [v, la, lo] of VENUES) {
-        const d = nmBetween(la, lo, st.lat, st.lon)
-        if (d < bestD) { bestD = d; best = v }
+      for (const v of VENUES) {
+        const d = nmBetween(v.lat, v.lon, st.lat, st.lon)
+        if (d < bestD) { bestD = d; best = v.name }
       }
       if (touched.has(best)) continue
       seen.add(st.id)
@@ -108,7 +108,7 @@ async function main() {
     console.log(`Carried ${kept.length} station(s) through from the other venues, unprobed.`)
   }
 
-  for (const [venue, la, lo] of chosenVenues) {
+  for (const { name: venue, lat: la, lon: lo } of chosenVenues) {
     // CANDIDATES ARE THE INDEX **PLUS WHAT WE ALREADY HAVE**. A station can
     // drop out of the public index while answering perfectly — the Yacht Club
     // de Saint-Tropez did exactly that — and building only from the index

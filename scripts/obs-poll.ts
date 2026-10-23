@@ -59,7 +59,7 @@ async function main() {
 
   const fresh = obs.filter((o) => Date.now() - Date.parse(o.t) < 6 * 3600_000).length
   console.log(`\n  ${obs.length} row(s), ${fresh} of them under 6 h old`)
-  for (const [name, la, lo] of VENUES) {
+  for (const { name, lat: la, lon: lo } of VENUES) {
     const near = withinNm(obs, la, lo, VENUE_NM)
     const wind = near.filter((o) => o.twsKn > 0).length
     console.log(`    ${name.padEnd(24)} ${String(near.length).padStart(3)} station(s), ${wind} with wind`)

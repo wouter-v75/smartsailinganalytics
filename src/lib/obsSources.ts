@@ -19,7 +19,11 @@ import { WEATHERLINK_EMBEDS } from './windObsEmbeds'
 import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
 import { WEATHERFILE_STATIONS, type WeatherfileStation } from './windObsWeatherfile'
 import { CLUB_FEEDS, parseClubFeed, type ClubFeed } from './windObsClubs'
-import { gradedPick, nmBetween } from './obsDensity'
+import { gradedPick, nmBetween, type GradedOptions } from './obsDensity'
+import {
+  decideVenues, IDLE_NM, IDLE_MIN_PER_VENUE,
+  type ActivationInput, type VenueDecision,
+} from './obsActivation'
 
 export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 
@@ -29,16 +33,31 @@ export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
  * asks. 60 nm is generous for a race area and still cuts NDBC's 865 stations
  * and Pioupiou's 758 down to the hundred or so that could matter.
  */
-export const VENUES: Array<[string, number, number]> = [
-  ['Solent / Cowes', 50.766, -1.288],
-  ['Lymington', 50.733, -1.533],
+export interface Venue {
+  /**
+   * Stable slug. This is what a cron line, an activation row and a hand-run
+   * poll all name a venue by, so it must not change with the display name —
+   * renaming "St Tropez" to "Golfe de Saint-Tropez" must not silently stop a
+   * regatta's dense polling.
+   */
+  key: string
+  name: string
+  lat: number
+  lon: number
+  /** Overrides for the DENSE graded set; obsDensity defaults otherwise. */
+  dense?: GradedOptions
+}
+
+export const VENUES: Venue[] = [
+  { key: 'solent', name: 'Solent / Cowes', lat: 50.766, lon: -1.288 },
+  { key: 'lymington', name: 'Lymington', lat: 50.733, lon: -1.533 },
   // The middle of the Golfe de Saint-Tropez, off the point Wouter races
   // around, not the town quay: 43.266897, 6.698371.
-  ['St Tropez', 43.266897, 6.698371],
-  ['Porto Cervo', 41.135, 9.538],
-  ['La Spezia', 44.10, 9.83],
-  ['San Juan Islands', 48.5627, -122.8946],
-  ['Long Beach / San Pedro', 33.72, -118.27],
+  { key: 'st-tropez', name: 'St Tropez', lat: 43.266897, lon: 6.698371 },
+  { key: 'porto-cervo', name: 'Porto Cervo', lat: 41.135, lon: 9.538 },
+  { key: 'la-spezia', name: 'La Spezia', lat: 44.10, lon: 9.83 },
+  { key: 'san-juan', name: 'San Juan Islands', lat: 48.5627, lon: -122.8946 },
+  { key: 'long-beach', name: 'Long Beach / San Pedro', lat: 33.72, lon: -118.27 },
   // ENSENADA IS THE ONE VENUE WITH NOTHING NEAR IT, and it is not for want of
   // looking (22 Oct 2026):
   //   NDBC stops at the border — nothing within 30 nm, nearest wind 50 nm away
@@ -53,14 +72,14 @@ export const VENUES: Array<[string, number, number]> = [
   //     station is there and the endpoints are known.
   // It stays in the list because the 60 nm filter still catches the Tijuana
   // stations, which is context even if it is not course wind.
-  ['Ensenada', 31.85, -116.62],
+  { key: 'ensenada', name: 'Ensenada', lat: 31.85, lon: -116.62 },
   // The Oslofjord corridor: Larvik up to Oslo, east to Sarpsborg and north to
   // Gardermoen. Four points rather than one box, because the Davis station
   // list is picked per venue and one centre would cluster them all together.
-  ['Viksfjord / Larvik', 59.03, 10.15],
-  ['Oslofjord / Horten', 59.42, 10.48],
-  ['Oslo', 59.90, 10.73],
-  ['Fredrikstad / Sarpsborg', 59.22, 10.95],
+  { key: 'viksfjord', name: 'Viksfjord / Larvik', lat: 59.03, lon: 10.15 },
+  { key: 'oslofjord', name: 'Oslofjord / Horten', lat: 59.42, lon: 10.48 },
+  { key: 'oslo', name: 'Oslo', lat: 59.90, lon: 10.73 },
+  { key: 'fredrikstad', name: 'Fredrikstad / Sarpsborg', lat: 59.22, lon: 10.95 },
 ]
 export const VENUE_NM = 60
 
@@ -154,8 +173,24 @@ export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' |
 
 export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile', 'clubs', 'mf-land']
 
-const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
-  ndbc: async () => {
+/**
+ * What a runner needs to know besides its own endpoint: which venues are
+ * DENSE right now and how far out each is being polled.
+ *
+ * Passed in rather than read from a module global so the whole collection is
+ * testable without a database or a clock.
+ */
+export interface PollContext {
+  venues: VenueDecision[]
+}
+
+/** The radius worth STORING from a bulk feed, which costs nothing extra to ask for. */
+export function keepRadiusNm(d: VenueDecision): number {
+  return d.mode === 'dense' ? VENUE_NM : IDLE_NM
+}
+
+const RUNNERS: Record<SourceName, (ctx: PollContext) => Promise<WindObs[]>> = {
+  ndbc: async (_ctx) => {
     const [obs, stn] = await Promise.all([
       get('https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt'),
       get('https://www.ndbc.noaa.gov/data/stations/station_table.txt').catch(() => null),
@@ -183,11 +218,13 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // poll — well inside the function's 60 s budget. If venues ever double, the
   // thing to try is a CONCURRENCY CAP of two or three, not full parallelism,
   // and not a bigger box.
-  metar: async () => {
+  metar: async (ctx) => {
     const out: WindObs[] = []
     const seen = new Set<string>()
-    for (const [, la, lo] of VENUES) {
-      const [a, b, c, d] = bbox(la, lo, VENUE_NM)
+    for (const v of ctx.venues) {
+      const { lat: la, lon: lo } = v
+      // An idle venue gets a small box: same one call, far less to parse.
+      const [a, b, c, d] = bbox(la, lo, keepRadiusNm(v))
       try {
         const r = await get(`https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`)
         // Venues overlap, so the same station arrives more than once.
@@ -197,7 +234,7 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
     return out
   },
 
-  davis: async () => {
+  davis: async (_ctx) => {
     const settled = await Promise.allSettled(WEATHERLINK_EMBEDS.map(async (st) => {
       const r = await get(`https://www.weatherlink.com/embeddablePage/summaryData/${encodeURIComponent(st.uuid)}`)
       return parseWeatherLinkEmbed(await r.json(), st)
@@ -208,15 +245,18 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // The public-map stations: private Davis kit their owners chose to publish.
   // One small call each, from a list generated against the map's own index —
   // see windObsDavisMap.ts for why the index itself is not fetched here.
-  'davis-map': async () => davisMapStations(DAVIS_MAP_STATIONS),
+  // THE DENSE SET IS THE EXPENSIVE ONE. 225 stations every poll is 11,000
+  // requests a day; the same registry filtered to the idle radius is a small
+  // fraction of that, and the dense set comes back the moment a venue does.
+  'davis-map': async (ctx) => davisMapStations(stationsForPoll(DAVIS_MAP_STATIONS, ctx)),
 
-  portlog: async () => portlogObs(),
+  portlog: async (_ctx) => portlogObs(),
 
-  weatherfile: async () => weatherfileObs(),
+  weatherfile: async (ctx) => weatherfileObs(stationsForPoll(WEATHERFILE_STATIONS, ctx)),
 
-  clubs: async () => clubsObs(),
+  clubs: async (ctx) => clubsObs(stationsForPoll(CLUB_FEEDS, ctx)),
 
-  'mf-land': async () => mfLandObs(),
+  'mf-land': async (ctx) => mfLandObs(ctx),
 
   // Met Office Land Observations — UK only, and HOURLY. The free plan allows
   // 360 calls a day and one call returns 48 hourly rows, so polling it on every
@@ -227,7 +267,7 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // the rest become history, which is the reason to have this source at all —
   // it is coarser than the METAR at the same airports (~50 km spacing, 16-point
   // direction) but it carries two days of past with it.
-  metoffice: async () => {
+  metoffice: async (_ctx) => {
     const key = process.env.METOFFICE_API_KEY
     if (!key) return []
     // Once an hour, whatever the poll cadence is.
@@ -249,7 +289,7 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // source here: it states the unit, the HEIGHT and a quality code per reading.
   // One call covers every station, so this is cheap; hourly would do, but it is
   // light enough to leave on every poll.
-  frost: async () => {
+  frost: async (_ctx) => {
     const id = process.env.FROST_CLIENT_ID
     if (!id) return []
     const sites = new Map(FROST_SITES.map((f) => [f.id, f]))
@@ -268,15 +308,47 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
     return parseFrostObs(await r.json(), sites)
   },
 
-  pioupiou: async () => parsePioupiou(await (await get('https://api.pioupiou.fr/v1/live-with-meta/all')).json()),
+  pioupiou: async (_ctx) => parsePioupiou(await (await get('https://api.pioupiou.fr/v1/live-with-meta/all')).json()),
 
-  ffvl: async () => {
+  ffvl: async (_ctx) => {
     const key = process.env.FFVL_API_KEY
     if (!key) return []
     const q = (r: string) => `https://data.ffvl.fr/api/?base=balises&r=${r}&mode=json&key=${encodeURIComponent(key)}`
     const [rel, bal] = await Promise.all([get(q('releves')), get(q('list')).catch(() => null)])
     return parseFfvl(await rel.json(), bal ? await bal.json() : [])
   },
+}
+
+
+/**
+ * Which of a fixed station registry to poll this run: anything inside the
+ * radius of ANY venue, where an idle venue's radius is its inner circle only.
+ *
+ * This is where the dense-when-racing decision actually saves requests. The
+ * bulk feeds cost one call whatever we keep; these cost one call PER STATION,
+ * so the selection has to happen before the fetch, not after.
+ */
+export function stationsForPoll<T extends { lat: number; lon: number }>(
+  list: readonly T[],
+  ctx: PollContext,
+): T[] {
+  const keep = new Set<T>()
+  for (const v of ctx.venues) {
+    const ranked = list
+      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon))
+      .map((s) => ({ s, d: nmBetween(v.lat, v.lon, s.lat, s.lon) }))
+      .sort((a, b) => a.d - b.d)
+    ranked.forEach((x, i) => {
+      if (x.d <= v.radiusNm) { keep.add(x.s); return }
+      // THE FLOOR. An idle venue still polls its nearest few however far out
+      // they are, so no venue goes dark: Porto Cervo has nothing within 5 nm,
+      // and a venue with no continuous record is a gap nobody notices until
+      // they go looking for last month's wind.
+      if (v.mode === 'idle' && i < IDLE_MIN_PER_VENUE && x.d <= VENUE_NM) keep.add(x.s)
+    })
+  }
+  // Caller's order, de-duplicated across venues.
+  return list.filter((s) => keep.has(s))
 }
 
 /**
@@ -561,7 +633,7 @@ export const MF_BASE_V2 = 'https://public-api.meteofrance.fr/public/DPObs/v2'
 /** Per-station calls, so the selection is deliberately not large. */
 export const MF_LAND_MAX = 40
 
-export async function mfLandObs(): Promise<WindObs[]> {
+export async function mfLandObs(ctx: PollContext): Promise<WindObs[]> {
   const key = process.env.METEOFRANCE_API_KEY
   if (!key) return []
 
@@ -583,8 +655,12 @@ export async function mfLandObs(): Promise<WindObs[]> {
 
   // Union across venues, nearest-venue-first, de-duplicated.
   const chosen = new Map<string, { id: string; lat: number; lon: number }>()
-  for (const [, la, lo] of VENUES) {
-    for (const s of gradedPick(placed, la, lo)) if (!chosen.has(s.id)) chosen.set(s.id, s)
+  for (const v of ctx.venues) {
+    // An idle venue grades only its inner circle, so an out-of-season venue
+    // costs a handful of calls rather than forty.
+    for (const s of gradedPick(placed, v.lat, v.lon, { outerNm: v.radiusNm })) {
+      if (!chosen.has(s.id)) chosen.set(s.id, s)
+    }
   }
   const list = Array.from(chosen.values()).slice(0, MF_LAND_MAX)
   if (!list.length) return []
@@ -602,13 +678,13 @@ export async function mfLandObs(): Promise<WindObs[]> {
 
 /** Distance from a point to the nearest venue — used to report coverage. */
 export function nmToNearestVenue(lat: number, lon: number): number {
-  return Math.min(...VENUES.map(([, la, lo]) => nmBetween(la, lo, lat, lon)))
+  return Math.min(...VENUES.map((v) => nmBetween(v.lat, v.lon, lat, lon)))
 }
 
 /** Keep only what is near somewhere we sail, de-duplicated by station. */
-export function nearAnyVenue(obs: WindObs[]): WindObs[] {
+export function nearAnyVenue(obs: WindObs[], decisions: VenueDecision[]): WindObs[] {
   const keep = new Map<string, WindObs>()
-  for (const [, la, lo] of VENUES) for (const o of withinNm(obs, la, lo, VENUE_NM)) keep.set(o.id, o)
+  for (const v of decisions) for (const o of withinNm(obs, v.lat, v.lon, keepRadiusNm(v))) keep.set(o.id, o)
   return Array.from(keep.values())
 }
 
@@ -623,14 +699,16 @@ export interface SourceResult { name: SourceName; total: number; kept: number; m
  */
 export async function collectObservations(
   only: SourceName[] = SOURCE_NAMES,
-): Promise<{ obs: WindObs[]; results: SourceResult[] }> {
+  activation: ActivationInput = {},
+): Promise<{ obs: WindObs[]; results: SourceResult[]; venues: VenueDecision[] }> {
+  const ctx: PollContext = { venues: decideVenues(VENUES, activation) }
   const results: SourceResult[] = []
   const obs: WindObs[] = []
   for (const name of only) {
     const t0 = Date.now()
     try {
-      const got = await RUNNERS[name]()
-      const near = nearAnyVenue(got)
+      const got = await RUNNERS[name](ctx)
+      const near = nearAnyVenue(got, ctx.venues)
       obs.push(...near)
       results.push({ name, total: got.length, kept: near.length, ms: Date.now() - t0 })
     } catch (e) {
@@ -651,7 +729,7 @@ export async function collectObservations(
     const prev = byKey.get(k)
     if (!prev || Date.parse(o.t) > Date.parse(prev.t)) byKey.set(k, o)
   }
-  return { obs: Array.from(byKey.values()), results }
+  return { obs: Array.from(byKey.values()), results, venues: ctx.venues }
 }
 
 /** WindObs → a wind_observations row. */

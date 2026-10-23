@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '@/lib/supabase/server'
 import {
-  collectObservations, obsRow, SOURCE_NAMES, type SourceName,
+  collectObservations, obsRow, SOURCE_NAMES, VENUES, type SourceName,
 } from '@/lib/obsSources'
+import {
+  parseForceParam, unknownForceKeys, type ActivationWindow,
+} from '@/lib/obsActivation'
 
 // POST|GET /api/obs/poll   — fetch the public networks and store what they say.
 //
@@ -49,10 +52,44 @@ async function run(req: NextRequest) {
   const only = (onlyRaw.length ? onlyRaw.filter((n): n is SourceName => (SOURCE_NAMES as string[]).includes(n)) : SOURCE_NAMES)
   if (!only.length) return NextResponse.json({ error: 'no known source named' }, { status: 400 })
 
-  const { obs, results } = await collectObservations(only)
+  // ACTIVATION. A dense network is worth having while a regatta is on and
+  // close to worthless the rest of the year, so each venue is polled either to
+  // its full graded radius or to its inner circle only. Two things turn a
+  // venue dense, and the force list only ever ADDS:
+  //
+  //   obs_venue_activation   a window, set weeks ahead from the race calendar.
+  //   ?domains=st-tropez     "when I say so" — and what the NWP box can emit
+  //                          from its own NESTS config, so the observations
+  //                          follow the model without being told twice.
+  //
+  // ?domains=all forces every venue, which is the old behaviour.
+  const force = parseForceParam(req.nextUrl.searchParams.get('domains'))
+  const sb0 = getServiceSupabase()
+  let windows: ActivationWindow[] = []
+  let windowError: string | null = null
+  {
+    const nowIso = new Date().toISOString()
+    const { data, error } = await sb0.from('obs_venue_activation')
+      .select('venue_key, starts_at, ends_at, reason')
+      .lte('starts_at', nowIso).gte('ends_at', nowIso)
+    if (error) {
+      // A missing or unreadable table must not silently switch dense polling
+      // off for a regatta in progress, nor silently switch it on. It is
+      // reported, and ?domains= still works.
+      windowError = error.message
+    } else {
+      windows = (data ?? []).map((r) => ({
+        venueKey: String(r.venue_key), startsAt: String(r.starts_at),
+        endsAt: String(r.ends_at), reason: r.reason as string | null,
+      }))
+    }
+  }
+  const unknown = unknownForceKeys(VENUES, force)
+
+  const { obs, results, venues } = await collectObservations(only, { windows, force })
   const rows = obs.map(obsRow)
 
-  const sb = getServiceSupabase()
+  const sb = sb0
   let stored = 0
   for (let i = 0; i < rows.length; i += 500) {
     const chunk = rows.slice(i, i + 500)
@@ -84,6 +121,13 @@ async function run(req: NextRequest) {
     pruned,
     retainDays: RETAIN_DAYS,
     results,
+    // WHICH VENUES WERE WATCHED, AND WHY. A poll that quietly stopped covering
+    // a venue is the sort of thing noticed a season later, so the answer is in
+    // every response rather than inferable from the row count.
+    dense: venues.filter((v) => v.mode === 'dense').map((v) => ({ key: v.key, why: v.reason })),
+    idle: venues.filter((v) => v.mode === 'idle').map((v) => v.key),
+    ...(unknown.length ? { unknownDomains: unknown } : {}),
+    ...(windowError ? { activationError: windowError } : {}),
     at: new Date().toISOString(),
   }, { headers: { 'Cache-Control': 'no-store' } })
 }
