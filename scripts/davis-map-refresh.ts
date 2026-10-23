@@ -90,41 +90,66 @@ async function measureSeaNm(pts: Array<{ lat: number; lon: number }>): Promise<M
   const out = new Map<string, number | null>()
   if (!pts.length) return out
 
-  // One flat list of sample coordinates, remembering which station each ring
-  // belongs to.
   const samples: Array<[number, number]> = []
-  const owner: number[] = []
-  pts.forEach((s, i) => {
-    for (const p of seaProbePoints(s.lat, s.lon)) { samples.push(p); owner.push(i) }
-  })
+  pts.forEach((s) => { for (const p of seaProbePoints(s.lat, s.lon)) samples.push(p) })
   const perStation = samples.length / pts.length
 
   const elev: Array<number | null> = new Array(samples.length).fill(null)
-  const BATCH = 100 // the API's own limit
+  const BATCH = 100              // the API's own per-request limit
+  // PACED, because Open-Meteo bills and limits PER LOCATION, not per request:
+  // 600 locations a minute from one address. A 100-point batch every 11 s sits
+  // just under that. The first version of this fired ~24 batches as fast as it
+  // could, which is 2,400 locations in a few seconds, and most came back
+  // empty — see the coverage check below for why that was worse than useless.
+  const GAP_MS = 11_000
+  let failed = 0
+
   for (let i = 0; i < samples.length; i += BATCH) {
     const chunk = samples.slice(i, i + BATCH)
     const lat = chunk.map((c) => c[0].toFixed(4)).join(',')
     const lon = chunk.map((c) => c[1].toFixed(4)).join(',')
-    try {
-      const r = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`)
-      if (!r.ok) { console.log(`  elevation batch ${i / BATCH + 1}: HTTP ${r.status}`); continue }
-      const j = await r.json() as { elevation?: unknown }
-      const e = Array.isArray(j.elevation) ? j.elevation : null
-      if (!e || e.length !== chunk.length) { console.log(`  elevation batch ${i / BATCH + 1}: unexpected shape`); continue }
-      e.forEach((v, k) => { elev[i + k] = typeof v === 'number' ? v : null })
-    } catch (err) {
-      console.log(`  elevation batch ${i / BATCH + 1}: ${(err as Error).message}`)
+    let ok = false
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, 20_000 * attempt))
+      try {
+        const r = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`)
+        if (r.status === 429) { console.log(`\n  rate-limited on batch ${i / BATCH + 1}, backing off`); continue }
+        if (!r.ok) { console.log(`\n  batch ${i / BATCH + 1}: HTTP ${r.status}`); continue }
+        const j = await r.json() as { elevation?: unknown }
+        const e = Array.isArray(j.elevation) ? j.elevation : null
+        if (!e || e.length !== chunk.length) { console.log(`\n  batch ${i / BATCH + 1}: unexpected shape`); continue }
+        e.forEach((v, k) => { elev[i + k] = typeof v === 'number' ? v : null })
+        ok = true
+      } catch (err) {
+        console.log(`\n  batch ${i / BATCH + 1}: ${(err as Error).message}`)
+      }
     }
-    process.stdout.write(`\r  measured ${Math.min(i + BATCH, samples.length)}/${samples.length} DEM points…`)
+    if (!ok) failed++
+    process.stdout.write(`\r  DEM ${Math.min(i + BATCH, samples.length)}/${samples.length} points`
+      + `${failed ? `, ${failed} batch(es) failed` : ''}…   `)
+    if (i + BATCH < samples.length) await new Promise((r) => setTimeout(r, GAP_MS))
   }
   process.stdout.write('\n')
 
   pts.forEach((s, i) => {
-    const mine = elev.slice(i * perStation, (i + 1) * perStation)
-    out.set(`${s.lat},${s.lon}`, seaNmFromElevations(mine))
+    out.set(`${s.lat},${s.lon}`, seaNmFromElevations(elev.slice(i * perStation, (i + 1) * perStation)))
   })
   return out
 }
+
+/**
+ * How much of the pool the DEM actually answered for.
+ *
+ * A PARTIAL measurement is worse than none, which is the whole reason this
+ * check exists. requiredSepNm deliberately does not penalise a station whose
+ * distance from the sea is unknown — so if the DEM answers for a fifth of the
+ * pool, the coast bias is not "weakly applied", it is applied ONLY to the
+ * fifth that succeeded. Inland stations that happened to fail measurement sail
+ * through unpenalised while coastal-adjacent ones that succeeded get thinned.
+ * That is a bias in favour of failed lookups, and it produced a Sorrento
+ * selection full of inland Apennine stations at 36-48 nm.
+ */
+export const COAST_MIN_COVERAGE = 0.9
 
 async function main() {
   process.stdout.write('fetching the public-station index (8.4 MB)… ')
@@ -197,10 +222,17 @@ async function main() {
         + ` = ${seaProbeCost(needed.length).toLocaleString('en-GB')} Open-Meteo locations`
         + ` (billed per location; ${pool.length - needed.length} already known)`)
       for (const [k, v] of Array.from((await measureSeaNm(needed)).entries())) seaNm.set(k, v)
-      const vals = Array.from(seaNm.values())
-      const measured = vals.filter((v) => v != null).length
-      const failed = vals.length - measured
-      console.log(`  ${measured} measured${failed ? `, ${failed} unmeasurable (not penalised)` : ''}`)
+      const asked = needed.length
+      const got = needed.filter((s) => seaNm.get(`${s.lat},${s.lon}`) != null).length
+      const coverage = asked ? got / asked : 1
+      console.log(`  ${got}/${asked} measured (${(coverage * 100).toFixed(0)}% coverage)`)
+      if (coverage < COAST_MIN_COVERAGE) {
+        console.error(`\n  COAST BIAS ABANDONED for ${venue}: only ${(coverage * 100).toFixed(0)}% of the pool`)
+        console.error('  could be measured, and a partially applied bias favours the stations whose')
+        console.error('  lookup FAILED — it would thin the coast and keep the hinterland. Re-run when')
+        console.error('  the elevation API is answering, or drop --coast to select without it.')
+        process.exit(1)
+      }
     }
 
     const near = FLAT
