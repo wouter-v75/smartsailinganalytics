@@ -11,6 +11,7 @@ import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
   parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
   parsePortlog, parsePortlogLatestUrl, parseWeatherfile,
+  parseMfCsv, parseMfStationList, parseMfLand, latestPerStation,
   parseMetOfficeLandObs, parseFrostObs,
   withinNm, type WindObs, type MetOfficeSite, type FrostSite,
 } from './windObs'
@@ -18,6 +19,7 @@ import { WEATHERLINK_EMBEDS } from './windObsEmbeds'
 import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
 import { WEATHERFILE_STATIONS, type WeatherfileStation } from './windObsWeatherfile'
 import { CLUB_FEEDS, parseClubFeed, type ClubFeed } from './windObsClubs'
+import { gradedPick, nmBetween } from './obsDensity'
 
 export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 
@@ -30,7 +32,9 @@ export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 export const VENUES: Array<[string, number, number]> = [
   ['Solent / Cowes', 50.766, -1.288],
   ['Lymington', 50.733, -1.533],
-  ['St Tropez', 43.275, 6.678],
+  // The middle of the Golfe de Saint-Tropez, off the point Wouter races
+  // around, not the town quay: 43.266897, 6.698371.
+  ['St Tropez', 43.266897, 6.698371],
   ['Porto Cervo', 41.135, 9.538],
   ['La Spezia', 44.10, 9.83],
   ['San Juan Islands', 48.5627, -122.8946],
@@ -146,9 +150,9 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog' | 'weatherfile' | 'clubs'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog' | 'weatherfile' | 'clubs' | 'mf-land'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile', 'clubs']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile', 'clubs', 'mf-land']
 
 const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   ndbc: async () => {
@@ -211,6 +215,8 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   weatherfile: async () => weatherfileObs(),
 
   clubs: async () => clubsObs(),
+
+  'mf-land': async () => mfLandObs(),
 
   // Met Office Land Observations — UK only, and HOURLY. The free plan allows
   // 360 calls a day and one call returns 48 hourly rows, so polling it on every
@@ -525,6 +531,78 @@ export async function clubsObs(
 export function clubsNear(lat: number, lon: number, nm: number): ClubFeed[] {
   const cos = Math.cos((lat * Math.PI) / 180)
   return CLUB_FEEDS.filter((s) => Math.hypot((s.lat - lat) * 60, (s.lon - lon) * 60 * cos) <= nm)
+}
+
+
+// ---------------------------------------------------------------------------
+// Météo-France LAND stations (RADOME)
+// ---------------------------------------------------------------------------
+//
+// The gap this fills. Until now SSA called Météo-France only for /liste-bouees
+// and /liste-bateaux, so at a FRENCH venue it drew American buoys, amateur
+// Davis gardens and nothing from the national network. Measured around the
+// Golfe de Saint-Tropez on 23 Oct 2026: ZERO public Davis stations within
+// 5 nm, zero Pioupiou within 5 nm. RADOME is the only candidate for that
+// circle, and Cap Camarat (Météo-France 83101001, 107 m) sits 4.8 nm from it.
+//
+// POLLER ONLY, and the reason is the endpoint shape. There is no bulk land
+// "paquet" in DPObs v2 — /station/infrahoraire-6m takes ONE id_station at a
+// time, so a set of thirty stations is thirty calls. Letting every map view
+// spend that against a rate-limited free plan would be paying for panning.
+// The poller takes it every half hour and the map reads wind_observations,
+// exactly as it does for the Met Office.
+//
+// WHICH STATIONS. gradedPick around each venue: everything inside 5 nm,
+// thinning to 4 nm spacing at 50 nm. The list is France-only, so this costs
+// nothing at the venues outside France — they select zero stations and make
+// zero calls beyond the shared station list.
+export const MF_BASE_V2 = 'https://public-api.meteofrance.fr/public/DPObs/v2'
+
+/** Per-station calls, so the selection is deliberately not large. */
+export const MF_LAND_MAX = 40
+
+export async function mfLandObs(): Promise<WindObs[]> {
+  const key = process.env.METEOFRANCE_API_KEY
+  if (!key) return []
+
+  const mfGet = async (path: string) => {
+    const r = await fetch(`${MF_BASE_V2}${path}`, {
+      headers: { apikey: key, 'User-Agent': UA },
+      cache: 'no-store',
+    })
+    if (!r.ok) throw new Error(`mf ${path} ${r.status}`)
+    return r.text()
+  }
+
+  // `format` is REQUIRED — omitting it answers 400 wrapped in WSO2 XML that
+  // reads like a bad key until you unpick it.
+  const meta = parseMfStationList(await mfGet('/liste-stations?format=csv'))
+  const placed = Array.from(meta.entries())
+    .filter(([, m]) => Number.isFinite(m.lat) && Number.isFinite(m.lon))
+    .map(([id, m]) => ({ id, lat: m.lat as number, lon: m.lon as number }))
+
+  // Union across venues, nearest-venue-first, de-duplicated.
+  const chosen = new Map<string, { id: string; lat: number; lon: number }>()
+  for (const [, la, lo] of VENUES) {
+    for (const s of gradedPick(placed, la, lo)) if (!chosen.has(s.id)) chosen.set(s.id, s)
+  }
+  const list = Array.from(chosen.values()).slice(0, MF_LAND_MAX)
+  if (!list.length) return []
+
+  const per = await mapPooled(list, DAVIS_MAP_CONCURRENCY, async (st) => {
+    try {
+      const csv = await mfGet(`/station/infrahoraire-6m?id_station=${encodeURIComponent(st.id)}&format=csv`)
+      return latestPerStation(parseMfLand(parseMfCsv(csv), meta))
+    } catch {
+      return null // one station being down is not an outage
+    }
+  })
+  return per.flat()
+}
+
+/** Distance from a point to the nearest venue — used to report coverage. */
+export function nmToNearestVenue(lat: number, lon: number): number {
+  return Math.min(...VENUES.map(([, la, lo]) => nmBetween(la, lo, lat, lon)))
 }
 
 /** Keep only what is near somewhere we sail, de-duplicated by station. */

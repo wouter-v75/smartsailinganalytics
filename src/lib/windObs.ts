@@ -299,6 +299,7 @@ const MF_KEYS = {
   id: ['geo_id_wmo', 'geo_id_wigos', 'id_station', 'numer_sta'],
   name: ['name', 'nom_usuel', 'nom'],
   time: ['validity_time', 'reference_time'],
+  alt: ['alti', 'altitude', 'alt'],
 } as const
 
 /**
@@ -424,8 +425,8 @@ export function isoFromMf(s: string): string | null {
  * position and no wind. Returns id -> name so a ship's observation can be given
  * a name, since the data rows carry the id and not much else.
  */
-export function parseMfStationList(csv: string): Map<string, { name?: string; lat?: number; lon?: number }> {
-  const out = new Map<string, { name?: string; lat?: number; lon?: number }>()
+export function parseMfStationList(csv: string): Map<string, MfStationMeta> {
+  const out = new Map<string, MfStationMeta>()
   for (const row of parseMfCsv(csv)) {
     const id = pickStr(row, MF_KEYS.id)
     if (!id) continue
@@ -433,6 +434,76 @@ export function parseMfStationList(csv: string): Map<string, { name?: string; la
       name: pickStr(row, MF_KEYS.name) ?? undefined,
       lat: pickNum(row, MF_KEYS.lat) ?? undefined,
       lon: pickNum(row, MF_KEYS.lon) ?? undefined,
+      // Land stations publish an altitude and it matters: Cap Camarat's
+      // climatological sheet puts it at 107 m, and a wind measured on a
+      // headland is not a wind measured on the water.
+      alt: pickNum(row, MF_KEYS.alt) ?? undefined,
+    })
+  }
+  return out
+}
+
+export interface MfStationMeta { name?: string; lat?: number; lon?: number; alt?: number }
+
+/**
+ * Météo-France LAND stations — the RADOME network, which this app never read.
+ *
+ * It only ever called /liste-bouees and /liste-bateaux, so at a French venue
+ * SSA was drawing American buoys, amateur Davis gardens and nothing from the
+ * national network at all. There are no Davis stations within 5 nm of the
+ * Golfe de Saint-Tropez and no Pioupiou either; RADOME is the only candidate
+ * for that circle.
+ *
+ * SAME COLUMN VOCABULARY as the marine feeds — `ff` m/s, `dd` degrees,
+ * `fxi`/`fx` gust — which is why this reuses MF_KEYS rather than inventing
+ * names. Those were measured against the live buoy API on 22 Oct 2026. If the
+ * land endpoint turns out to name them differently this returns NOTHING rather
+ * than guessing, which is visible, and scripts/mf-land-probe.ts says so.
+ *
+ * Position and altitude come from the station list, not the reading: a land
+ * station does not move, and the observation rows carry no geography.
+ */
+export function parseMfLand(rows: unknown[], meta: Map<string, MfStationMeta>): WindObs[] {
+  const out: WindObs[] = []
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    const id = pickStr(o, MF_KEYS.id)
+    if (id == null) continue
+    const m = meta.get(id)
+    const lat = pickNum(o, MF_KEYS.lat) ?? m?.lat ?? null
+    const lon = pickNum(o, MF_KEYS.lon) ?? m?.lon ?? null
+    const ms = pickNum(o, MF_KEYS.speed)
+    if (lat == null || lon == null || ms == null) continue
+    if (lat === 0 && lon === 0) continue
+
+    const twsKn = ms * MS_TO_KN
+    if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
+
+    const when = pickStr(o, MF_KEYS.time)
+    const t = when ? isoFromMf(when) : null
+    if (!t) continue
+
+    const dir = pickNum(o, MF_KEYS.dir)
+    const gustMs = pickNum(o, MF_KEYS.gust)
+    const gustKn = gustMs == null ? null : gustMs * MS_TO_KN
+
+    out.push({
+      id: `mf-land:${id}`,
+      source: 'synop',
+      name: m?.name || `MF ${id}`,
+      lat,
+      lon,
+      // RADOME measures at 10 m by convention, which is what the synop tier
+      // already asserts — but it is not restated here as a measurement.
+      heightM: OBS_SOURCES.synop.heightM,
+      elevM: m?.alt ?? null,
+      surface: 'land',
+      twsKn,
+      twdDeg: dir == null ? null : ((dir % 360) + 360) % 360,
+      gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+      t,
+      trust: OBS_SOURCES.synop.trust,
     })
   }
   return out

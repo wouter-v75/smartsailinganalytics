@@ -23,6 +23,12 @@ const ROUTE = join(process.cwd(), 'src/app/api/obs/route.ts')
 // Sources the live map does NOT call directly. Each is served from
 // wind_observations instead, which the poller fills.
 const STORED_ONLY: Record<string, string> = {
+  'mf-land':
+    'DPObs v2 has no bulk land endpoint — /station/infrahoraire-6m takes one ' +
+    'id_station at a time, so a selection of thirty stations is thirty calls. ' +
+    'Letting every map view spend that against a rate-limited free plan would ' +
+    'be paying for panning. The poller takes it half-hourly and the map reads ' +
+    'the stored rows.',
   metoffice:
     'the free plan is 360 calls a day and one call returns 48 hourly rows, so ' +
     'letting every map view fetch it would spend the budget on panning. The ' +
