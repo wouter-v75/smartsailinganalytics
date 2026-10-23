@@ -43,6 +43,25 @@ export interface GradedOptions {
    * the near-middle denser and thins harder at the edge.
    */
   curve?: number
+  /**
+   * How much wider the spacing gets for a station far from the water. 0 is
+   * off, which is the default — an inland station is the right answer on a
+   * land-breeze morning and biasing against it is a choice, not an
+   * improvement.
+   *
+   * WHY IT IS WORTH HAVING. Graded to 50 nm, Saint-Tropez picks up Aubagne,
+   * Brignoles, Besse-sur-Issole and Le Luc: inland Var, behind hills, 200-500 m
+   * up. For a Mistral arriving they are genuinely useful. For the SEA-BREEZE
+   * gradient along the coast they are noise, and they are occupying the budget
+   * that Hyeres, Porquerolles, Antibes and Nice could be using.
+   *
+   * At 1.5 an inland station needs two and a half times the spacing of a
+   * coastal one at the same range, so the outer ring fills up with the coast
+   * first and the hinterland gets what is left.
+   */
+  coastBias?: number
+  /** The distance from the sea at which the full bias applies. */
+  coastScaleNm?: number
 }
 
 export const GRADED_DEFAULTS: Required<GradedOptions> = {
@@ -50,6 +69,8 @@ export const GRADED_DEFAULTS: Required<GradedOptions> = {
   outerNm: 50,
   maxSepNm: 4,
   curve: 1.5,
+  coastBias: 0,
+  coastScaleNm: 10,
 }
 
 export interface Placed { lat: number; lon: number }
@@ -73,16 +94,47 @@ export function minSepNm(nm: number, opts: GradedOptions = {}): number {
 }
 
 /**
+ * The spacing actually required of a candidate: its range's base spacing,
+ * widened if it is inland and a coast bias is in force.
+ *
+ * `seaNm` is the station's distance from the water. Null means unknown, and an
+ * unknown station is NOT penalised — a missing measurement must not quietly
+ * drop a station that might be on the quay.
+ */
+export function requiredSepNm(
+  nm: number,
+  seaNm: number | null | undefined,
+  opts: GradedOptions = {},
+): number {
+  const { coastBias, coastScaleNm } = { ...GRADED_DEFAULTS, ...opts }
+  const base = minSepNm(nm, opts)
+  if (!coastBias || seaNm == null || !Number.isFinite(seaNm) || coastScaleNm <= 0) return base
+  const inland = Math.min(1, Math.max(0, seaNm) / coastScaleNm)
+  return base * (1 + coastBias * inland)
+}
+
+/**
  * Pick stations around a point with density falling off by range.
  *
  * Nearest-first and greedy: a candidate is kept unless an already-kept station
  * is closer to it than the spacing its own range demands.
+ *
+ * `seaNmOf` is optional and only matters when `coastBias` is set. It is a
+ * callback rather than a field on the station so that this module stays pure —
+ * measuring a distance from the sea needs a digital elevation model, and that
+ * is a network call belonging to a generator, not to a selection rule.
+ *
+ * THE INNER CIRCLE IS NEVER AFFECTED. Base spacing there is zero, and zero
+ * times any bias is still zero — so everything inside `innerNm` is kept
+ * however far inland it is. That is deliberate: Cap Camarat is 107 m up on a
+ * headland and is the single most useful station at Saint-Tropez.
  */
 export function gradedPick<T extends Placed>(
   items: readonly T[],
   lat: number,
   lon: number,
   opts: GradedOptions = {},
+  seaNmOf?: (item: T) => number | null | undefined,
 ): T[] {
   const { outerNm } = { ...GRADED_DEFAULTS, ...opts }
   const cand = items
@@ -93,7 +145,7 @@ export function gradedPick<T extends Placed>(
 
   const kept: Array<{ s: T; d: number }> = []
   for (const c of cand) {
-    const sep = minSepNm(c.d, opts)
+    const sep = requiredSepNm(c.d, seaNmOf ? seaNmOf(c.s) : null, opts)
     if (sep > 0 && kept.some((k) => nmBetween(k.s.lat, k.s.lon, c.s.lat, c.s.lon) < sep)) continue
     kept.push(c)
   }

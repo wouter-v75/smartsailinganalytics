@@ -2,7 +2,16 @@
 //
 //   npx vite-node scripts/davis-map-refresh.ts            print the file, change nothing
 //   npx vite-node scripts/davis-map-refresh.ts -- --write overwrite it
-//   npx vite-node scripts/davis-map-refresh.ts -- --per 8 --nm 30
+//   npx vite-node scripts/davis-map-refresh.ts -- --per 8 --nm 30     flat nearest-n
+//   npx vite-node scripts/davis-map-refresh.ts -- --venue "St Tropez"  one venue only
+//   npx vite-node scripts/davis-map-refresh.ts -- --venue "St Tropez" --coast
+//        ... and bias the outer ring toward the water. Inland stations need
+//        wider spacing, so Hyeres and Antibes get picked before Brignoles and
+//        Le Luc. Distance from the sea is measured against the Open-Meteo
+//        elevation DEM — the same "coastline dataset" the forecast
+//        diagnostics use — and written into the registry, so a second run
+//        costs nothing. --coast-bias <n> tunes it; 1.5 is the default and
+//        means an inland station needs 2.5x the spacing of a coastal one.
 //
 // Runs on the laptop: it fetches 8.4 MB and the sandbox has no network.
 //
@@ -34,6 +43,7 @@ import { decideVenues, FORCE_ALL } from '../src/lib/obsActivation'
 import { DAVIS_MAP_STATIONS } from '../src/lib/windObsDavisMap'
 import { parseWeatherLinkMapIndex, parseWeatherLinkMapStation } from '../src/lib/windObs'
 import { gradedPick, bandCounts, nmBetween, GRADED_DEFAULTS } from '../src/lib/obsDensity'
+import { seaProbePoints, seaNmFromElevations, seaProbeCost } from '../src/lib/coastSeaDistance'
 import { keepInRegistry, type ProbeOutcome } from '../src/lib/obsRegistryMerge'
 
 const argv = process.argv.slice(2)
@@ -57,11 +67,64 @@ const MAXSEP = Number(flag('maxsep', String(GRADED_DEFAULTS.maxSepNm)))
 // existing rows are carried through untouched, assigned to whichever venue
 // they are nearest.
 const VENUE = flag('venue', '')
+// COAST BIAS. Inland stations need wider spacing, so the outer ring fills up
+// with the coast first. Off by default: an inland station is the right answer
+// on a land-breeze morning, and biasing against it is a choice.
+const COAST = argv.includes('--coast')
+const COAST_BIAS = Number(flag('coast-bias', '1.5'))
 const NM = Number(flag('nm', '25'))
 const MAX_AGE_MIN = Number(flag('age', '180'))
 
 const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 const BASE = 'https://www.weatherlink.com'
+
+/**
+ * Distance from the sea for each point, from the Open-Meteo elevation DEM.
+ *
+ * The same coastline-from-a-DEM approach as components/weather/coastline.js —
+ * land above a metre, sea at or below — asked as "how far" rather than "which
+ * way". Billed PER LOCATION, so the caller decides who is worth asking about
+ * and the cost is printed before anything is fetched.
+ */
+async function measureSeaNm(pts: Array<{ lat: number; lon: number }>): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>()
+  if (!pts.length) return out
+
+  // One flat list of sample coordinates, remembering which station each ring
+  // belongs to.
+  const samples: Array<[number, number]> = []
+  const owner: number[] = []
+  pts.forEach((s, i) => {
+    for (const p of seaProbePoints(s.lat, s.lon)) { samples.push(p); owner.push(i) }
+  })
+  const perStation = samples.length / pts.length
+
+  const elev: Array<number | null> = new Array(samples.length).fill(null)
+  const BATCH = 100 // the API's own limit
+  for (let i = 0; i < samples.length; i += BATCH) {
+    const chunk = samples.slice(i, i + BATCH)
+    const lat = chunk.map((c) => c[0].toFixed(4)).join(',')
+    const lon = chunk.map((c) => c[1].toFixed(4)).join(',')
+    try {
+      const r = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`)
+      if (!r.ok) { console.log(`  elevation batch ${i / BATCH + 1}: HTTP ${r.status}`); continue }
+      const j = await r.json() as { elevation?: unknown }
+      const e = Array.isArray(j.elevation) ? j.elevation : null
+      if (!e || e.length !== chunk.length) { console.log(`  elevation batch ${i / BATCH + 1}: unexpected shape`); continue }
+      e.forEach((v, k) => { elev[i + k] = typeof v === 'number' ? v : null })
+    } catch (err) {
+      console.log(`  elevation batch ${i / BATCH + 1}: ${(err as Error).message}`)
+    }
+    process.stdout.write(`\r  measured ${Math.min(i + BATCH, samples.length)}/${samples.length} DEM points…`)
+  }
+  process.stdout.write('\n')
+
+  pts.forEach((s, i) => {
+    const mine = elev.slice(i * perStation, (i + 1) * perStation)
+    out.set(`${s.lat},${s.lon}`, seaNmFromElevations(mine))
+  })
+  return out
+}
 
 async function main() {
   process.stdout.write('fetching the public-station index (8.4 MB)… ')
@@ -70,7 +133,7 @@ async function main() {
   const index = parseWeatherLinkMapIndex(await idxRes.json())
   console.log(`${index.length} stations`)
 
-  const kept: Array<{ venue: string; id: string; name: string; lat: number; lon: number; nm: number; note: string }> = []
+  const kept: Array<{ venue: string; id: string; name: string; lat: number; lon: number; nm: number; note: string; seaNm?: number }> = []
   const seen = new Set<string>()
   let checked = 0, dropped = 0, rescued = 0
 
@@ -120,6 +183,26 @@ async function main() {
       .map((s) => ({ id: s.id, lat: s.lat, lon: s.lon }))
     const pool = [...fromIndex, ...fromRegistry]
 
+    // Sea distances, for the pick that is about to happen. Only stations
+    // outside the inner circle can be affected by the bias, and anything the
+    // registry already knows is not re-measured, so a second run is free.
+    const seaNm = new Map<string, number | null>()
+    if (COAST && !FLAT) {
+      for (const st of DAVIS_MAP_STATIONS) {
+        if (typeof st.seaNm === 'number') seaNm.set(`${st.lat},${st.lon}`, st.seaNm)
+      }
+      const needed = pool.filter((s) =>
+        nmBetween(la, lo, s.lat, s.lon) > INNER && !seaNm.has(`${s.lat},${s.lon}`))
+      console.log(`  coast bias ${COAST_BIAS}: measuring ${needed.length} station(s)`
+        + ` = ${seaProbeCost(needed.length).toLocaleString('en-GB')} Open-Meteo locations`
+        + ` (billed per location; ${pool.length - needed.length} already known)`)
+      for (const [k, v] of Array.from((await measureSeaNm(needed)).entries())) seaNm.set(k, v)
+      const vals = Array.from(seaNm.values())
+      const measured = vals.filter((v) => v != null).length
+      const failed = vals.length - measured
+      console.log(`  ${measured} measured${failed ? `, ${failed} unmeasurable (not penalised)` : ''}`)
+    }
+
     const near = FLAT
       ? pool
         .map((s) => ({ s, d: nmBetween(la, lo, s.lat, s.lon) }))
@@ -127,7 +210,11 @@ async function main() {
         .sort((a, b) => a.d - b.d)
         .slice(0, PER)
         .map((x) => x.s)
-      : gradedPick(pool, la, lo, { innerNm: INNER, outerNm: OUTER, maxSepNm: MAXSEP })
+      : gradedPick(
+        pool, la, lo,
+        { innerNm: INNER, outerNm: OUTER, maxSepNm: MAXSEP, coastBias: COAST ? COAST_BIAS : 0 },
+        (s) => seaNm.get(`${s.lat},${s.lon}`) ?? null,
+      )
 
     const offIndex = near.filter((s) => !fromIndex.some((i) => i.id === s.id)).length
     console.log(`\n${venue}: ${pool.length} in range, ${near.length} selected`
@@ -172,9 +259,11 @@ async function main() {
       console.log(`  ${d.toFixed(1).padStart(5)} nm  ${detail.padEnd(14)} ${name || s.id.slice(0, 8)}  — ${why}`)
       if (!keep) { dropped++; continue }
       if (outcome !== 'wind') rescued++
+      const sea = seaNm.get(`${s.lat},${s.lon}`)
       kept.push({
         venue, id: s.id, name: name || `Davis ${s.id.slice(0, 8)}`,
         lat: +s.lat.toFixed(5), lon: +s.lon.toFixed(5), nm: +d.toFixed(1),
+        seaNm: typeof sea === 'number' ? sea : undefined,
         note: outcome === 'wind' ? '' : ` // ${why.replace(/^KEPT — /, '')}`,
       })
     }
@@ -202,7 +291,8 @@ async function main() {
   for (const [venue, list] of Array.from(byVenue.entries())) {
     rows += `  // ${venue}\n`
     for (const k of list.sort((a, b) => a.nm - b.nm)) {
-      rows += `  { id: '${k.id}', name: ${JSON.stringify(k.name)}, lat: ${k.lat}, lon: ${k.lon} },  // ${k.nm} nm${k.note}\n`
+      const sea = typeof k.seaNm === 'number' ? `, seaNm: ${k.seaNm}` : ''
+      rows += `  { id: '${k.id}', name: ${JSON.stringify(k.name)}, lat: ${k.lat}, lon: ${k.lon}${sea} },  // ${k.nm} nm${k.note}\n`
     }
   }
 
@@ -234,7 +324,8 @@ async function main() {
     open,
     FLAT
       ? `// ${kept.length} stations, the nearest ${PER} per venue within ${NM} nm, built ${when}.`
-      : `// ${kept.length} stations, graded: ALL within ${INNER} nm, thinning to ${MAXSEP} nm spacing`,
+      : `// ${kept.length} stations, graded: ALL within ${INNER} nm, thinning to ${MAXSEP} nm spacing`
+        + (COAST ? `, coast bias ${COAST_BIAS}` : ''),
     FLAT ? '//' : `// at ${OUTER} nm. Built ${when}.`,
     `// ${dropped} of ${checked} candidates dropped as stale (over ${MAX_AGE_MIN} min), silent or`,
     '// publishing no wind. Per venue:',

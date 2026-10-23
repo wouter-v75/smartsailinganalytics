@@ -59,7 +59,17 @@
 
 import type { WlMapStation } from './windObs'
 
-export interface DavisMapStation extends WlMapStation { name: string }
+export interface DavisMapStation extends WlMapStation {
+  name: string
+  /**
+   * Distance from the sea in nautical miles, measured once against the
+   * Open-Meteo elevation DEM (the same "coastline dataset" the forecast
+   * diagnostics use). Present only where it was measured, which is where the
+   * coast bias needed it: stations outside the inner circle of a venue that
+   * was picked with --coast. Absent means NOT MEASURED, never "inland".
+   */
+  seaNm?: number
+}
 
 export const DAVIS_MAP_STATIONS: DavisMapStation[] = [
   // Solent / Cowes

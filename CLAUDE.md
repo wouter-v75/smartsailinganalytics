@@ -88,6 +88,19 @@ same thing — the exact line.
 | production | nothing to run. `vercel.json` has no deploy hook; Vercel builds from `main` on push. Then hard-reload the tab (Cmd-Shift-R) — a warm tab keeps the old client bundle and the fix looks unshipped |
 | before pushing | `npm run verify` (tsc → next lint → lint:undef → vitest → next build) |
 
+## Migrations are DELIVERED as a file, every time
+
+A migration is useless as a code block in a chat: it has to be pasted into the
+Supabase SQL editor, which means it has to be a file Wouter can open and copy.
+So whenever a migration is written or changed, **send the `.sql` file** — do not
+merely say it exists, and do not paste it into the reply and leave it there.
+Writing it to `supabase/migrations/` is not delivering it.
+
+This applies to a migration mentioned in passing as much as to one that is the
+whole task, and it applies again when the file is amended — a second version
+needs a second delivery, because the first download is the one that gets
+pasted.
+
 ## Docs are delivered as PDF, never as `.md`
 
 The Markdown in `docs/` is the editable **source**. What gets handed over — to
