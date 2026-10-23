@@ -48,6 +48,14 @@ const FLAT = argv.includes('--per')
 const INNER = Number(flag('inner', String(GRADED_DEFAULTS.innerNm)))
 const OUTER = Number(flag('outer', String(GRADED_DEFAULTS.outerNm)))
 const MAXSEP = Number(flag('maxsep', String(GRADED_DEFAULTS.maxSepNm)))
+// ONE VENUE AT A TIME. Graded selection out to 50 nm is dense, and applying it
+// to all twelve venues at once would take the registry to several hundred
+// stations — every one of them polled every half hour, which undoes the
+// call-count reduction that moved the cadence to 0,30 in the first place.
+// With --venue only that venue is re-picked and probed; every other venue's
+// existing rows are carried through untouched, assigned to whichever venue
+// they are nearest.
+const VENUE = flag('venue', '')
 const NM = Number(flag('nm', '25'))
 const MAX_AGE_MIN = Number(flag('age', '180'))
 
@@ -69,7 +77,38 @@ async function main() {
   // gets the benefit of the doubt — see obsRegistryMerge for why that matters.
   const known = new Map(DAVIS_MAP_STATIONS.map((s) => [s.id, s]))
 
-  for (const [venue, la, lo] of VENUES) {
+  const chosenVenues = VENUE
+    ? VENUES.filter(([v]) => v.toLowerCase().includes(VENUE.toLowerCase()))
+    : VENUES
+  if (VENUE && !chosenVenues.length) {
+    console.error(`\nNo venue matches ${JSON.stringify(VENUE)}. They are:`)
+    for (const [v] of VENUES) console.error(`  ${v}`)
+    process.exit(1)
+  }
+  if (VENUE) {
+    console.log(`\nOnly ${chosenVenues.map(([v]) => v).join(', ')} is being re-picked.`)
+    console.log('Every other venue keeps the stations it already has.')
+  }
+
+  // Carry through the venues we are NOT touching. An existing row belongs to
+  // whichever venue it is nearest, which is the same rule that put it there.
+  if (VENUE) {
+    const touched = new Set(chosenVenues.map(([v]) => v))
+    for (const st of DAVIS_MAP_STATIONS) {
+      let best = ''
+      let bestD = Infinity
+      for (const [v, la, lo] of VENUES) {
+        const d = nmBetween(la, lo, st.lat, st.lon)
+        if (d < bestD) { bestD = d; best = v }
+      }
+      if (touched.has(best)) continue
+      seen.add(st.id)
+      kept.push({ venue: best, id: st.id, name: st.name, lat: st.lat, lon: st.lon, nm: +bestD.toFixed(1), note: '' })
+    }
+    console.log(`Carried ${kept.length} station(s) through from the other venues, unprobed.`)
+  }
+
+  for (const [venue, la, lo] of chosenVenues) {
     // CANDIDATES ARE THE INDEX **PLUS WHAT WE ALREADY HAVE**. A station can
     // drop out of the public index while answering perfectly — the Yacht Club
     // de Saint-Tropez did exactly that — and building only from the index
@@ -141,6 +180,11 @@ async function main() {
   }
 
   console.log(`\n${kept.length} kept (${rescued} carried without a live reading), ${dropped} dropped of ${checked} checked`)
+  // The number that decides whether this selection is reasonable: every
+  // station here is read on every poll.
+  const perDay = kept.length * (24 * 60 / 30)
+  console.log(`POLLER COST: ${kept.length} stations x 48 polls a day = ${perDay.toLocaleString('en-GB')} requests/day to weatherlink.com.`)
+  if (perDay > 20000) console.log('  ^ that is a lot for somebody else\'s public endpoint. Consider --maxsep 6 or --outer 35.')
 
   const byVenue = new Map<string, typeof kept>()
   for (const k of kept) { const a = byVenue.get(k.venue) || []; a.push(k); byVenue.set(k.venue, a) }
