@@ -87,7 +87,7 @@ async function main() {
 
   const cutoff = new Date(Date.now() - RETAIN_DAYS * 86400_000).toISOString()
   const { error: delErr, count } = await sb.from('wind_observations')
-    .delete({ count: 'exact' }).lt('t', cutoff)
+    .delete({ count: 'exact' }).lt('t', cutoff).eq('archive', false)
   if (delErr) console.error(`  retention sweep failed: ${delErr.message}`)
   else console.log(`  retention: removed ${count ?? 0} row(s) older than ${RETAIN_DAYS} days`)
 }

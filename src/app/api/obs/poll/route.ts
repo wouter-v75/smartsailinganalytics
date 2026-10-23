@@ -168,8 +168,14 @@ async function run(req: NextRequest) {
   // table nobody prunes is a table that surprises somebody in a year.
   let pruned: number | null = null
   const cutoff = new Date(Date.now() - RETAIN_DAYS * 86400_000).toISOString()
+  // ARCHIVE ROWS ARE NEVER PRUNED. An imported historical series — ISPRA's
+  // 10-minute wind back to 2014 — is not a rolling record of the recent past
+  // and must not be swept as if it were. Without this filter the first poll
+  // after an import deletes the whole thing inside half an hour, and the
+  // import looks like it worked. Migration 0103 adds the column and the
+  // partial index this query uses.
   const { error: delErr, count } = await sb.from('wind_observations')
-    .delete({ count: 'exact' }).lt('t', cutoff)
+    .delete({ count: 'exact' }).lt('t', cutoff).eq('archive', false)
   if (!delErr) pruned = count ?? 0
 
   // no-store, explicitly. The default for this route was
