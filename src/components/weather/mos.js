@@ -14,6 +14,7 @@ import porto_cervo from './mos/mos_porto_cervo.json'
 import st_tropez from './mos/mos_st_tropez.json'
 import { wallHour } from './venueTz'
 import { venueAt, venueByKey, VENUE_MATCH_NM } from '../../lib/venues'
+import { solveSurfaceLayer, profileRatio } from '../../lib/windProfile'
 
 // SPECS ARE KEYED BY VENUE KEY — the one in lib/venues.ts, hyphenated. This
 // file used to keep its own venue list, keyed with underscores, beside its own
@@ -93,7 +94,27 @@ export function wind30(hourly, heights, idx, targetZ = 30, defaultAlpha = 0.11) 
     const alpha = den ? num / den : defaultAlpha
     sp30 = Math.exp(alpha * Math.log(targetZ) + (my - alpha * mx))
   } else {
-    sp30 = lv[0].sp * Math.pow(targetZ / lv[0].z, defaultAlpha)
+    // ONE LEVEL ONLY — e.g. ICON-2I, which Open-Meteo serves at 10 m alone.
+    // With two levels the fitted alpha above already carries whatever
+    // stability the model has in it; with one there is nothing to fit, and a
+    // blind exponent is a guess.
+    //
+    // So use the NEUTRAL MARINE LOG LAW instead, solved self-consistently
+    // (Charnock roughness from the speed's own friction velocity) rather than
+    // assumed. Over water that is alpha_eq ~ 0.074 at 10->30 m, against the
+    // 0.11 this used to apply: the old default was about 2.5 % high, and the
+    // textbook 1/7 would be 6.2 % high.
+    //
+    // IT IS STILL NEUTRAL, AND NEUTRAL IS NOT UNBIASED. A warm land breeze
+    // over cooler water — the ordinary offshore morning — makes the true
+    // 10->30 m increase +29.7 % where neutral says +8.4 %, so this
+    // UNDERSTATES the masthead wind by about 2.1 kn at 10 kn and +2 K, and by
+    // around 9 % on average. Fixing that needs an air-sea temperature
+    // difference, which this fetch does not currently request; lib/windProfile
+    // has the physics ready for when it does.
+    const layer = solveSurfaceLayer(lv[0].sp * 0.514444, 0, { refZ: lv[0].z })
+    const r = profileRatio(targetZ, lv[0].z, layer.z0, layer.lengthM)
+    sp30 = lv[0].sp * (r > 0 ? r : Math.pow(targetZ / lv[0].z, defaultAlpha))
   }
 
   // direction: linear u/v interpolation between bracketing levels
