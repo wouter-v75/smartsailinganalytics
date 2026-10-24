@@ -40,14 +40,13 @@
 // to say "built 22 Oct 2026" with a note to update the date and the tally
 // manually, which is the kind of instruction that is wrong by the second run.
 // <generated>
-// 295 stations, graded: ALL within 5 nm, thinning to 4 nm spacing, coast bias 1.5
+// 301 stations, graded: ALL within 5 nm, thinning to 4 nm spacing, coast bias 1.5
 // at 50 nm. Built 24 Oct 2026.
-// 12 of 82 candidates dropped as stale (over 180 min), silent or
+// 3 of 23 candidates dropped as stale (over 180 min), silent or
 // publishing no wind. Per venue:
 //   Solent / Cowes: 24
 //   Lymington: 15
 //   St Tropez: 22
-//   Porto Cervo: 14
 //   La Spezia: 23
 //   San Juan Islands: 24
 //   Long Beach / San Pedro: 24
@@ -57,6 +56,7 @@
 //   Oslofjord / Horten: 13
 //   Oslo: 25
 //   Sorrento: 70
+//   Porto Cervo: 20
 // </generated>
 
 import type { WlMapStation } from './windObs'
@@ -138,21 +138,6 @@ export const DAVIS_MAP_STATIONS: DavisMapStation[] = [
   { id: '6127f800-74a7-42fd-a6af-4bb5d3cc7bb6', name: "romain83440", lat: 43.61295, lon: 6.77623 },  // 21 nm
   { id: '976911c6-1a4d-4e20-9267-d50a3c939d0e', name: "La Vieille Londe *", lat: 43.14144, lon: 6.2384 },  // 21.5 nm
   { id: '92eb3908-8d10-4942-96b0-b3a766ce0212', name: "La Vieille Londe", lat: 43.14145, lon: 6.23836 },  // 21.5 nm
-  // Porto Cervo
-  { id: 'ea8fc38c-3af5-459b-8df7-e6d517c1306c', name: "Palau", lat: 41.16213, lon: 9.40185 },  // 6.4 nm
-  { id: '62fe4657-b74d-47ea-b166-54c27a94de62', name: "Andre Porto Rotondo", lat: 41.02532, lon: 9.55092 },  // 6.6 nm
-  { id: '6e09ed7e-d7c4-4fea-8c9b-dec29699ec08', name: "PORTO RAFAEL STATION", lat: 41.18192, lon: 9.38066 },  // 7.6 nm
-  { id: '5da3e544-6072-46e0-846d-c6cac2261b51', name: "Nautico La Maddalena", lat: 41.2189, lon: 9.40951 },  // 7.7 nm
-  { id: 'b990eee0-befd-4ed2-9cb8-d0f7b68b4294', name: "Casagliana", lat: 40.99092, lon: 9.44917 },  // 9.5 nm
-  { id: 'dad60b48-9c2a-4be4-88c8-6911aec9a873', name: "Olbia Meteo", lat: 40.92269, lon: 9.52219 },  // 12.8 nm
-  { id: '764adb9f-ea54-4bc9-9c36-5e1e036b11d0', name: "Olbia Tannaule", lat: 40.91449, lon: 9.48197 },  // 13.5 nm
-  { id: '635e5578-de23-4768-a3dc-93d92ffc1155', name: "La Marina di Costa Corallina", lat: 40.88281, lon: 9.6266 },  // 15.7 nm
-  { id: '462490f2-7858-4392-a9f2-2022f6d2858c', name: "Calangianus", lat: 40.92112, lon: 9.193 },  // 20.2 nm
-  { id: '29e20f2a-4dcc-4260-a7df-eb64ddaa9007', name: "Smeraldina", lat: 40.92, lon: 9.16 },  // 21.4 nm
-  { id: 'be4f8f98-459d-421f-a843-a66d46ae945b', name: "Biasì Meteo", lat: 40.7757, lon: 9.55362 },  // 21.6 nm
-  { id: 'd98287fa-e24b-451c-8a2e-dcede000e451', name: "Padru", lat: 40.76515, lon: 9.52129 },  // 22.2 nm
-  { id: '47bab906-585c-4e93-a2b0-6421c517f1fe', name: "Portobello di Gallura", lat: 41.12402, lon: 9.02719 },  // 23.1 nm
-  { id: '49b40354-4bc0-4da9-b9db-8b9605b4df78', name: "Limbara Vallicciola", lat: 40.8488, lon: 9.15322 },  // 24.5 nm
   // La Spezia
   { id: '28ad6c9c-4287-49cc-8444-31b729d8d9cc', name: "Porticciolo Diportisti Morin", lat: 44.10265, lon: 9.82567 },  // 0.2 nm
   { id: 'c0103a5f-a02f-4c81-904c-f06fc0c58ece', name: "GRAVEGLIA", lat: 44.15472, lon: 9.78226 },  // 3.9 nm
@@ -312,74 +297,95 @@ export const DAVIS_MAP_STATIONS: DavisMapStation[] = [
   { id: 'f1b049d7-8d86-46ab-8097-57e7b2049607', name: "devweather", lat: 59.66256, lon: 10.6417 },  // 14.5 nm
   { id: '9df61adb-3a90-46d6-8f42-34c475baea7d', name: "Solumstrand RA", lat: 59.7114, lon: 10.26878 },  // 17.9 nm
   // Sorrento
-  { id: '20506aa6-faa6-44f2-866f-871c70952d7a', name: "Posillipo Denza - CNR ISMAR", lat: 40.80142, lon: 14.18594, seaNm: 1.5 },  // 6 nm
-  { id: '3b64a0f6-31f8-40dc-86cd-651f07eac343', name: "Napoli Posillipo", lat: 40.80367, lon: 14.20054, seaNm: 1.5 },  // 6 nm
-  { id: 'cf435a96-eb80-4705-aa10-e386f37110f7', name: "bagnolinautico", lat: 40.81405, lon: 14.16514, seaNm: 1.5 },  // 7 nm
-  { id: '51c1d4f3-6c63-4f53-8fa1-b01757d505f3', name: "Napoli Meteo Chiaia Live", lat: 40.83621, lon: 14.23706, seaNm: 1.5 },  // 8 nm
-  { id: '5e2bb9b3-6338-471b-b6b7-8d06df0ef22c', name: "In-marelab", lat: 40.83357, lon: 14.26801, seaNm: 1.5 },  // 8.1 nm
-  { id: '7c575907-f4e4-4d64-97fa-ca1d786a5234', name: "DISTAR MSA Univ.Napoli", lat: 40.8379, lon: 14.18425, seaNm: 5 },  // 8.2 nm
-  { id: '896848eb-2d84-4a7d-8167-7051b61b8666', name: "Napoli-Porto-CNR ISMAR", lat: 40.84429, lon: 14.25989, seaNm: 1.5 },  // 8.7 nm
-  { id: '3267f0d5-d788-4872-bf08-204625c5c926', name: "Via Toledo Napoli", lat: 40.84664, lon: 14.24912, seaNm: 1.5 },  // 8.7 nm
-  { id: '5e56e370-c65f-4f55-ba63-8186867b90c8', name: "Procida Istituto Nautico Caracciolo", lat: 40.76226, lon: 14.03095, seaNm: 1.5 },  // 9.1 nm
-  { id: '9d451562-84bd-484c-870c-7978ea27fe31', name: "Napoli-Rione alto-Via Tropeano mt.298", lat: 40.86168, lon: 14.21901, seaNm: 5 },  // 9.5 nm
-  { id: '927e3f90-1cb7-41c2-8b44-5e4508f9f513', name: "Vico Equense", lat: 40.66236, lon: 14.42538, seaNm: 1.5 },  // 9.9 nm
-  { id: '6a276be8-676f-4969-9a6b-b86787b5a880', name: "PROCIDAMETEO", lat: 40.75847, lon: 14.00983, seaNm: 1.5 },  // 9.9 nm
-  { id: 'b4a0efde-d74b-4a64-ab1e-ac5ee9e57e7d', name: "Colli di Fontanelle", lat: 40.6124, lon: 14.40477, seaNm: 1.5 },  // 10.2 nm
-  { id: '477560e5-b245-4a15-a01a-799895a4ae3f', name: "Az. Ag. Don Andre’", lat: 40.82593, lon: 14.37925, seaNm: 5 },  // 10.4 nm
-  { id: '1504bfac-4329-4045-95ae-b3cf63d47ba7', name: "San Sebastiano al Vesuvio - Liceo S. di Giacomo", lat: 40.83954, lon: 14.36674, seaNm: 5 },  // 10.6 nm
-  { id: 'caa7ba5b-9193-45ae-8c28-b7a19ed447d7', name: "San Sebastiano", lat: 40.83867, lon: 14.38428, seaNm: 5 },  // 11.1 nm
-  { id: '1f0e634c-c211-4e8e-a74f-8ded03acf482', name: "Marano via Norvegia 34", lat: 40.89754, lon: 14.1992, seaNm: 5 },  // 11.6 nm
-  { id: '36112dec-3ca8-4591-850f-b66b280c2b1a', name: "Sito 17", lat: 40.72349, lon: 14.47492, seaNm: 1.5 },  // 11.9 nm
-  { id: '4097a52a-16b3-4cae-9419-f5dbe5c1c7cf', name: "Sito 08", lat: 40.69633, lon: 14.48183, seaNm: 1.5 },  // 12.1 nm
-  { id: 'd10102f7-d527-43ec-adc5-43f77a421e7e', name: "Stazione meteo Arenella", lat: 40.71639, lon: 13.94595, seaNm: 1.5 },  // 12.3 nm
-  { id: 'f54e63e1-04e3-428a-8fab-7cc9e65cb348', name: "Cratere", lat: 40.82909, lon: 14.43048, seaNm: 5 },  // 12.3 nm
-  { id: '0e22f842-58e8-4726-8f30-d96b3d40c806', name: "Monte Faito", lat: 40.66759, lon: 14.4842, seaNm: 5 },  // 12.4 nm
-  { id: '522c6d58-e5dc-4cf9-90b0-87c8126a4905', name: "Polizia Municipale", lat: 40.70397, lon: 14.48884, seaNm: 1.5 },  // 12.4 nm
-  { id: '0e8b1dab-1435-4eea-8324-6cb2626b087b', name: "Volla (NA) Liceo di Giacomo", lat: 40.88501, lon: 14.35091, seaNm: 5 },  // 12.5 nm
-  { id: '383f6b0c-9356-4920-9fff-fe0f845a98ce', name: "Stazione meteo Casa Comunale di Ischia", lat: 40.74285, lon: 13.94176, seaNm: 1.5 },  // 12.7 nm
-  { id: 'e4972b12-3cf1-441d-9537-26e1899b1349', name: "Pompei Bartolo Longo Osservatorio Meteorologico", lat: 40.74737, lon: 14.50132, seaNm: 5 },  // 13.3 nm
-  { id: '9983c38a-4100-463b-b2dd-c88dcf5671da', name: "Malinconico", lat: 40.91462, lon: 14.10424, seaNm: 5 },  // 13.6 nm
-  { id: '8efcf5b1-f16e-434d-9619-f30eb9ef3296', name: "San Nicola La Strada", lat: 40.86549, lon: 14.43765, seaNm: 10 },  // 14 nm
-  { id: '5b15a9a8-8340-4fdb-82ea-17c2c2224bc8', name: "Grumo Nevano", lat: 40.93598, lon: 14.25844, seaNm: 10 },  // 14.1 nm
-  { id: '77d6019b-7e9b-4941-8a09-d87b13607906', name: "Scafati", lat: 40.75155, lon: 14.52142, seaNm: 5 },  // 14.2 nm
-  { id: '325bd760-760d-4c66-a8cf-8f5dc53bf5c5', name: "Ottaviano", lat: 40.84543, lon: 14.47178, seaNm: 10 },  // 14.4 nm
-  { id: 'b9b6b31c-3521-473e-acca-25f9d70d3c43', name: "BOSCOREALE", lat: 40.78989, lon: 14.51504, seaNm: 5 },  // 14.6 nm
-  { id: '3d88dfd2-c978-4c6f-bdd7-6d69192c5d38', name: "Pomigliano d'Arco Istituto Cantone", lat: 40.9106, lon: 14.39241, seaNm: 10 },  // 14.8 nm
-  { id: '4e46d7b8-1f57-4895-b1fe-5c75238fae19', name: "Sant'Antonio Abate", lat: 40.71955, lon: 14.54106, seaNm: 5 },  // 14.8 nm
-  { id: '01bc30e9-21c7-47c9-b0c6-797a5e208b17', name: "Centrale-ForioCB", lat: 40.74168, lon: 13.86817, seaNm: 1.5 },  // 16 nm
-  { id: 'f4930d3a-dd97-4573-b28a-01326354aeb5', name: "IZ8GAD", lat: 40.97869, lon: 14.21173, seaNm: 10 },  // 16.5 nm
-  { id: '44ffdc2d-44ba-4f40-b6ac-ce6c688dbd6b', name: "Lago Patria - CNR ISMAR - LegaAmbiente", lat: 40.94404, lon: 14.02969, seaNm: 1.5 },  // 16.7 nm
-  { id: 'ea690579-64ce-405e-9a96-7d2f08dc14d6', name: "Corbara (SA)", lat: 40.72104, lon: 14.59297, seaNm: 10 },  // 17.2 nm
-  { id: '052b60b0-9a42-4e4a-81b4-e2de8172c689', name: "Protezione Civile", lat: 41.00017, lon: 14.127, seaNm: 5 },  // 18.2 nm
-  { id: '36b2e7e9-63b6-4127-9964-d505f5391028', name: "VUE", lat: 40.738, lon: 14.6414, seaNm: 10 },  // 19.5 nm
-  { id: '8eb5134f-8e1e-43d1-8a62-c616f6a67e15', name: "Marcianise centro", lat: 41.0381, lon: 14.28482, seaNm: 10 },  // 20.3 nm
-  { id: '3f67c354-eac8-49cb-91f0-6b99673d80a9', name: "CNR Foce Volturno - Licola", lat: 40.99386, lon: 13.96422, seaNm: 1.5 },  // 20.8 nm
-  { id: '86c35d20-f3b2-4e7b-8a1a-d4a6c21da1ca', name: "Rescigno Vertical Farm", lat: 40.76492, lon: 14.67494, seaNm: 10 },  // 21.2 nm
-  { id: 'bd4b41c5-9b9a-4fab-a091-af8f319dc374', name: "Stazione Meteo - Osservatorio Forino", lat: 40.96727, lon: 14.53833, seaNm: 10 },  // 21.5 nm
-  { id: 'af568336-df19-4d32-9b9d-f53b07cb7149', name: "Parco Saurino", lat: 41.0734, lon: 14.22529, seaNm: 10 },  // 22.2 nm
-  { id: 'fa6d10d6-47e3-4f39-ac49-a31b49e515c1', name: "CREA Caserta", lat: 41.07353, lon: 14.31731, seaNm: 10 },  // 22.7 nm
-  { id: '193bc980-a2e1-4116-a138-771b9b6e67d2', name: "Forino (AV)", lat: 40.86383, lon: 14.73814, seaNm: 10 },  // 25.6 nm
-  { id: 'eb0867bb-cce0-4d4c-a100-01fadde92d52', name: "Salerno Torrione Alto", lat: 40.6741, lon: 14.79062, seaNm: 1.5 },  // 26.2 nm
-  { id: '34b994a8-e9cf-4b9b-939e-7cb883c06d37', name: "Salerno Arechi Porto", lat: 40.64391, lon: 14.81282, seaNm: 1.5 },  // 27.4 nm
-  { id: 'b7bf1705-ad34-49a5-bd9d-ba6aa74b9a80', name: "Mercogliano", lat: 40.92564, lon: 14.7522, seaNm: 10 },  // 27.8 nm
-  { id: '62fcfb50-485e-4ffd-870e-76690a3b3315', name: "Oasi di Frassineto (SA)", lat: 40.76126, lon: 14.83399, seaNm: 10 },  // 28.3 nm
-  { id: 'b487f910-1763-421d-bbc1-23c667922e58', name: "PIGNATARO MAGGIORE (CE) - PROTEZIONE CIVILE", lat: 41.18307, lon: 14.16474, seaNm: 10 },  // 28.8 nm
-  { id: '3ebab8e8-7c83-43f1-b5ae-edd138d81565', name: "Montesarchio S", lat: 41.06335, lon: 14.63777, seaNm: 10 },  // 28.8 nm
-  { id: '12b04f45-14df-47a1-a069-8e80f659c9ca', name: "CautieroFrasso", lat: 41.1553, lon: 14.51365, seaNm: 10 },  // 30.3 nm
-  { id: '16024b78-7879-45d5-84bb-5ae1c9b0c414', name: "Ecoambiente Sardone - Bit Line", lat: 40.65354, lon: 14.8794, seaNm: 5 },  // 30.4 nm
-  { id: 'e311a385-eb33-47d9-8864-c90cc7d2e25c', name: "Cantina del Barone", lat: 40.89244, lon: 14.83774, seaNm: 10 },  // 30.4 nm
-  { id: '031a6fdd-2165-45de-86c6-ebddafa67951', name: "Vigneti Malaguti Anfora", lat: 41.22041, lon: 13.99276, seaNm: 10 },  // 32.6 nm
-  { id: '33ead087-e149-4560-9b7a-b2a1db9675eb', name: "Pietramelara", lat: 41.28875, lon: 14.19407, seaNm: 10 },  // 35.1 nm
-  { id: '4f891c08-6bf7-4b28-a7c0-2b2a1ea0940d', name: "Benevento Pacevecchia mt. 230", lat: 41.11949, lon: 14.80025, seaNm: 10 },  // 36.4 nm
-  { id: '5bb73b1f-9a95-49f0-a46f-dda9a093de8e', name: "_Vntlera_", lat: 41.24275, lon: 14.59594, seaNm: 10 },  // 36.6 nm
-  { id: '2f78f34d-065a-4b97-bcf8-d87404100632', name: "TemplarePaestum", lat: 40.47137, lon: 14.9606, seaNm: 1.5 },  // 36.7 nm
-  { id: '6c5f18d7-bef6-4722-be9e-dea32e520ebd', name: "AstroMax", lat: 41.26556, lon: 13.7445, seaNm: 5 },  // 39.9 nm
-  { id: 'a96488cc-008f-49f4-877a-d87f0df5fed0', name: "Farm PetrosinoSabato", lat: 40.60381, lon: 15.08622, seaNm: 10 },  // 40.1 nm
-  { id: 'fbb365c3-6b52-46fe-a441-a510a7692cec', name: "Mazzella - Pian Del Bosco", lat: 40.96772, lon: 15.02778, seaNm: 10 },  // 40.1 nm
-  { id: '2ddb476f-067a-4190-9041-55b4ee02f7db', name: "GAETA LIDO SIRIO & UNINA", lat: 41.20959, lon: 13.56784, seaNm: 1.5 },  // 42.2 nm
-  { id: '59559a83-7811-4c6f-81eb-ade363284ea9', name: "Danilo Formia", lat: 41.26765, lon: 13.61986, seaNm: 1.5 },  // 43.3 nm
-  { id: '64ad8eda-6b58-4de7-9a89-86674d0f710c', name: "San Marco dei Cavoti (BN)", lat: 41.3, lon: 14.8, seaNm: 10 },  // 44.5 nm
-  { id: '88dc8e44-1c46-40a4-81c4-679d250ec2f4', name: "Sepino", lat: 41.41229, lon: 14.6277, seaNm: 10 },  // 46.4 nm
-  { id: '862be41c-8430-48aa-927b-7a5f5d8b5ba2', name: "San Vittore del Lazio", lat: 41.46122, lon: 13.93909, seaNm: 10 },  // 47.1 nm
-  { id: '975a5ad3-ae52-4a86-a499-36591fc199dc', name: "IIS", lat: 41.15913, lon: 15.10838, seaNm: 10 },  // 48.8 nm
+  { id: '20506aa6-faa6-44f2-866f-871c70952d7a', name: "Posillipo Denza - CNR ISMAR", lat: 40.80142, lon: 14.18594 },  // 6 nm
+  { id: '3b64a0f6-31f8-40dc-86cd-651f07eac343', name: "Napoli Posillipo", lat: 40.80367, lon: 14.20054 },  // 6 nm
+  { id: 'cf435a96-eb80-4705-aa10-e386f37110f7', name: "bagnolinautico", lat: 40.81405, lon: 14.16514 },  // 7 nm
+  { id: '51c1d4f3-6c63-4f53-8fa1-b01757d505f3', name: "Napoli Meteo Chiaia Live", lat: 40.83621, lon: 14.23706 },  // 8 nm
+  { id: '5e2bb9b3-6338-471b-b6b7-8d06df0ef22c', name: "In-marelab", lat: 40.83357, lon: 14.26801 },  // 8.1 nm
+  { id: '7c575907-f4e4-4d64-97fa-ca1d786a5234', name: "DISTAR MSA Univ.Napoli", lat: 40.8379, lon: 14.18425 },  // 8.2 nm
+  { id: '896848eb-2d84-4a7d-8167-7051b61b8666', name: "Napoli-Porto-CNR ISMAR", lat: 40.84429, lon: 14.25989 },  // 8.7 nm
+  { id: '3267f0d5-d788-4872-bf08-204625c5c926', name: "Via Toledo Napoli", lat: 40.84664, lon: 14.24912 },  // 8.7 nm
+  { id: '5e56e370-c65f-4f55-ba63-8186867b90c8', name: "Procida Istituto Nautico Caracciolo", lat: 40.76226, lon: 14.03095 },  // 9.1 nm
+  { id: '9d451562-84bd-484c-870c-7978ea27fe31', name: "Napoli-Rione alto-Via Tropeano mt.298", lat: 40.86168, lon: 14.21901 },  // 9.5 nm
+  { id: '927e3f90-1cb7-41c2-8b44-5e4508f9f513', name: "Vico Equense", lat: 40.66236, lon: 14.42538 },  // 9.9 nm
+  { id: '6a276be8-676f-4969-9a6b-b86787b5a880', name: "PROCIDAMETEO", lat: 40.75847, lon: 14.00983 },  // 9.9 nm
+  { id: 'b4a0efde-d74b-4a64-ab1e-ac5ee9e57e7d', name: "Colli di Fontanelle", lat: 40.6124, lon: 14.40477 },  // 10.2 nm
+  { id: '477560e5-b245-4a15-a01a-799895a4ae3f', name: "Az. Ag. Don Andre’", lat: 40.82593, lon: 14.37925 },  // 10.4 nm
+  { id: '1504bfac-4329-4045-95ae-b3cf63d47ba7', name: "San Sebastiano al Vesuvio - Liceo S. di Giacomo", lat: 40.83954, lon: 14.36674 },  // 10.6 nm
+  { id: 'caa7ba5b-9193-45ae-8c28-b7a19ed447d7', name: "San Sebastiano", lat: 40.83867, lon: 14.38428 },  // 11.1 nm
+  { id: '1f0e634c-c211-4e8e-a74f-8ded03acf482', name: "Marano via Norvegia 34", lat: 40.89754, lon: 14.1992 },  // 11.6 nm
+  { id: '36112dec-3ca8-4591-850f-b66b280c2b1a', name: "Sito 17", lat: 40.72349, lon: 14.47492 },  // 11.9 nm
+  { id: '4097a52a-16b3-4cae-9419-f5dbe5c1c7cf', name: "Sito 08", lat: 40.69633, lon: 14.48183 },  // 12.1 nm
+  { id: 'd10102f7-d527-43ec-adc5-43f77a421e7e', name: "Stazione meteo Arenella", lat: 40.71639, lon: 13.94595 },  // 12.3 nm
+  { id: 'f54e63e1-04e3-428a-8fab-7cc9e65cb348', name: "Cratere", lat: 40.82909, lon: 14.43048 },  // 12.3 nm
+  { id: '0e22f842-58e8-4726-8f30-d96b3d40c806', name: "Monte Faito", lat: 40.66759, lon: 14.4842 },  // 12.4 nm
+  { id: '522c6d58-e5dc-4cf9-90b0-87c8126a4905', name: "Polizia Municipale", lat: 40.70397, lon: 14.48884 },  // 12.4 nm
+  { id: '0e8b1dab-1435-4eea-8324-6cb2626b087b', name: "Volla (NA) Liceo di Giacomo", lat: 40.88501, lon: 14.35091 },  // 12.5 nm
+  { id: '383f6b0c-9356-4920-9fff-fe0f845a98ce', name: "Stazione meteo Casa Comunale di Ischia", lat: 40.74285, lon: 13.94176 },  // 12.7 nm
+  { id: 'e4972b12-3cf1-441d-9537-26e1899b1349', name: "Pompei Bartolo Longo Osservatorio Meteorologico", lat: 40.74737, lon: 14.50132 },  // 13.3 nm
+  { id: '9983c38a-4100-463b-b2dd-c88dcf5671da', name: "Malinconico", lat: 40.91462, lon: 14.10424 },  // 13.6 nm
+  { id: '8efcf5b1-f16e-434d-9619-f30eb9ef3296', name: "San Nicola La Strada", lat: 40.86549, lon: 14.43765 },  // 14 nm
+  { id: '5b15a9a8-8340-4fdb-82ea-17c2c2224bc8', name: "Grumo Nevano", lat: 40.93598, lon: 14.25844 },  // 14.1 nm
+  { id: '77d6019b-7e9b-4941-8a09-d87b13607906', name: "Scafati", lat: 40.75155, lon: 14.52142 },  // 14.2 nm
+  { id: '325bd760-760d-4c66-a8cf-8f5dc53bf5c5', name: "Ottaviano", lat: 40.84543, lon: 14.47178 },  // 14.4 nm
+  { id: 'b9b6b31c-3521-473e-acca-25f9d70d3c43', name: "BOSCOREALE", lat: 40.78989, lon: 14.51504 },  // 14.6 nm
+  { id: '3d88dfd2-c978-4c6f-bdd7-6d69192c5d38', name: "Pomigliano d'Arco Istituto Cantone", lat: 40.9106, lon: 14.39241 },  // 14.8 nm
+  { id: '4e46d7b8-1f57-4895-b1fe-5c75238fae19', name: "Sant'Antonio Abate", lat: 40.71955, lon: 14.54106 },  // 14.8 nm
+  { id: '01bc30e9-21c7-47c9-b0c6-797a5e208b17', name: "Centrale-ForioCB", lat: 40.74168, lon: 13.86817 },  // 16 nm
+  { id: 'f4930d3a-dd97-4573-b28a-01326354aeb5', name: "IZ8GAD", lat: 40.97869, lon: 14.21173 },  // 16.5 nm
+  { id: '44ffdc2d-44ba-4f40-b6ac-ce6c688dbd6b', name: "Lago Patria - CNR ISMAR - LegaAmbiente", lat: 40.94404, lon: 14.02969 },  // 16.7 nm
+  { id: 'ea690579-64ce-405e-9a96-7d2f08dc14d6', name: "Corbara (SA)", lat: 40.72104, lon: 14.59297 },  // 17.2 nm
+  { id: '052b60b0-9a42-4e4a-81b4-e2de8172c689', name: "Protezione Civile", lat: 41.00017, lon: 14.127 },  // 18.2 nm
+  { id: '36b2e7e9-63b6-4127-9964-d505f5391028', name: "VUE", lat: 40.738, lon: 14.6414 },  // 19.5 nm
+  { id: '8eb5134f-8e1e-43d1-8a62-c616f6a67e15', name: "Marcianise centro", lat: 41.0381, lon: 14.28482 },  // 20.3 nm
+  { id: '3f67c354-eac8-49cb-91f0-6b99673d80a9', name: "CNR Foce Volturno - Licola", lat: 40.99386, lon: 13.96422 },  // 20.8 nm
+  { id: '86c35d20-f3b2-4e7b-8a1a-d4a6c21da1ca', name: "Rescigno Vertical Farm", lat: 40.76492, lon: 14.67494 },  // 21.2 nm
+  { id: 'bd4b41c5-9b9a-4fab-a091-af8f319dc374', name: "Stazione Meteo - Osservatorio Forino", lat: 40.96727, lon: 14.53833 },  // 21.5 nm
+  { id: 'af568336-df19-4d32-9b9d-f53b07cb7149', name: "Parco Saurino", lat: 41.0734, lon: 14.22529 },  // 22.2 nm
+  { id: 'fa6d10d6-47e3-4f39-ac49-a31b49e515c1', name: "CREA Caserta", lat: 41.07353, lon: 14.31731 },  // 22.7 nm
+  { id: '193bc980-a2e1-4116-a138-771b9b6e67d2', name: "Forino (AV)", lat: 40.86383, lon: 14.73814 },  // 25.6 nm
+  { id: 'eb0867bb-cce0-4d4c-a100-01fadde92d52', name: "Salerno Torrione Alto", lat: 40.6741, lon: 14.79062 },  // 26.2 nm
+  { id: '34b994a8-e9cf-4b9b-939e-7cb883c06d37', name: "Salerno Arechi Porto", lat: 40.64391, lon: 14.81282 },  // 27.4 nm
+  { id: 'b7bf1705-ad34-49a5-bd9d-ba6aa74b9a80', name: "Mercogliano", lat: 40.92564, lon: 14.7522 },  // 27.8 nm
+  { id: '62fcfb50-485e-4ffd-870e-76690a3b3315', name: "Oasi di Frassineto (SA)", lat: 40.76126, lon: 14.83399 },  // 28.3 nm
+  { id: 'b487f910-1763-421d-bbc1-23c667922e58', name: "PIGNATARO MAGGIORE (CE) - PROTEZIONE CIVILE", lat: 41.18307, lon: 14.16474 },  // 28.8 nm
+  { id: '3ebab8e8-7c83-43f1-b5ae-edd138d81565', name: "Montesarchio S", lat: 41.06335, lon: 14.63777 },  // 28.8 nm
+  { id: '12b04f45-14df-47a1-a069-8e80f659c9ca', name: "CautieroFrasso", lat: 41.1553, lon: 14.51365 },  // 30.3 nm
+  { id: '16024b78-7879-45d5-84bb-5ae1c9b0c414', name: "Ecoambiente Sardone - Bit Line", lat: 40.65354, lon: 14.8794 },  // 30.4 nm
+  { id: 'e311a385-eb33-47d9-8864-c90cc7d2e25c', name: "Cantina del Barone", lat: 40.89244, lon: 14.83774 },  // 30.4 nm
+  { id: '031a6fdd-2165-45de-86c6-ebddafa67951', name: "Vigneti Malaguti Anfora", lat: 41.22041, lon: 13.99276 },  // 32.6 nm
+  { id: '33ead087-e149-4560-9b7a-b2a1db9675eb', name: "Pietramelara", lat: 41.28875, lon: 14.19407 },  // 35.1 nm
+  { id: '4f891c08-6bf7-4b28-a7c0-2b2a1ea0940d', name: "Benevento Pacevecchia mt. 230", lat: 41.11949, lon: 14.80025 },  // 36.4 nm
+  { id: '5bb73b1f-9a95-49f0-a46f-dda9a093de8e', name: "_Vntlera_", lat: 41.24275, lon: 14.59594 },  // 36.6 nm
+  { id: '2f78f34d-065a-4b97-bcf8-d87404100632', name: "TemplarePaestum", lat: 40.47137, lon: 14.9606 },  // 36.7 nm
+  { id: '6c5f18d7-bef6-4722-be9e-dea32e520ebd', name: "AstroMax", lat: 41.26556, lon: 13.7445 },  // 39.9 nm
+  { id: 'a96488cc-008f-49f4-877a-d87f0df5fed0', name: "Farm PetrosinoSabato", lat: 40.60381, lon: 15.08622 },  // 40.1 nm
+  { id: 'fbb365c3-6b52-46fe-a441-a510a7692cec', name: "Mazzella - Pian Del Bosco", lat: 40.96772, lon: 15.02778 },  // 40.1 nm
+  { id: '2ddb476f-067a-4190-9041-55b4ee02f7db', name: "GAETA LIDO SIRIO & UNINA", lat: 41.20959, lon: 13.56784 },  // 42.2 nm
+  { id: '59559a83-7811-4c6f-81eb-ade363284ea9', name: "Danilo Formia", lat: 41.26765, lon: 13.61986 },  // 43.3 nm
+  { id: '64ad8eda-6b58-4de7-9a89-86674d0f710c', name: "San Marco dei Cavoti (BN)", lat: 41.3, lon: 14.8 },  // 44.5 nm
+  { id: '88dc8e44-1c46-40a4-81c4-679d250ec2f4', name: "Sepino", lat: 41.41229, lon: 14.6277 },  // 46.4 nm
+  { id: '862be41c-8430-48aa-927b-7a5f5d8b5ba2', name: "San Vittore del Lazio", lat: 41.46122, lon: 13.93909 },  // 47.1 nm
+  { id: '975a5ad3-ae52-4a86-a499-36591fc199dc', name: "IIS", lat: 41.15913, lon: 15.10838 },  // 48.8 nm
+  // Porto Cervo
+  { id: 'ea8fc38c-3af5-459b-8df7-e6d517c1306c', name: "Palau", lat: 41.16213, lon: 9.40185, seaNm: 1.5 },  // 6.4 nm
+  { id: '62fe4657-b74d-47ea-b166-54c27a94de62', name: "Andre Porto Rotondo", lat: 41.02532, lon: 9.55092, seaNm: 1.5 },  // 6.6 nm
+  { id: '6e09ed7e-d7c4-4fea-8c9b-dec29699ec08', name: "PORTO RAFAEL STATION", lat: 41.18192, lon: 9.38066, seaNm: 1.5 },  // 7.6 nm // known station, anemometer silent today
+  { id: '5da3e544-6072-46e0-846d-c6cac2261b51', name: "Nautico La Maddalena", lat: 41.2189, lon: 9.40951, seaNm: 1.5 },  // 7.7 nm
+  { id: 'b990eee0-befd-4ed2-9cb8-d0f7b68b4294', name: "Casagliana", lat: 40.99092, lon: 9.44917, seaNm: 5 },  // 9.5 nm
+  { id: 'dad60b48-9c2a-4be4-88c8-6911aec9a873', name: "Olbia Meteo", lat: 40.92269, lon: 9.52219, seaNm: 1.5 },  // 12.8 nm
+  { id: '03a9fe8b-e9d4-4e0f-90a1-f5ede1cfe2df', name: "Marina di Olbia", lat: 40.91614, lon: 9.5238, seaNm: 1.5 },  // 13.1 nm
+  { id: '764adb9f-ea54-4bc9-9c36-5e1e036b11d0', name: "Olbia Tannaule", lat: 40.91449, lon: 9.48197, seaNm: 1.5 },  // 13.5 nm
+  { id: '635e5578-de23-4768-a3dc-93d92ffc1155', name: "La Marina di Costa Corallina", lat: 40.88281, lon: 9.6266, seaNm: 1.5 },  // 15.7 nm
+  { id: '462490f2-7858-4392-a9f2-2022f6d2858c', name: "Calangianus", lat: 40.92112, lon: 9.193, seaNm: 10 },  // 20.2 nm
+  { id: 'be4f8f98-459d-421f-a843-a66d46ae945b', name: "Biasì Meteo", lat: 40.7757, lon: 9.55362, seaNm: 10 },  // 21.6 nm
+  { id: '47bab906-585c-4e93-a2b0-6421c517f1fe', name: "Portobello di Gallura", lat: 41.12402, lon: 9.02719, seaNm: 1.5 },  // 23.1 nm
+  { id: '49b40354-4bc0-4da9-b9db-8b9605b4df78', name: "Limbara Vallicciola", lat: 40.8488, lon: 9.15322, seaNm: 10 },  // 24.5 nm
+  { id: '5510a4e9-9360-4e2b-a011-a000f1e7c563', name: "Figari", lat: 41.5111, lon: 9.14928, seaNm: 10 },  // 28.6 nm
+  { id: '0ce58969-c7ff-41f4-93e4-ababf1836660', name: "ISS MARIA DE PERETTI", lat: 41.57766, lon: 9.26692, seaNm: 1.5 },  // 29.2 nm
+  { id: 'c356050e-fcc0-413e-a266-7d821d723d85', name: "Pedra Bianca", lat: 40.63553, lon: 9.53408, seaNm: 10 },  // 30 nm
+  { id: '4fad1ca8-d694-4280-beec-c8851653a7c2', name: "Osidda", lat: 40.52596, lon: 9.23217, seaNm: 10 },  // 39.1 nm
+  { id: '0147141a-b5bf-479c-a8fa-4fd3ecd4e664', name: "Bitti", lat: 40.47753, lon: 9.38295, seaNm: 10 },  // 40.1 nm
+  { id: 'ec34fa2c-6867-4aa2-b89c-03380c81ed30', name: "CS SNSM PROPRIANO", lat: 41.6774, lon: 8.89749, seaNm: 1.5 },  // 43.5 nm
+  { id: '94863340-05d2-48fc-b2f1-a6d6f7ed80ef', name: "Osilo", lat: 40.74379, lon: 8.67096, seaNm: 10 },  // 45.8 nm
 ]
