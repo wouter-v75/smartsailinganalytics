@@ -21,6 +21,7 @@ import { WEATHERFILE_STATIONS, type WeatherfileStation } from './windObsWeatherf
 import { CLUB_FEEDS, parseClubFeed, type ClubFeed } from './windObsClubs'
 import { gradedPick, nmBetween, type GradedOptions } from './obsDensity'
 import { VENUES } from './venues'
+import { tierFor } from './obsTier'
 import {
   decideVenues, IDLE_NM, IDLE_MIN_PER_VENUE,
   type ActivationInput, type VenueDecision,
@@ -797,5 +798,17 @@ export function obsRow(o: WindObs) {
     station_id: o.id, t: o.t, source: o.source, name: o.name,
     lat: o.lat, lon: o.lon, tws_kn: o.twsKn, gust_kn: o.gustKn,
     twd_deg: o.twdDeg, height_m: o.heightM, surface: o.surface, trust: o.trust,
+    // The permission, decided once here rather than re-derived by every
+    // reader — and `seaNm` is passed where it was measured, because a
+    // fit-tier network still cannot be fitted against from 10 nm inland.
+    tier: tierFor(o, { seaNm: seaNmFor(o.id) }).tier,
   }
+}
+
+/** Measured distance from the sea, where the Davis registry recorded one. */
+function seaNmFor(stationId: string): number | null {
+  if (!stationId.startsWith('wlmap:')) return null
+  const id = stationId.slice('wlmap:'.length)
+  const st = DAVIS_MAP_STATIONS.find((s) => s.id === id)
+  return typeof st?.seaNm === 'number' ? st.seaNm : null
 }
