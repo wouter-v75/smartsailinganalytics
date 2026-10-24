@@ -6,7 +6,14 @@
 //
 //   the catalogue      dati.isprambiente.it/sparql, 413 M triples
 //   the data           monthly CSVs at rep.isprambiente.it/file/rmn/
-//   span               2014-01 to 2023-10 for wind; nothing newer
+//   span               THE CATALOGUE lists 2014-01 to 2023-10. THE REPOSITORY
+//                      SERVES LESS: measured on 24 Oct 2026, every station
+//                      stops dead at 2022-04 and every month from 2022-05 to
+//                      2023-10 is a 404. Napoli, Gaeta and Ponza all end on a
+//                      partial April 2022 (2,645 rows, ~18 days), so the data
+//                      really ends about 19 Apr 2022. The catalogue is a
+//                      promise, not an inventory — which is why this script
+//                      asks it and then counts what is actually served.
 //   cadence            10 minutes
 //   columns            UTC;WS;WD  — semicolon, header present
 //   units              WS metres_per_second, WD degree — DECLARED in the
@@ -19,9 +26,10 @@
 //                      "..._averaging_period_10m"
 //   validation level   hasValidationLevel = l0, i.e. NOT validated
 //
-// THIS IS AN ARCHIVE, NOT A FEED. The latest wind month anywhere in the LOD is
-// October 2023 — ISPRA's "real-time Linked Open Data" description is three
-// years out of date. The live portal at mareografico.it does carry current
+// THIS IS AN ARCHIVE, NOT A FEED, and an older one than it advertises. The
+// latest wind month anywhere in the LOD is catalogued as October 2023 and the
+// newest actually downloadable is April 2022, so ISPRA's "real-time Linked
+// Open Data" description is four and a half years out of date, not three. The live portal at mareografico.it does carry current
 // data, but it is session-keyed and disables text selection and the context
 // menu in its own page script, so it is not a door to walk through. Use this
 // for TRAINING and climatology; use Davis, METAR and Port-Log for what the
