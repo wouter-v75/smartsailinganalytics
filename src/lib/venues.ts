@@ -79,6 +79,25 @@ export const VENUES: Venue[] = [
   // the spec next time it is refitted.
   { key: 'sorrento', name: 'Sorrento', lat: 40.703947, lon: 14.215522,
     aliases: ['golfo di napoli', 'gulf of naples', 'bay of naples', 'napoli', 'naples'] },
+  // CAPRI. 9.2 nm south of the Sorrento centre, so already inside that venue's
+  // dense ring — its own entry is for the inner circle and the idle floor.
+  // Measured: ONE Davis station within 5 nm (Caprimeteo.it, 0.74 nm from this
+  // centre), two within 10, sixty within 25 because Naples is close.
+  { key: 'capri', name: 'Capri', lat: 40.553, lon: 14.233,
+    aliases: ['isola di capri', 'marina grande', 'bocca piccola'] },
+  // PONZA, and the honest note about it: measured on the WeatherLink index,
+  // ZERO Davis stations within 5 nm, one within 10 and three within 25 — and
+  // the two nearest sit at exactly 41.0/13.0 and 41.2/13.2, round numbers
+  // meaning owners who never set a real position. At 0.1 deg that is 6 nm of
+  // latitude, wider than this venue's whole inner circle, so they are not
+  // where they say they are.
+  //
+  // What Ponza really has is the ISPRA RMN station — declared, professional,
+  // and an ARCHIVE that stops in April 2022. So this venue exists for METAR
+  // coverage, the idle floor and the stored history; it will not light up with
+  // live stations, and no amount of radius changes that.
+  { key: 'ponza', name: 'Ponza', lat: 40.896, lon: 12.963,
+    aliases: ['isole pontine', 'pontine islands', 'porto di ponza'] },
   { key: 'la-spezia', name: 'La Spezia', lat: 44.10, lon: 9.83,
     aliases: ['golfo dei poeti', 'portovenere'] },
   { key: 'san-juan', name: 'San Juan Islands', lat: 48.5627, lon: -122.8946,

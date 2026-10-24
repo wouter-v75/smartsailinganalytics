@@ -29,6 +29,8 @@ import { resolveVenueTz, deviceTz, wallHour, formatWall } from './venueTz'
 import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
+import { useVenueSst } from './useVenueSst'
+import { deltaKFromHourly } from '../../lib/seaTemp'
 import {
   fetchWindField, fetchIconRaceField, fetchCurrentField, fetchCurrentHires, currentsCovered, toVelocityData, speedImageURL, sampleField,
   applyMosToField, preferredFieldHeight, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
@@ -1171,6 +1173,7 @@ export default function ForecastView({
 // ── Subcomponents ─────────────────────────────────────────────────────
 
 function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed = false, heightsAllowed = false }) {
+  const venueSst = useVenueSst(point?.coords?.latitude, point?.coords?.longitude, timezone)
   const meta = LOCATION_META.find((m) => m.key === locationKey)
   const surf = point.surfaceByModel[model.key]
   // Speed columns = the model's display heights plus the mast height, sorted
@@ -1216,7 +1219,11 @@ function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed
     if (hour >= 8 && hour <= 18) {
       let mos = null
       if (canMos) {
-        const w = wind30(hourly, model.heights, index)
+        // Stability: the venue's SST against the model's own 2 m air
+        // temperature at this hour. Null when either is missing, which falls
+        // back to the neutral profile rather than inventing a difference.
+        const w = wind30(hourly, model.heights, index, 30, 0.11,
+          deltaKFromHourly(hourly, index, venueSst))
         if (w) {
           const r = applyMOS(spec, mosId, w.ws30, w.twd, hour)
           mos = r ? r.ws : null

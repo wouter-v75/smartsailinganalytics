@@ -15,6 +15,7 @@ import st_tropez from './mos/mos_st_tropez.json'
 import { wallHour } from './venueTz'
 import { venueAt, venueByKey, VENUE_MATCH_NM } from '../../lib/venues'
 import { solveSurfaceLayer, profileRatio } from '../../lib/windProfile'
+import { deltaKFromHourly } from '../../lib/seaTemp'
 
 // SPECS ARE KEYED BY VENUE KEY — the one in lib/venues.ts, hyphenated. This
 // file used to keep its own venue list, keyed with underscores, beside its own
@@ -73,7 +74,7 @@ const KMH_TO_KN = 0.539957
 // α when only one level exists, e.g. ICON-2I @10 m); direction via u/v interp.
 // `heights` is MODELS[key].heights; `hourly` the Open-Meteo payload; speeds in
 // the payload are km/h. Returns { ws30 (kn), twd (deg), nLevels } or null.
-export function wind30(hourly, heights, idx, targetZ = 30, defaultAlpha = 0.11) {
+export function wind30(hourly, heights, idx, targetZ = 30, defaultAlpha = 0.11, deltaK = null) {
   if (!hourly) return null
   const lv = []
   for (const h of heights) {
@@ -112,7 +113,14 @@ export function wind30(hourly, heights, idx, targetZ = 30, defaultAlpha = 0.11) 
     // around 9 % on average. Fixing that needs an air-sea temperature
     // difference, which this fetch does not currently request; lib/windProfile
     // has the physics ready for when it does.
-    const layer = solveSurfaceLayer(lv[0].sp * 0.514444, 0, { refZ: lv[0].z })
+    // deltaK is air minus sea in kelvin, POSITIVE = stable. With it this is
+    // the full Monin-Obukhov profile; without it the neutral one, which
+    // understates the masthead by ~9 % and by 2.1 kn on a light offshore
+    // morning. Passing 0 would claim neutrality we have not measured, so a
+    // missing value stays null and solveSurfaceLayer is given 0 only as the
+    // honest no-information case.
+    const dK = Number.isFinite(deltaK) ? deltaK : 0
+    const layer = solveSurfaceLayer(lv[0].sp * 0.514444, dK, { refZ: lv[0].z })
     const r = profileRatio(targetZ, lv[0].z, layer.z0, layer.lengthM)
     sp30 = lv[0].sp * (r > 0 ? r : Math.pow(targetZ / lv[0].z, defaultAlpha))
   }
@@ -176,11 +184,13 @@ export function hourInTz(timeStr, tz) {
 }
 
 // Whole MOS-corrected 30 m series (kn) for a model's hourly payload, or null.
-export function mosSeries(hourly, heights, spec, mosModelId, tz) {
+export function mosSeries(hourly, heights, spec, mosModelId, tz, sst = null) {
   if (!hourly?.time || !spec?.models?.[mosModelId]) return null
   if ((spec.models[mosModelId].type || 'raw') === 'raw') return null
   return hourly.time.map((t, i) => {
-    const w = wind30(hourly, heights, i)
+    // The venue's SST, where it was fetched, gives the stability term its
+    // air-sea difference. Null simply falls back to the neutral profile.
+    const w = wind30(hourly, heights, i, 30, 0.11, deltaKFromHourly(hourly, i, sst))
     if (!w) return null
     const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hourInTz(t, tz))
     return r ? r.ws : null
