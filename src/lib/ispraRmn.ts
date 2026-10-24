@@ -35,6 +35,25 @@
 // for TRAINING and climatology; use Davis, METAR and Port-Log for what the
 // wind is doing now.
 //
+// COVERAGE IS TWO BLOCKS WITH A HOLE, NOT A SERIES. Measured by importing the
+// Gulf of Naples stations on 24 Oct 2026 — 757,019 rows for three stations,
+// about five years each, but arranged like this:
+//
+//   Napoli   2014-01 → 2016-01    then 2016-02 → 2019-02 ALL 404    then 2019-03 → 2022-04
+//   Gaeta    2014-01 → 2016-12    then 2017 → 2019-03 missing       then 2019-04 → 2022-04
+//   Ponza    2014-01 → 2015-11    then 2015-12 → 2019-03 missing    then 2019-04 → 2022-04
+//
+// DO NOT FIT ACROSS THE GAP WITHOUT CHECKING. A station that went dark for
+// three years and came back is not obviously the same instrument: a multi-year
+// outage is usually a failed sensor, and what returns may be a different
+// anemometer at a different height with a different calibration, on a quay
+// that has been built on in the meantime. Pooling 2014 and 2020 as one
+// homogeneous record is precisely the move that puts a step change into a
+// training set and calls it weather. The cheap check before trusting it is to
+// compare the two blocks' own climatologies — direction distribution and speed
+// quantiles by season — and treat a shift as a station change rather than a
+// climate signal.
+//
 // WHY IT IS WORTH HAVING ANYWAY. The verification literature puts a local wind
 // MOS fit at 365-1816 days of record. SSA's own table starts from the day the
 // poller began. This is thirteen years that already exist, properly licensed,
