@@ -8,6 +8,9 @@
 // backend proxy. The verification feature (Phase 4) will introduce its own
 // backend routes for storing scoring results.
 
+import { marineSstUrl, parseMarineSst } from '../../lib/seaTemp'
+import { venueAt } from '../../lib/venues'
+
 // Coarse coverage box for the North-American models (USA / Canada / Caribbean).
 // Region-gates them (see `coverage` below): fetched + shown only for clicked
 // points inside it, hidden in Europe. Deliberately generous — a point inside the
@@ -347,6 +350,18 @@ function surfaceUrl(modelKey, latitude, longitude, timezone, opts = {}) {
   for (const h of m.heights) {
     params.push(`wind_speed_${h}m`, `wind_direction_${h}m`)
   }
+  // 2 m air temperature, for the air-sea difference that sets the stability
+  // term in lib/windProfile. Free — it rides on the same request — and without
+  // it a masthead wind can only be the NEUTRAL profile, which understates it
+  // by about 9 % and by 2.1 kn on a light offshore morning. The sea side comes
+  // from fetchVenueSst() below, once per venue rather than once per point.
+  params.push('temperature_2m')
+  // 2 m air temperature, for the air-sea difference that sets the stability
+  // term in lib/windProfile. Free — it rides on the same request — and without
+  // it a masthead wind can only be the NEUTRAL profile, which understates it
+  // by about 9 % and by 2.1 kn on a light offshore morning. The sea side comes
+  // from fetchVenueSst() below, once per venue rather than once per point.
+  params.push('temperature_2m')
   if (m.soundingLevels) {
     for (const p of m.soundingLevels) {
       params.push(
@@ -532,6 +547,47 @@ export async function fetchModelMeta(metaModel) {
 // we hold should have landed, which is the only sound basis for "update due".
 // Rolling it would push the deadline away every time the model got later, and the
 // row could never go amber.
+const _sstCache = new Map() // `${key}|${timezone}` -> { at, promise }
+
+/**
+ * Sea-surface temperature for a VENUE, cached for an hour.
+ *
+ * One call per venue, not per grid point: SST ran 21.8-22.0 C across a whole
+ * 48-hour forecast in the Gulf of Naples when this was measured, so it is the
+ * slowest-moving field in the system and a venue-wide value loses nothing.
+ * Open-Meteo bills per LOCATION, so this is the difference between one call an
+ * hour and one per point.
+ *
+ * `timezone` MUST be the same one the surface model was fetched with. The
+ * marine endpoint defaults to GMT and returns naive stamps, so a mismatch
+ * silently offsets every air-sea difference by the venue's UTC offset — two
+ * hours in the Med, which across a diurnal sea breeze is the difference
+ * between stable and unstable. seaTemp.sstAt matches stamps by exact string
+ * and returns null rather than guessing, so a mismatch shows up as "no
+ * stability data" instead of a wrong correction.
+ */
+export async function fetchVenueSst(latitude, longitude, timezone) {
+  const venue = venueAt(latitude, longitude)
+  // Outside a known venue there is nothing to share a value across, and a
+  // per-point marine call is the cost this function exists to avoid.
+  if (!venue || !timezone) return null
+  const key = `${venue.key}|${timezone}`
+  const c = _sstCache.get(key)
+  if (c && Date.now() - c.at < 3_600_000) return c.promise
+
+  const promise = (async () => {
+    try {
+      const res = await fetch(marineSstUrl(venue.lat, venue.lon, timezone))
+      if (!res.ok) return null
+      return parseMarineSst(await res.json())
+    } catch {
+      return null   // no SST is a flagged neutral profile, not an outage
+    }
+  })()
+  _sstCache.set(key, { at: Date.now(), promise })
+  return promise
+}
+
 export function modelCadence(meta, now = Date.now() / 1000) {
   const init = meta?.initSec
   const interval = meta?.intervalSec
