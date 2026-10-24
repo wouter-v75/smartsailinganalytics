@@ -112,3 +112,8 @@ media-in/*
 # Deep-research working folders (the delivered report lives in docs/)
 research_notes/
 reports/
+
+# Measured sea distances, so the Open-Meteo DEM is paid for once.
+# The durable record is seaNm in src/lib/windObsDavisMap.ts; this is only a
+# local cache so a dry run and the --write run after it do not both pay.
+.coast-cache.json

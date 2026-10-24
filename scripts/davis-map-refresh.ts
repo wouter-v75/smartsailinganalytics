@@ -37,7 +37,7 @@
 // Run it when a venue is added, or once a season — station positions change
 // when somebody installs an anemometer, which is not often.
 
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { VENUES, stationsForPoll, POLL_EVERY_MIN } from '../src/lib/obsSources'
 import { decideVenues, FORCE_ALL } from '../src/lib/obsActivation'
 import { DAVIS_MAP_STATIONS } from '../src/lib/windObsDavisMap'
@@ -138,6 +138,47 @@ async function measureSeaNm(pts: Array<{ lat: number; lon: number }>): Promise<M
 }
 
 /**
+ * A LOCAL cache of measured sea distances, so the DEM is paid for once.
+ *
+ * Open-Meteo bills per LOCATION and the free budget is ~10,000 a day. A
+ * Sorrento pick is ~3,100 locations, and before this the dry run spent them
+ * and threw them away, then --write spent them all over again — about 6,400 of
+ * a day's budget to pick ONE venue, for a quantity that cannot change: the
+ * distance from a fixed station to the sea.
+ *
+ * Gitignored and local, deliberately. The registry's own seaNm is the durable
+ * record and it is committed; this is only what stops a dry run and the write
+ * run that follows it paying twice. Being untracked, writing it during a dry
+ * run surprises nobody and cannot be committed by accident.
+ *
+ * ONLY SUCCESSES ARE CACHED. seaNmFromElevations returns a number when it
+ * looked — including the outer radius for "no sea in the ring" — and null ONLY
+ * when the measurement itself failed. Caching a null would make one
+ * rate-limited batch permanent.
+ */
+const CACHE_PATH = new URL('../.coast-cache.json', import.meta.url)
+
+function loadCoastCache(): Map<string, number> {
+  try {
+    if (!existsSync(CACHE_PATH)) return new Map()
+    const raw = JSON.parse(readFileSync(CACHE_PATH, 'utf8')) as Record<string, unknown>
+    const m = new Map<string, number>()
+    for (const [k, v] of Object.entries(raw)) if (typeof v === 'number' && Number.isFinite(v)) m.set(k, v)
+    return m
+  } catch {
+    return new Map()   // a corrupt cache is a cache miss, not an error
+  }
+}
+
+function saveCoastCache(m: Map<string, number>): void {
+  try {
+    writeFileSync(CACHE_PATH, `${JSON.stringify(Object.fromEntries(Array.from(m.entries())), null, 0)}\n`)
+  } catch (e) {
+    console.log(`  (could not write the coast cache: ${(e as Error).message})`)
+  }
+}
+
+/**
  * How much of the pool the DEM actually answered for.
  *
  * A PARTIAL measurement is worse than none, which is the whole reason this
@@ -213,15 +254,28 @@ async function main() {
     // registry already knows is not re-measured, so a second run is free.
     const seaNm = new Map<string, number | null>()
     if (COAST && !FLAT) {
+      // Two sources of already-known values: the committed registry, and the
+      // local cache a previous dry run left behind.
       for (const st of DAVIS_MAP_STATIONS) {
         if (typeof st.seaNm === 'number') seaNm.set(`${st.lat},${st.lon}`, st.seaNm)
+      }
+      const cache = loadCoastCache()
+      let fromCache = 0
+      for (const [k, v] of Array.from(cache.entries())) {
+        if (!seaNm.has(k)) { seaNm.set(k, v); fromCache++ }
       }
       const needed = pool.filter((s) =>
         nmBetween(la, lo, s.lat, s.lon) > INNER && !seaNm.has(`${s.lat},${s.lon}`))
       console.log(`  coast bias ${COAST_BIAS}: measuring ${needed.length} station(s)`
         + ` = ${seaProbeCost(needed.length).toLocaleString('en-GB')} Open-Meteo locations`
-        + ` (billed per location; ${pool.length - needed.length} already known)`)
-      for (const [k, v] of Array.from((await measureSeaNm(needed)).entries())) seaNm.set(k, v)
+        + ` (billed per location; ${pool.length - needed.length} already known`
+        + `${fromCache ? `, ${fromCache} of them from .coast-cache.json` : ''})`)
+      const measured = await measureSeaNm(needed)
+      for (const [k, v] of Array.from(measured.entries())) {
+        seaNm.set(k, v)
+        if (typeof v === 'number') cache.set(k, v)
+      }
+      if (needed.length) saveCoastCache(cache)
       const asked = needed.length
       const got = needed.filter((s) => seaNm.get(`${s.lat},${s.lon}`) != null).length
       const coverage = asked ? got / asked : 1
