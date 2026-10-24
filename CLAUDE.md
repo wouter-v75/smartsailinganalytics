@@ -88,18 +88,27 @@ same thing — the exact line.
 | production | nothing to run. `vercel.json` has no deploy hook; Vercel builds from `main` on push. Then hard-reload the tab (Cmd-Shift-R) — a warm tab keeps the old client bundle and the fix looks unshipped |
 | before pushing | `npm run verify` (tsc → next lint → lint:undef → vitest → next build) |
 
-## Migrations are DELIVERED as a file, every time
+## Migrations are DELIVERED as a file, EVERY TIME they are mentioned
 
 A migration is useless as a code block in a chat: it has to be pasted into the
 Supabase SQL editor, which means it has to be a file Wouter can open and copy.
-So whenever a migration is written or changed, **send the `.sql` file** — do not
-merely say it exists, and do not paste it into the reply and leave it there.
-Writing it to `supabase/migrations/` is not delivering it.
+Writing it to `supabase/migrations/` is **not** delivering it. Nor is naming it
+in a sentence.
 
-This applies to a migration mentioned in passing as much as to one that is the
-whole task, and it applies again when the file is amended — a second version
-needs a second delivery, because the first download is the one that gets
-pasted.
+**ATTACH THE `.sql` FILE whenever the migration comes up at all.** Not only
+when it is written. Also when it is amended, also when a reply says it still
+needs running, also when it is one line of a longer summary, also when it was
+already sent earlier in the same conversation. If the words "paste 0103" (or
+any migration's number) appear in a reply, the file goes with that reply.
+
+The reason is simple and was learned the hard way: a file sent twenty messages
+ago is a file Wouter has to scroll back and hunt for, and the whole point of
+sending it is that he should not have to. Re-sending costs nothing. Making him
+search costs his attention, which is the scarce thing.
+
+So the rule has no exceptions worth remembering. Mention a migration → send the
+migration. And say in the caption which one it is, that it is additive and
+idempotent, and which migration it follows.
 
 ## Docs are delivered as PDF, never as `.md`
 
