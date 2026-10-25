@@ -767,10 +767,42 @@ export function nmToNearestVenue(lat: number, lon: number): number {
   return Math.min(...VENUES.map((v) => nmBetween(v.lat, v.lon, lat, lon)))
 }
 
-/** Keep only what is near somewhere we sail, de-duplicated by station. */
+/**
+ * Keep only what is near somewhere we sail, de-duplicated by station.
+ *
+ * TWO radii, because one had the priority exactly backwards. An idle venue
+ * keeps everything within IDLE_NM (3 nm) — and a `fit`-tier station out to the
+ * full VENUE_NM, which is the change.
+ *
+ * WHY. The lighthouses and buoys are BY NATURE the furthest out, so a small
+ * idle radius cuts precisely the stations worth most and keeps the gardens in
+ * town. Measured in the Oslofjord on 25 Oct 2026, where the cut landed between
+ * Horten-Nykirke at 3.0 nm (kept, still recording) and Gullholmen at 3.1 nm
+ * (dropped, last row 23 Oct 06:23) — a tenth of a mile deciding it. Svenner
+ * fyr at 3.7 nm and Strømtangen fyr at 5.6 nm went the same way, and Færder at
+ * 11.6 nm would never have recorded a single row. All three are `fit`; the
+ * nineteen PWS that kept their trace are `display`.
+ *
+ * That is the wrong way round for what this table IS. `fit` is the permission
+ * to be fitted against, so these rows are the MOS training set, and idle is
+ * most of the year — starving it of the only stations a correction may be fitted
+ * against is giving up the thing the table exists for. The live picture during a
+ * regatta is what the dense mode is for, and dense keeps everything anyway.
+ *
+ * Still BOUNDED by VENUE_NM: every `metar:` and `ndbc:` id is `fit` by class,
+ * and those are global networks of thousands. Measured, the whole fit set
+ * within 60 nm of all 15 venues is about 70 stations a poll against 27 today —
+ * some 3.4k rows a day where a dense day is 12.6k.
+ */
 export function nearAnyVenue(obs: WindObs[], decisions: VenueDecision[]): WindObs[] {
   const keep = new Map<string, WindObs>()
-  for (const v of decisions) for (const o of withinNm(obs, v.lat, v.lon, keepRadiusNm(v))) keep.set(o.id, o)
+  for (const v of decisions) {
+    for (const o of withinNm(obs, v.lat, v.lon, keepRadiusNm(v))) keep.set(o.id, o)
+    if (keepRadiusNm(v) >= VENUE_NM) continue // dense already keeps the lot
+    for (const o of withinNm(obs, v.lat, v.lon, VENUE_NM)) {
+      if (tierFor(o).mayFit) keep.set(o.id, o)
+    }
+  }
   return Array.from(keep.values())
 }
 
