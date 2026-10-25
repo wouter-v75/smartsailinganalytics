@@ -81,12 +81,38 @@ export function isHourlySlot(d: Date = new Date(), everyMin: number = POLL_EVERY
  * "the nearest station" is the wrong question to ask this network.
  */
 export const FROST_SITES: FrostSite[] = [
-  // The lighthouse south of Larvik: exposed, 10-minute resolution, and the
-  // only one here with a complete wind observation.
+  // The lighthouse south of Larvik: exposed, 10-minute resolution, and a
+  // complete wind observation.
   { id: 'SN29950', name: 'Svenner Fyr', lat: 58.9688, lon: 10.148 },
+  // Færder fyr, on Tristein off the south tip of Tjøme — the Skagerrak/
+  // Oslofjord boundary, and the best-attested station in this list: WMO 1482,
+  // records from 1885, speed and direction at 10-minute resolution and gust
+  // hourly, every one of them declaring 10 m. Exposed on every side, which is
+  // what makes it worth more than the inland stations below.
+  //
+  // Its WMO number is 1482, NOT 01482 as the station plates and most
+  // catalogues write it: Frost stores the id unpadded, so `wmoid=01482` is a
+  // flat 404 while `wmoid=1482` returns it. Resolved with
+  // scripts/frost-station-lookup.ts rather than guessed — an SN id that
+  // matches nothing is a station that stays silently empty for ever.
+  { id: 'SN27500', name: 'Færder Fyr', lat: 59.0272, lon: 10.5242 },
   // Speed and gust but NO direction — still worth having for the strength.
   { id: 'SN27780', name: 'Tjølling', lat: 59.045747, lon: 10.1250557 },
   { id: 'SN29980', name: 'Brunlanes', lat: 58.9878, lon: 9.96187 },
+  // Three exposed islands along the Skagerrak coast, found by asking Frost what
+  // it serves near the venue rather than by hand (--near, same script). Each is
+  // low and surrounded by water, which is what earns them the `fit` tier the
+  // frost prefix gives by default.
+  { id: 'SN30235', name: 'Larvik - Fugløya', lat: 58.980574, lon: 9.803816 },
+  { id: 'SN34130', name: 'Jomfruland', lat: 58.8565, lon: 9.5745 },
+  // Swedish, served through Frost: the outer Koster island off Strömstad.
+  { id: 'SN250000', name: 'Nordkoster', lat: 58.8919, lon: 11.0039 },
+  // The four below are NOT open-water stations and carry tier exceptions in
+  // obsTier.ts. They are here for the sector and the gradient, not the strength.
+  { id: 'SN27420', name: 'Tjøme', lat: 59.1205, lon: 10.398 },
+  { id: 'SN27470', name: 'Torp', lat: 59.1845, lon: 10.2553 },
+  { id: 'SN17150', name: 'Rygge', lat: 59.3742, lon: 10.798 },
+  { id: 'SN26900', name: 'Drammen - Berskog', lat: 59.7538, lon: 10.1206 },
 
   // ── Oslofjord, Sarpsborg and north to Gardermoen ─────────────────────────
   // Two lighthouses and an island station, which are the ones worth having:

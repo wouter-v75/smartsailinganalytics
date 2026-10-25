@@ -11,7 +11,7 @@ const obs = (id: string) => ({ id, source: 'pws' as const })
 
 describe('class defaults', () => {
   it('puts the professional marine and aviation networks in fit', () => {
-    for (const id of ['portlog:3306', 'ndbc:46053', 'mf-buoy:61001', 'metar:EGHI', 'cco:sandown', 'frost:SN76920']) {
+    for (const id of ['portlog:3306', 'ndbc:46053', 'mf-buoy:61001', 'metar:EGHI', 'cco:sandown']) {
       expect(tierFor(obs(id)).tier, id).toBe('fit')
     }
   })
@@ -20,6 +20,39 @@ describe('class defaults', () => {
     for (const id of ['mf-land:83101001', 'rmn:napoli', 'wf:GBR00001', 'wle:abc', 'club:hillhead', 'mo:gcpvj', 'mf-ship:x']) {
       expect(tierFor(obs(id)).tier, id).toBe('probation')
     }
+  })
+
+  it('keeps an unnamed FROST station out of the fit, however good the instrument', () => {
+    // Frost is a NATIONAL network: of the 23 stations FROST_SITES names, most
+    // are inland — a hilltop at 445 m, three roadside motorway sensors, an
+    // airport, a city garden. `frost: 'fit'` as a class default put every one
+    // of them in the fitting set, which is the single failure this file exists
+    // to prevent, so the default is probation and the open-water ones are
+    // promoted by name.
+    //
+    // This asserts the DEFAULT, using an id deliberately not in the exception
+    // list: a station added to FROST_SITES tomorrow must not be fittable until
+    // somebody has looked at where it stands.
+    const d = tierFor(obs('frost:SN76920'))
+    expect(d.tier).toBe('probation')
+    expect(d.mayFit).toBe(false)
+  })
+
+  it('promotes the Norwegian lighthouses and islands by name', () => {
+    // Water on every side and an altitude in single or low double figures.
+    for (const id of ['frost:SN27500', 'frost:SN29950', 'frost:SN17000',
+                      'frost:SN17280', 'frost:SN30235', 'frost:SN34130',
+                      'frost:SN250000']) {
+      expect(tierFor(obs(id)).tier, id).toBe('fit')
+      expect(tierFor(obs(id)).mayFit, id).toBe(true)
+    }
+  })
+
+  it('does NOT promote Tjøme, which only looks coastal', () => {
+    // On the same island Færder fyr stands off, 6 nm away, and it read 6.9 m/s
+    // against Færder's 21.0 in the SE gale of 25 Oct 2026. A map cannot tell
+    // you that; a live reading can.
+    expect(tierFor(obs('frost:SN27420')).tier).toBe('probation')
   })
 
   it('puts the garden and sport networks in display', () => {

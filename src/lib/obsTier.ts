@@ -109,7 +109,23 @@ const TIER_BY_PREFIX: Record<string, ObsTier> = {
   'mf-buoy': 'fit',
   metar: 'fit',
   cco: 'fit',
-  frost: 'fit',
+  // FROST IS A NATIONAL NETWORK, so `fit` was the wrong default and this used
+  // to sit above with the buoys. Of the 23 stations FROST_SITES names, seven
+  // are lighthouses or islands and sixteen are inland — a hilltop at 445 m,
+  // three roadside motorway sensors, an airport and a city garden among them.
+  // Every one of those was fittable, which is the one kind of bad data the
+  // tier exists to keep out and the one you cannot see from the outside.
+  //
+  // So the open-water ones are PROMOTED by name below and the rest stay here.
+  // That way a station added to FROST_SITES tomorrow is safe until somebody
+  // looks at it, rather than silently joining the fitting set.
+  //
+  // Frost's own quality handling is still the best of any source here — it
+  // states the unit, the height and a quality code per reading, and
+  // parseFrostObs drops anything with a non-zero code. That is why the inland
+  // ones are `probation` and not `display`: the readings are trustworthy, the
+  // SITES are just not measuring the race area.
+  frost: 'probation',
   'mf-ship': 'probation',
   mo: 'probation',
   'mf-land': 'probation',
@@ -147,6 +163,24 @@ export const TIER_EXCEPTIONS: Record<string, { tier: ObsTier; why: string }> = {
   'portlog:3302': { tier: 'probation', why: 'Dock Head: inside the docks' },
   'portlog:3310': { tier: 'probation', why: 'Town Quay: inside the docks' },
   'portlog:3303': { tier: 'probation', why: 'Marchwood: inside the docks' },
+
+  // ── The Norwegian open-water stations, promoted out of frost's inland
+  // default. Lighthouses and low islands: water on every side, nothing
+  // upwind, and an altitude in single or low double figures.
+  'frost:SN27500': { tier: 'fit', why: 'Færder fyr: island lighthouse, 6 m, WMO 1482, records from 1885' },
+  'frost:SN29950': { tier: 'fit', why: 'Svenner fyr: island lighthouse S of Larvik, 15 m' },
+  'frost:SN17000': { tier: 'fit', why: 'Strømtangen fyr: lighthouse off Fredrikstad, 10 m' },
+  'frost:SN17280': { tier: 'fit', why: 'Gullholmen: island in the Oslofjord, 14 m' },
+  'frost:SN30235': { tier: 'fit', why: 'Larvik - Fugløya: island off Larvik, 27 m' },
+  'frost:SN34130': { tier: 'fit', why: 'Jomfruland: exposed island off Kragerø, 3 m, WMO 1476' },
+  'frost:SN250000': { tier: 'fit', why: 'Nordkoster: outer Koster island, Skagerrak, 33 m, WMO 2500' },
+
+  // Tjøme is the instructive one. It is ON the island Færder fyr stands off,
+  // 6 nm away and nominally just as coastal — and in the SE gale of
+  // 25 Oct 2026 06:30 it read 6.9 m/s against Færder's 21.0. A third of the
+  // wind at a station that looks coastal on a map is the whole argument for
+  // reading a live value before trusting a site.
+  'frost:SN27420': { tier: 'probation', why: 'Tjøme: sheltered — read 1/3 of Færder 6 nm away in the same gale' },
 }
 
 /** How far inland a station may be and still be considered for `fit`. */
