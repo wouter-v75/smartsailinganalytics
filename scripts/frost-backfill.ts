@@ -228,8 +228,13 @@ async function main() {
         stored += chunk.length
       }
       perStation.set(p.id, (perStation.get(p.id) ?? 0) + obs.length)
-      process.stdout.write(`\r  ${p.id} ${p.name.slice(0, 18).padEnd(18)} `
-        + `${a.slice(0, 7)}  [${i + 1}/${mine.length}]  ${stored.toLocaleString('en-GB')} stored     `)
+      // SHORT ENOUGH TO OVERWRITE ITSELF. A \r only returns to column 0 if the
+      // line fitted the terminal; a longer one wraps, so each update lands
+      // beside the last instead of on top of it and the row count is cut off
+      // mid-number. The station name is already in the plan table above.
+      process.stdout.write(`\r  ${p.id.padEnd(9)} ${a.slice(0, 7)} `
+        + `[${String(i + 1).padStart(2)}/${mine.length}] `
+        + `${stored.toLocaleString('en-GB').padStart(9)}  `)
     }
     process.stdout.write('\n')
   }
