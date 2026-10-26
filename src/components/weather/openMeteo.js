@@ -136,11 +136,31 @@ export const MODELS = {
   //
   // metaModel differs from modelParam on purpose: `metno_nordic/static/meta.json`
   // is HTTP 500; the run times live under `metno_nordic_pp`.
+  //
+  // mosModel is an EXACT match — the only one here besides AROME, ARPEGE and
+  // ITALIA. ICON and ECMWF both carry mosApprox because the model the tool
+  // fetches is not the one the correction was trained on (icon_seamless vs
+  // icon_eu, 9 km HRES vs ifs025); here the tool fetches `metno_nordic` and
+  // that is the id to train against, so there is nothing approximate.
+  //
+  // INERT UNTIL A NORWEGIAN VENUE IS FITTED, which is the point of naming it
+  // now. Every MOS path is gated on correctionInfo() finding coefficients for
+  // (venue, mosModel), and SPECS holds only Sorrento, Porto Cervo and
+  // St Tropez — all outside the NORDIC box, so this model is never even
+  // fetched there. Naming the id changes no behaviour today; it records what
+  // the fit has to be trained on, so the answer is not re-derived later.
+  //
+  // Its archived forecasts begin about DEC 2022 — probed 2026-10-26 at Færder:
+  // 1 Nov 2022 is all-null, 1 Dec 2022 is complete. That is the training
+  // window's hard floor, and it is deeper than icon_eu's and ecmwf_ifs025's
+  // (which start somewhere in 2022-23 and 2023-24 respectively). The Frost
+  // observation backfill is what supplies the other side of the pair.
   METNO: {
     key: 'METNO', label: 'MET Norway', subtitle: 'MET Nordic 1 km · yr.no', color: '#283593',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'metno_nordic',
     metaModel: 'metno_nordic_pp',
+    mosModel: 'metno_nordic',
     coverage: NORDIC,
     fieldGrid: 16,                 // high-res wind-field sampling (1 km model)
     heights: [10],
