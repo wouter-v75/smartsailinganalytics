@@ -30,9 +30,20 @@
 > `fetch_cmems_sst.sh`, the domain mapping in `daily_pipeline.sh`, the region trigger in
 > `cron_daily.sh`; fetch and `prep_sst_lam`'s own remap both exercised on the real grid.
 >
-> **Open, in order:** first run on a past cycle with `REGATTA_ROOT` redirected (and `z_mc`
-> confirmed from THAT run — see below); `.env` + a second cron entry at ~14:41 UTC; then validate
-> against HRRR (§6 phase 7). Tidal currents remain a separate piece of work (§5).
+> **First run done, 27 Oct 2026.** On the operational 12z cycle (26 Oct, since today's had not
+> published), `REGATTA_ROOT` redirected: fetch 6325/6325 → preprocess → **2 km ICON finished** →
+> nest IC/BC → **1 km finished**, 40 output files across the `_hl_`, `_sfc_` and `_pbl_` streams.
+> `z_ifc` came back with **77 levels, top 24,169.889 m** — against the predicted "half level 45 =
+> 24,170 m", so the level cut landed exactly where §4b designed it. Six defects were found and
+> fixed on the way; see §5l.
+>
+> **Streaming done, opt-in.** See §5m: `GLOBAL_STREAM=1` holds the peak at one chunk (~11 GB)
+> instead of one cycle (37 GB at +24 h, 64 GB at +42 h).
+>
+> **Open, in order:** `.env` + a second cron entry at ~14:41 UTC; then validate against HRRR and
+> now HRDPS too (§6 phase 7 — HRDPS is 2.5 km and brackets mast height at 10/40/80/120 m, so it is
+> the sterner test). Tidal currents are implemented for the POINT series (SalishSeaCast, see
+> `src/lib/salishSeaCurrents.ts`); the map FIELD is still Channel-only.
 >
 > **Correction to phase 4 step 13:** `z_mc` is *not* in the Zonda output — checked, in neither
 > resolution's grid, parent, latbc or extpar file. ICON builds it at runtime from the vgrid
@@ -888,6 +899,67 @@ weights as netCDF regardless, and a remap through those weights returns bit-iden
 So phase 1 steps 1 and 3 are complete, and step 2 (pin CDO at 2.1.1) is now better motivated: 2.1.1
 demonstrably handles the global GRIB, and the padding error is a write-path hazard that `-f nc4`
 sidesteps rather than a version blocker.
+
+## 5l. What the first run actually found
+
+The fetch was never the problem. Six defects, all in the gate and the naming around it:
+
+| | what it was | why it mattered |
+|---|---|---|
+| deadline | `FETCH_DEADLINE_UTC="0640"` hardcoded | at 13:34 UTC it was 7 h past, so the wait loop gave up on its FIRST pass while the fetch was still running. Now RUN-relative: 00z keeps 0640/0730, 12z gets 1840/1930 |
+| step 000 | counted as a peer of the others | global files its time-invariants under step 000, so 647 against 622 made 647 the bar and steps 001+ could never reach it. The gate waited, every two minutes, for a fetch that had finished |
+| observed count | `MISSING_OBSERVED_MAX` set inside `$(...)` | a subshell, so discarded — "observed 0 files/step" **on the Med too**, which made the log's own advice ("set EXPECT_PER_STEP to it") advice to set it to zero |
+| log strings | "ICON-EU steps", "00z incomplete" | named the wrong model and the wrong cycle on the global road |
+| `FRESHSNW` | renamed to `freshsnw` | ICON wants `freshsnow` and aborted in `fetch_dwdfg_sfc`. §5e had flagged this exact ambiguity to verify on the first global run — it verified wrong |
+| `HSNOW_MAX` | in no rename pair at all | would have failed one step later, the same way |
+
+The last two are the instructive pair: `FR_ICE:fr_seaice` and `SNOAG:snow_age` already mapped to
+ICON's INTERNAL names, and `FRESHSNW:freshsnw` was the odd one out — a faithful lowercase of the
+DWD shortName, which is not what ICON reads.
+
+## 5m. Streaming — and why the per-file hook the fetcher already has is the wrong granularity
+
+The box's standing disk idiom is cron_daily's prune of the previous cycle, and for ICON-EU it is
+enough: one cycle is ~20 GB against 43 GB free. The global road breaks that. **Measured on the
+rehearsal: 622 files and 1.5 GB per step**, so
+
+```
+  BCLEAD=24  ->  25 steps  ->  ~37 GB     fits alone, 6 GB spare
+  BCLEAD=42  ->  43 steps  ->  ~64 GB     does not fit at all
+```
+
+and pruning earlier cannot help, because the peak IS the fetch.
+
+`fetch_icon_global.sh` already has a per-file hook (`-x`) with `.done` markers and delete-on-success
+— the obvious wiring. **It is the wrong granularity, and the measurement is unambiguous.** Remapping
+one global file onto the San Juan 2 km grid gives a 505 KB netCDF of which only 65 KB is data; the
+rest is the LAM's coordinate and cell-bounds arrays, written once per FILE. Compression takes 942 KB
+to 505 KB and no further, because those arrays are what remains. Concatenate twelve fields and remap
+once and the whole file is **still ~507 KB**:
+
+```
+  per-file hook   26,750 x 505 KB  ->  ~13.5 GB
+  per-step        43 x ~26 MB      ->   ~1.1 GB
+```
+
+The overhead is paid per file either way; the only question is how many files there are.
+
+So `scripts/stream_global.sh` chunks by STEP: fetch a chunk, consume it into IC/BC, delete it, fetch
+the next. It needed almost no new code, because **preprocess_cdo.sh was already idempotent per
+step** — `build_bc_one` returns early when its latbc file exists. Two things were missing and are now
+in: **`-F` (a FIRST step)** on the fetcher, so a chunk does not refetch what was consumed and
+deleted, and an **IC cache guard**, so the IC is built once like the weights and the SST already
+were. Step 000 is never pruned: it holds the soil state and the time-invariant files, and
+`collect_step` reads those for every step.
+
+Proven 27 Oct on that day's 06z, `BCLEAD=3 CHUNK=2`: chunk 0-1 built the IC and BCs and pruned 622
+files; chunk 2-3 reported `weights cached / SST(LAM) cached / IC cached`, built only the new BCs and
+pruned 1,244 more. Peak ~3 GB where the whole cycle would have been 6.
+
+**Opt-in, via `GLOBAL_STREAM=1`.** Default off, because the unstreamed path is the one proven end to
+end, and the switch is how the streamed one earns the same standing. One cosmetic wrinkle to know:
+the fetcher's closing `done: N/M files present` counts every `.grib2` in the directory, so with
+chunking it includes step 000's retained files and can read as more than the chunk's own total.
 
 ## 6. Implementation plan
 
