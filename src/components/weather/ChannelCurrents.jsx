@@ -12,7 +12,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { addDarkBasemap } from './basemaps'
-import { toVelocityData } from './windField'
+import { toVelocityData, currentSourceAt } from './windField'
 import { MODELS } from './openMeteo'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -92,6 +92,10 @@ function sampleCurrent(field, idx, lat, lon) {
 export default function ChannelCurrents({ point1 = null }) {
   const p1 = useMemo(() => asPoint(point1), [point1])
   const covered = !!(p1 && inCoverage(p1.lat, p1.lon))
+  // 'amm15' | 'salishseacast' | null — the heading and the attribution below
+  // both change with it, because the two are different models of different
+  // water and labelling SalishSeaCast as CMEMS AMM15 would be simply false.
+  const source = p1 ? currentSourceAt(p1.lat, p1.lon) : null
 
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const [velReady, setVelReady] = useState(false)
@@ -228,19 +232,22 @@ export default function ChannelCurrents({ point1 = null }) {
 
   // ── gates ──────────────────────────────────────────────────────────────────
   if (!p1) {
-    return <Notice>Set <strong>point 1</strong> in Forecast to view tidal currents. Currents are available for the English Channel.</Notice>
+    return <Notice>Set <strong>point 1</strong> in Forecast to view tidal currents. Currents are available for the English Channel and the Salish Sea.</Notice>
   }
   if (!covered) {
-    return <Notice>Point 1 isn’t in the Channel current coverage. Tidal currents are available for the English Channel (Cherbourg ↔ Isle of Wight).</Notice>
+    return <Notice>Point 1 isn’t in a tidal-current coverage area. Currents are available for the English Channel (Cherbourg ↔ Isle of Wight) and the Salish Sea / San Juan Islands.</Notice>
   }
 
   const times = field?.times || []
   return (
     <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 14, fontWeight: 800, color: '#E2E8F0' }}>🌊 Tidal currents — English Channel</span>
+        <span style={{ fontSize: 14, fontWeight: 800, color: '#E2E8F0' }}>
+          🌊 Tidal currents — {source === 'salishseacast' ? 'Salish Sea' : 'English Channel'}
+        </span>
         <span style={{ fontSize: 11, color: '#8A97A9' }}>
-          CMEMS AMM15 {field?.res_km ? `· ~${field.res_km} km` : ''} · total current (tide + weather) · times UTC
+          {source === 'salishseacast' ? 'SalishSeaCast (UBC EOAS) NEMO' : 'CMEMS AMM15'}
+          {field?.res_km ? ` · ~${field.res_km} km` : ''} · total current (tide + weather) · times UTC
         </span>
       </div>
       {freshness && (

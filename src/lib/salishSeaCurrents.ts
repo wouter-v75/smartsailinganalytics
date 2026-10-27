@@ -247,3 +247,163 @@ export async function fetchSalishSeaCurrent(
     return null
   }
 }
+
+// ── the current FIELD, for the map player ──────────────────────────────────
+//
+// The player wants a REGULAR lat/lon grid: {header:{nx,ny,lo1,la1,dx,dy},
+// frames:[{u,v}]}, exactly what the Channel's AMM15 field.json carries, so that
+// currentJsonToField in windField.js wraps it and the ramp, the particles and
+// the time slider need no changes at all.
+//
+// SalishSeaCast is curvilinear, so this resamples. Nearest cell WITH DATA, for
+// the same reason the point series picks that way: the bathymetry and current
+// masks disagree, and a target point is better served by the nearest real water
+// than by an interpolation across a masked cell that would drag the answer
+// toward zero. A target with no water cell within the search window gets 0,
+// which the player draws as no current — the honest rendering for land.
+
+export interface FieldHeader {
+  nx: number; ny: number
+  /** North-west corner: la1 is the NORTH edge and dy steps SOUTH, as the Channel field does. */
+  lo1: number; la1: number
+  dx: number; dy: number
+}
+
+/** The regular target grid for a box, at `res` degrees. */
+export function fieldHeaderFor(
+  lat: number, lon: number, halfLat: number, halfLon: number, res: number,
+): FieldHeader {
+  const nx = Math.max(2, Math.round((2 * halfLon) / res) + 1)
+  const ny = Math.max(2, Math.round((2 * halfLat) / res) + 1)
+  return { nx, ny, lo1: lon - halfLon, la1: lat + halfLat, dx: res, dy: res }
+}
+
+/**
+ * The ERDDAP index window that covers a header, from the affine guess at its
+ * four corners plus a margin in cells. The guess is good to ~0.35 cells rms
+ * near the venue and 4.8 at worst, so the margin is what absorbs the worst
+ * case rather than the typical one.
+ */
+export function indexWindow(h: FieldHeader, margin = 10): { y0: number; y1: number; x0: number; x1: number } {
+  const south = h.la1 - h.dy * (h.ny - 1)
+  const east = h.lo1 + h.dx * (h.nx - 1)
+  const ys: number[] = []; const xs: number[] = []
+  for (const la of [h.la1, south]) {
+    for (const lo of [h.lo1, east]) {
+      const g = gridGuess(la, lo)
+      ys.push(g.gy); xs.push(g.gx)
+    }
+  }
+  return {
+    y0: Math.max(0, Math.floor(Math.min(...ys)) - margin),
+    y1: Math.min(NY - 1, Math.ceil(Math.max(...ys)) + margin),
+    x0: Math.max(0, Math.floor(Math.min(...xs)) - margin),
+    x1: Math.min(NX - 1, Math.ceil(Math.max(...xs)) + margin),
+  }
+}
+
+export function fieldWindowUrl(w: { y0: number; y1: number; x0: number; x1: number }, stride: number): string {
+  const sel = enc(`[${w.y0}:${stride}:${w.y1}][${w.x0}:${stride}:${w.x1}]`)
+  return `${ERDDAP}/${GRID_DS}.json?latitude${sel},longitude${sel}`
+}
+
+export function fieldCurrentsUrl(
+  w: { y0: number; y1: number; x0: number; x1: number },
+  stride: number, startIso: string, endIso: string,
+): string {
+  const sel = enc(`[(${startIso}):(${endIso})][${w.y0}:${stride}:${w.y1}][${w.x0}:${stride}:${w.x1}]`)
+  return `${ERDDAP}/${CURRENTS_DS}.json?VelEast5${sel},VelNorth5${sel}`
+}
+
+/**
+ * Resample onto the header's regular grid.
+ *
+ * `geoRows` are [gridY, gridX, latitude, longitude]; `curRows` are
+ * [time, gridY, gridX, VelEast5, VelNorth5]. Both must come from the SAME
+ * index window and stride, because they are joined on (gridY, gridX).
+ *
+ * TWO THINGS THE FIRST LIVE RUN GOT WRONG, both fixed here.
+ *
+ * 1. IT WAS 15 SECONDS. The naive form compares every target with every source
+ *    cell, once per frame: 4,941 x 5,190 x 13 is 333 million distance
+ *    computations for one request. The geometry does not change between frames,
+ *    so the candidates are found ONCE through a hash of the source cells, and
+ *    each frame then does at most `KEEP` lookups per target.
+ *
+ * 2. IT PAINTED CURRENT OVER LAND. "Nearest cell with data" searched the whole
+ *    window, so a target in the middle of Orcas Island was given the current of
+ *    the nearest channel, kilometres away — every one of 4,941 points came back
+ *    non-zero, which on screen is a tide running over a mountain. A target now
+ *    has to find water within `MAX_SNAP_KM` or it stays 0.
+ */
+const MAX_SNAP_KM = 1.5
+const KEEP = 4                 // candidates per target, nearest first
+const BUCKET_DEG = 0.02        // ~1.5 km of latitude: one bucket step covers the snap radius
+
+export function buildFrames(
+  geoRows: readonly Row[], curRows: readonly Row[], h: FieldHeader,
+  maxSnapKm = MAX_SNAP_KM,
+): { times: string[]; frames: Array<{ u: number[]; v: number[] }> } {
+  // ── hash the source cells by coarse lat/lon ──
+  const buckets = new Map<string, Array<{ lat: number; lon: number; key: string }>>()
+  const bkey = (la: number, lo: number) => `${Math.floor(la / BUCKET_DEG)},${Math.floor(lo / BUCKET_DEG)}`
+  for (const r of geoRows) {
+    const [y, x, plat, plon] = r
+    if (y == null || x == null || plat == null || plon == null) continue
+    const k = bkey(plat, plon)
+    const a = buckets.get(k)
+    const cell = { lat: plat, lon: plon, key: `${y},${x}` }
+    if (a) a.push(cell); else buckets.set(k, [cell])
+  }
+
+  // ── per target, the nearest KEEP source cells within the snap radius ──
+  const candidates: string[][] = new Array(h.nx * h.ny)
+  for (let j = 0; j < h.ny; j++) {
+    const tlat = h.la1 - h.dy * j
+    const cosl = Math.cos((tlat * Math.PI) / 180)
+    for (let i = 0; i < h.nx; i++) {
+      const tlon = h.lo1 + h.dx * i
+      const near: Array<{ d: number; key: string }> = []
+      const bj = Math.floor(tlat / BUCKET_DEG); const bi = Math.floor(tlon / BUCKET_DEG)
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          for (const c of buckets.get(`${bj + dj},${bi + di}`) ?? []) {
+            const dy = (c.lat - tlat) * 111
+            const dx = (c.lon - tlon) * 111 * cosl
+            const d = Math.hypot(dy, dx)
+            if (d <= maxSnapKm) near.push({ d, key: c.key })
+          }
+        }
+      }
+      near.sort((a, b) => a.d - b.d)
+      candidates[j * h.nx + i] = near.slice(0, KEEP).map((n) => n.key)
+    }
+  }
+
+  // ── group the velocities by time, then fill each frame ──
+  const byTime = new Map<string, Map<string, [number, number]>>()
+  const order: string[] = []
+  for (const r of curRows) {
+    const [t, y, x, ve, vn] = r
+    if (t == null || y == null || x == null) continue
+    const ts = String(t)
+    let m = byTime.get(ts)
+    if (!m) { m = new Map(); byTime.set(ts, m); order.push(ts) }
+    if (ve == null || vn == null) continue
+    m.set(`${y},${x}`, [ve as number, vn as number])
+  }
+
+  const frames = order.map((ts) => {
+    const vals = byTime.get(ts)!
+    const u = new Array<number>(h.nx * h.ny).fill(0)
+    const v = new Array<number>(h.nx * h.ny).fill(0)
+    for (let k = 0; k < candidates.length; k++) {
+      for (const key of candidates[k]) {
+        const uv = vals.get(key)
+        if (uv) { u[k] = uv[0]; v[k] = uv[1]; break }
+      }
+    }
+    return { u, v }
+  })
+  return { times: order, frames }
+}

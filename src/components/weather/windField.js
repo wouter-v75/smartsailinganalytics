@@ -18,6 +18,7 @@
 
 import { MODELS, iconRaceGridForPoint, forecastDaysFor, stitchHourly } from './openMeteo'
 import { applyMOS, needsPreLift, hasSeasonal } from './mos'
+import { inSalishSea } from '../../lib/salishSeaCurrents'
 
 const NM_DEG = 1 / 60 // 1 nautical mile in degrees latitude
 
@@ -466,9 +467,23 @@ export function speedImageURL(frame, header, scale = 8, ramp = speedRamp) {
 // ramp (red @ 5 kn) + current-tuned particles. Channel coverage only.
 
 const CUR_COV = { west: -2.5, east: -1.0, south: 49.3, north: 50.8 }
-export function currentsCovered(lat, lon) {
+function channelCovered(lat, lon) {
   return lat >= CUR_COV.south - 0.45 && lat <= CUR_COV.north + 0.45
       && lon >= CUR_COV.west - 0.7 && lon <= CUR_COV.east + 0.7
+}
+// TWO current sources now, and they are not interchangeable. AMM15 covers the
+// English Channel at 1.5 km; SalishSeaCast covers one sea at ~500 m. What does
+// NOT cover the Salish Sea is the global marine model the rest of the app uses
+// for point currents: measured 27 Oct 2026 at the San Juan Islands it returns
+// 0.8-1.2 km/h, under 0.6 kn, in channels that run 3 to 6. See
+// lib/salishSeaCurrents.ts.
+export function currentsCovered(lat, lon) {
+  return channelCovered(lat, lon) || inSalishSea(lat, lon)
+}
+/** Which source serves a point, for a caller that needs to say so. */
+export function currentSourceAt(lat, lon) {
+  if (inSalishSea(lat, lon)) return 'salishseacast'
+  return channelCovered(lat, lon) ? 'amm15' : null
 }
 
 // Current speed (m/s) -> colour, RED saturating at 5 kn (Channel races run past it).
@@ -497,7 +512,11 @@ export function currentJsonToField(j, timezone) {
 }
 
 export async function fetchCurrentField({ lat, lon, timezone }) {
-  if (!currentsCovered(lat, lon)) throw new Error('Currents cover the English Channel only — set point 1 there')
+  // The Salish Sea has no published overview field on the box; its route builds
+  // one on demand from ERDDAP at ~1 km, so the overview and the hires clip are
+  // the same thing there and both callers land here.
+  if (inSalishSea(lat, lon)) return fetchSalishCurrentField({ lat, lon, timezone })
+  if (!currentsCovered(lat, lon)) throw new Error('Currents cover the English Channel and the Salish Sea — set point 1 in one of them')
   const base = MODELS.CURRENTS && MODELS.CURRENTS.bunnyBase
   const url = base
     ? `${base}/currents/channel/field.json`
@@ -509,8 +528,21 @@ export async function fetchCurrentField({ lat, lon, timezone }) {
 
 // Fetch a ~20 km native (1.5 km) clip around (lat,lon) via the server clip route.
 export async function fetchCurrentHires({ lat, lon, timezone }) {
+  if (inSalishSea(lat, lon)) return fetchSalishCurrentField({ lat, lon, timezone })
   const res = await fetch(`/api/currents/hires?lat=${lat}&lon=${lon}`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`currents hires ${res.status}`)
+  return currentJsonToField(await res.json(), timezone)
+}
+
+// SalishSeaCast, resampled server-side onto the regular grid the player wants.
+// Same JSON shape as the Channel field, so currentJsonToField handles it and
+// the ramp, the particles and the slider are untouched.
+export async function fetchSalishCurrentField({ lat, lon, timezone, hours = 12 }) {
+  const res = await fetch(`/api/currents/salish?lat=${lat}&lon=${lon}&hours=${hours}`, { cache: 'no-store' })
+  if (!res.ok) {
+    const why = res.status === 404 ? 'no SalishSeaCast data for that point' : `salish currents ${res.status}`
+    throw new Error(why)
+  }
   return currentJsonToField(await res.json(), timezone)
 }
 

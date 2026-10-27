@@ -1076,7 +1076,7 @@ export default function ForecastView({
                   const m = MODELS[k]; const avail = modelAvailable[k]
                   const fieldOnly = k === 'CURRENTS' || k === 'HPBL'
                   const selected = fieldOnly ? fieldModel === k : activeModel === k
-                  const offTitle = k === 'CURRENTS' ? 'Currents cover the English Channel — set point 1 there'
+                  const offTitle = k === 'CURRENTS' ? 'Currents cover the English Channel and the Salish Sea — set point 1 in one of them'
                     : k === 'HPBL' ? 'Boundary-layer height — set point 1 in an SSA-Race venue' : `${m.label} has no data here`
                   return (
                     <button key={k} disabled={!avail}
