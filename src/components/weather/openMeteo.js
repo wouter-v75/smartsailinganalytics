@@ -361,21 +361,46 @@ export function stitchHourly(base, ext, cutoverHours) {
   return out
 }
 
+/**
+ * CELL SELECTION: `sea`, always, and this is the single most consequential
+ * query parameter in this file.
+ *
+ * Open-Meteo's default is `land` — "prefer a grid cell on land with similar
+ * elevation to the requested point" — which for a race area returns a cell
+ * ashore. Measured over 1 Jan to 20 Oct 2026 at the venue centres, land cell
+ * against sea cell, mean 10 m wind:
+ *
+ *   Porto Cervo   ecmwf_ifs025   41.00,9.50 (15.0 nm inland)   6.05 kn vs 12.63
+ *                 gfs_seamless    8.8 nm off                   6.58    vs 11.94
+ *                 arome_hd        0.6 nm off                   7.65    vs  9.97
+ *   St Tropez     ecmwf_ifs025   43.25,6.50 (10.9 nm inland)   5.27    vs  8.71
+ *   Sorrento      ecmwf, icon_eu, icon_2i: THE SAME CELL — no change at all
+ *
+ * So at Porto Cervo the ECMWF forecast on screen was a point fifteen miles
+ * inland showing less than half the wind, and at Sorrento nothing was wrong.
+ * Which cell you get depends on the DEM elevation of the point asked for, so
+ * it varies venue by venue and model by model, and there is no symptom beyond
+ * the number being too low.
+ *
+ * The 1 km models barely notice (metno_nordic 32.60 against 32.17 km/h at
+ * Svenner fyr) because they have a sea cell at the point already. That is why
+ * this hid for so long: the model most looked at was the least affected.
+ *
+ * A MOS spec belongs to the cell it was fitted against, so this change had to
+ * be made together with mos-cell-refit.ts, which re-expresses or voids each
+ * stored coefficient set. See CLAUDE.md.
+ */
+const CELL_SELECTION = 'sea'
+
 // Build an Open-Meteo URL for one surface model at one point.
 // Mirrors fetchSurfaceModel() in index.html line 820. `opts` overrides the model
 // id and horizon (used to fetch the near-term + extended halves of a blend).
-function surfaceUrl(modelKey, latitude, longitude, timezone, opts = {}) {
+export function surfaceUrl(modelKey, latitude, longitude, timezone, opts = {}) {
   const m = MODELS[modelKey]
   const params = []
   for (const h of m.heights) {
     params.push(`wind_speed_${h}m`, `wind_direction_${h}m`)
   }
-  // 2 m air temperature, for the air-sea difference that sets the stability
-  // term in lib/windProfile. Free — it rides on the same request — and without
-  // it a masthead wind can only be the NEUTRAL profile, which understates it
-  // by about 9 % and by 2.1 kn on a light offshore morning. The sea side comes
-  // from fetchVenueSst() below, once per venue rather than once per point.
-  params.push('temperature_2m')
   // 2 m air temperature, for the air-sea difference that sets the stability
   // term in lib/windProfile. Free — it rides on the same request — and without
   // it a masthead wind can only be the NEUTRAL profile, which understates it
@@ -395,7 +420,8 @@ function surfaceUrl(modelKey, latitude, longitude, timezone, opts = {}) {
   const days = opts.days || forecastDaysFor(m)
   let url = `${m.endpoint}?latitude=${latitude}&longitude=${longitude}` +
     `&hourly=${params.join(',')}` +
-    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=${days}`
+    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=${days}` +
+    `&cell_selection=${CELL_SELECTION}`
   if (modelParam) url += `&models=${modelParam}`
   return url
 }
@@ -863,7 +889,8 @@ export async function fetchGFSPressureLevels({ latitude, longitude, timezone }) 
   const url = `https://api.open-meteo.com/v1/gfs?` +
     `latitude=${latitude}&longitude=${longitude}` +
     `&hourly=${params.join(',')}` +
-    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=2`
+    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=2` +
+    `&cell_selection=${CELL_SELECTION}`
   try {
     const res = await fetch(url)
     if (!res.ok) return { hourly: { time: [], boundary_layer_height: [] } }
@@ -891,7 +918,8 @@ export async function fetchECMWFPressureLevels({ latitude, longitude, timezone }
   const url = `https://api.open-meteo.com/v1/ecmwf?` +
     `latitude=${latitude}&longitude=${longitude}` +
     `&hourly=${params.join(',')}` +
-    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=2&models=ecmwf_ifs025`
+    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=2&models=ecmwf_ifs025` +
+    `&cell_selection=${CELL_SELECTION}`
   try {
     const res = await fetch(url)
     if (!res.ok) return { hourly: { time: [] } }

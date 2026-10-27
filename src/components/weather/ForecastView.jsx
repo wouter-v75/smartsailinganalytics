@@ -1255,7 +1255,10 @@ function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed
       {canMos && (
         <div style={{ fontSize: 9, color: '#34D399', marginBottom: 6 }}>
           ✓ MOS-corrected 30 m for <b>{venue.replace('_', ' ')}</b> · {corr.type}
-          {model.mosApprox ? ' ≈' : ''} · CV RMSE {corr.cv_rmse} kt
+          {model.mosApprox ? ' ≈' : ''}
+          {corr.cv_rmse != null
+            ? ` · CV RMSE ${corr.cv_rmse} kt`
+            : (corr.reexpressed ? ' · re-expressed for the sea cell, no validated RMSE' : '')}
           {corr.type === 'sector' && corr.sector_agreement != null
             ? ` · dir agree ${Math.round(corr.sector_agreement * 100)}%` : ''}
         </div>

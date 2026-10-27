@@ -37,13 +37,20 @@ describe('applyMosToField — the deck/map path uses the same correction as the 
   })
 
   it('corrects field speed to exactly what applyMOS gives the tables', () => {
+    const moved: number[] = []
     for (const raw of [8, 12, 16, 20, 25]) {
       const out = applyMosToField(fieldAt(raw, 200), spec, iconRaceMosId)
       const expected = applyMOS(spec, iconRaceMosId, raw, 200, 14)!.ws
       expect(speedOf(out)).toBeCloseTo(expected, 4)
-      // and it is a real change, not a rounding artefact
-      expect(Math.abs(speedOf(out) - raw)).toBeGreaterThan(2)
+      moved.push(Math.abs(speedOf(out) - raw))
     }
+    // Not a rounding artefact: somewhere in the range the correction is worth
+    // more than a knot. It is no longer worth more than a knot EVERYWHERE,
+    // which is what this used to assert — the re-expressed Porto Cervo
+    // coefficients (a 0.869, b 2.42, for the sea grid cell) are gentler than
+    // the land-cell ones they replace and cross zero near 18.5 kn. A flat
+    // floor across the range would now be testing the spec, not this path.
+    expect(Math.max(...moved)).toBeGreaterThan(1)
   })
 
   it('leaves direction untouched — MOS corrects speed only', () => {

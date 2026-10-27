@@ -40,8 +40,14 @@ describe('pointWindweightByHour', () => {
   })
 
   it('anchors V_H at point 1, far above the box average that produced 9.3 kn', () => {
+    // 9.3 kn is the published box AVERAGE; the anchor is this point, which is
+    // windier. ~13.1 kn raw, ~13.8 after MOS — it was ~15.6 until the Porto
+    // Cervo coefficients were re-expressed for the sea grid cell, which made
+    // them a gentler correction. The bar is set against the box average,
+    // because that is what this test is about; the MOS magnitude belongs to
+    // the spec and has its own tests.
     const r = pointWindweightByHour(base)[13]
-    expect(r.vHKt).toBeGreaterThan(14)     // ~13.1 raw, ~15.6 after MOS
+    expect(r.vHKt).toBeGreaterThan(12)
     expect(r.mosOn).toBe(true)
   })
 
@@ -100,7 +106,7 @@ describe('asBoxHour', () => {
     const merged = asBoxHour(pt, boxHour)!
     expect(merged.t).toBe(boxHour.t)                   // published fields survive
     expect(merged.factors).toEqual(boxHour.factors)
-    expect(merged.V_H).toBeGreaterThan(14)             // ... but the numbers are the point-1 ones
+    expect(merged.V_H).toBeGreaterThan(12)             // ... but the numbers are the point-1 ones
     expect(merged.V_eff).not.toBeCloseTo(8.3, 1)
     expect(merged.shearDeg).toBe(pt.shearDeg)
     expect(Array.isArray(merged.profile)).toBe(true)

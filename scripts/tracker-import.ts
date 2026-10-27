@@ -155,9 +155,14 @@ async function main() {
 
   // ── 2. the model wind, and the current, for this venue and day ────────────
   const pos = medianPosition(loaded.flatMap((l) => l.rows))!
+  // cell_selection=sea, because the default is `land` and this is a race area.
+  // Open-Meteo prefers a cell ashore at a similar elevation to the point asked
+  // for, which at Porto Cervo put ECMWF fifteen miles inland on half the wind.
+  // See the note on CELL_SELECTION in components/weather/openMeteo.js.
   const wx: any = await (await fetch(
     `https://archive-api.open-meteo.com/v1/archive?latitude=${pos.lat.toFixed(2)}&longitude=${pos.lon.toFixed(2)}` +
-    `&start_date=${date}&end_date=${date}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&timezone=UTC`)).json()
+    `&start_date=${date}&end_date=${date}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&timezone=UTC` +
+    '&cell_selection=sea')).json()
   const model = wx?.hourly ? {
     times: wx.hourly.time.map((t: string) => Date.parse(`${t}Z`)),
     twd: wx.hourly.wind_direction_10m,

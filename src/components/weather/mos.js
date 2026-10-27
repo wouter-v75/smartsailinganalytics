@@ -362,6 +362,11 @@ export function correctionInfo(venue, mosModelId) {
   const spec = SPECS[venue]
   const m = spec?.models?.[mosModelId]
   if (!m || (m.type || 'raw') === 'raw') return null
+  // `reexpressed` says the coefficients were rewritten for a different model
+  // input — the sea grid cell, after cell_selection was fixed — rather than
+  // refitted. Such a spec carries no cv_rmse ON PURPOSE: the stored one
+  // measured a regression against the old input and does not describe this
+  // one. The badge has to say that instead of printing "CV RMSE undefined".
   return { type: m.type, cv_rmse: m.cv_rmse, reduction_pct: m.reduction_pct,
-           sector_agreement: m.sector_agreement }
+           sector_agreement: m.sector_agreement, reexpressed: !!m.reexpressed_from }
 }

@@ -1,6 +1,6 @@
 {
   "venue": "st_tropez",
-  "target_height_m": 30.0,
+  "target_height_m": 30,
   "bands": [
     [
       "NW",
@@ -21,14 +21,28 @@
   "models": {
     "ecmwf_ifs025": {
       "type": "bias_scale",
-      "a": 0.8969911065891987,
-      "b": 3.258254355002632,
-      "best": "bias_scale",
-      "cv_rmse": 3.035,
-      "raw_rmse": 3.43,
-      "reduction_pct": 11.5,
-      "sector_agreement": 0.7,
-      "n": 267
+      "a": 0.5635549316316532,
+      "b": 4.4134179136115295,
+      "n": 267,
+      "best": "bias_scale (re-expressed for the sea cell)",
+      "cell_selection": "sea",
+      "reexpressed_from": {
+        "a": 0.8969911065891987,
+        "b": 3.258254355002632,
+        "cell_selection": "land"
+      },
+      "land_from_sea": {
+        "p": 0.6283,
+        "q": 1.2878,
+        "r2": 0.744,
+        "residual_sd_kn": 1.84
+      },
+      "checked_on": {
+        "hours": 37,
+        "rmse_kn": 2.65,
+        "bias_kn": -0.89,
+        "raw_rmse_kn": 2.92
+      }
     },
     "gfs_seamless": {
       "type": "bias_scale",
@@ -39,37 +53,66 @@
       "raw_rmse": 2.558,
       "reduction_pct": 7.9,
       "sector_agreement": 0.83,
-      "n": 417
+      "n": 417,
+      "unused_by_app": "no MODELS entry has this mosModel"
     },
     "icon_eu": {
       "type": "bias_scale",
-      "a": 0.895312530709088,
-      "b": 2.8909464183865947,
-      "best": "bias_scale",
-      "cv_rmse": 2.656,
-      "raw_rmse": 3.264,
-      "reduction_pct": 18.6,
-      "sector_agreement": 0.82,
-      "n": 417
+      "a": 0.8049253972330918,
+      "b": 3.3902135547733727,
+      "n": 417,
+      "best": "bias_scale (re-expressed for the sea cell)",
+      "cell_selection": "sea",
+      "reexpressed_from": {
+        "a": 0.895312530709088,
+        "b": 2.8909464183865947,
+        "cell_selection": "land"
+      },
+      "land_from_sea": {
+        "p": 0.899,
+        "q": 0.5576,
+        "r2": 0.971,
+        "residual_sd_kn": 0.77
+      },
+      "checked_on": {
+        "hours": 37,
+        "rmse_kn": 3.07,
+        "bias_kn": -0.26,
+        "raw_rmse_kn": 3.64
+      }
     },
     "meteofrance_arome_france_hd": {
       "type": "diurnal",
-      "a": 0.9724556669415771,
-      "b": 1.380373585954529,
+      "a": 0.9955098371924128,
+      "b": 1.5009718138417727,
       "c0": -0.861935917214086,
       "c1": 1.1120711759646495,
       "c2": -1.4213706069712502,
-      "best": "diurnal",
-      "cv_rmse": 2.507,
-      "raw_rmse": 2.637,
-      "reduction_pct": 4.9,
-      "sector_agreement": 0.78,
-      "n": 417
+      "n": 417,
+      "best": "diurnal (re-expressed for the sea cell)",
+      "cell_selection": "sea",
+      "reexpressed_from": {
+        "a": 0.9724556669415771,
+        "b": 1.380373585954529,
+        "cell_selection": "land"
+      },
+      "land_from_sea": {
+        "p": 1.0237,
+        "q": 0.124,
+        "r2": 0.961,
+        "residual_sd_kn": 0.94
+      },
+      "checked_on": {
+        "hours": 37,
+        "rmse_kn": 2.33,
+        "bias_kn": 0.61,
+        "raw_rmse_kn": 2.35
+      }
     },
     "meteofrance_arpege_europe": {
       "type": "sector",
-      "a": 0.9444131842718618,
-      "b": 2.087088006648074,
+      "a": 0.670941099359555,
+      "b": 4.134813831686426,
       "delta": {
         "S-W": 0.3002301822733753,
         "E-SE": -0.7496037353967796,
@@ -77,12 +120,27 @@
         "NW": 0.5890276162950808
       },
       "global": 1.2609151665766766e-15,
-      "best": "sector",
-      "cv_rmse": 2.713,
-      "raw_rmse": 3.114,
-      "reduction_pct": 12.9,
-      "sector_agreement": 0.82,
-      "n": 417
+      "n": 417,
+      "best": "sector (re-expressed for the sea cell)",
+      "cell_selection": "sea",
+      "reexpressed_from": {
+        "a": 0.9444131842718618,
+        "b": 2.087088006648074,
+        "cell_selection": "land"
+      },
+      "land_from_sea": {
+        "p": 0.7104,
+        "q": 2.1683,
+        "r2": 0.779,
+        "residual_sd_kn": 1.95
+      },
+      "checked_on": {
+        "hours": 37,
+        "rmse_kn": 3.03,
+        "bias_kn": -1.83,
+        "raw_rmse_kn": 4.07
+      }
     }
-  }
+  },
+  "cell_selection": "sea"
 }

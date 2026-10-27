@@ -1,6 +1,6 @@
 {
   "venue": "sorrento",
-  "target_height_m": 30.0,
+  "target_height_m": 30,
   "bands": [
     [
       "SW-W",
@@ -31,7 +31,9 @@
       "raw_rmse": 4.829,
       "reduction_pct": 28.4,
       "sector_agreement": 0.62,
-      "n": 445
+      "n": 445,
+      "cell_selection": "sea",
+      "cell_unchanged_by_fix": true
     },
     "gfs_seamless": {
       "type": "bias_scale",
@@ -42,7 +44,8 @@
       "raw_rmse": 4.155,
       "reduction_pct": 9.9,
       "sector_agreement": 0.57,
-      "n": 445
+      "n": 445,
+      "unused_by_app": "no MODELS entry has this mosModel"
     },
     "icon_eu": {
       "type": "bias_scale",
@@ -51,18 +54,23 @@
       "best": "bias_scale",
       "cv_rmse": 3.672,
       "raw_rmse": 5.171,
-      "reduction_pct": 29.0,
+      "reduction_pct": 29,
       "sector_agreement": 0.68,
-      "n": 445
+      "n": 445,
+      "cell_selection": "sea",
+      "cell_unchanged_by_fix": true
     },
     "italia_meteo_arpae_icon_2i": {
       "type": "raw",
       "best": "raw",
       "cv_rmse": 3.912,
       "raw_rmse": 3.912,
-      "reduction_pct": 0.0,
+      "reduction_pct": 0,
       "sector_agreement": 0.59,
-      "n": 287
+      "n": 287,
+      "cell_selection": "sea",
+      "cell_unchanged_by_fix": true
     }
-  }
+  },
+  "cell_selection": "sea"
 }
