@@ -19,6 +19,35 @@ import { venueAt } from '../../lib/venues'
 // no data at the click, so the box needn't trace each domain edge exactly.
 const NORTH_AMERICA = { latMin: 5, latMax: 75, lonMin: -172, lonMax: -50 }
 
+// REGIONAL EUROPEAN MODELS, boxed 2026-10-27 because they were not boxed at all
+// and were therefore offered at EVERY venue. At the San Juan Islands the model
+// list showed AROME, which has no data within thousands of miles — the picker
+// offered a model that could only ever fail.
+//
+// Each box is the envelope of a live bisection at lat 45 / lon 10, with the
+// venues checked individually. These are rotated or Lambert domains, so the true
+// edge is ragged and a rectangle over-claims at the corners; a point inside the
+// box but outside the domain still just returns "no data", which is the same
+// behaviour as before. What the box buys is that the four venues in the Americas
+// never see a European-only model again.
+//
+//   AROME France HD   west -12 IN / -15 out   east 16 IN / 20 out
+//                     north 52 IN / 56 out    south 40 IN / 37 out
+//   ARPEGE Europe     west -30 IN / -35 out   east 40 IN
+//                     north 72 IN             south 22 IN / 18 out
+//   ICON-2I (Italy)   west  2 out (!)         east 20 IN / 30 out
+//                     north 48 IN / 50 out    south 34 IN / 30 out
+//   DMI HARMONIE      west -25 IN / -30 out   east 20 IN / 30 out
+//                     north 66 IN / 72 out    south 40 IN / 37 out
+//
+// Venue checks, all four models: Porto Cervo, St Tropez and Sorrento IN for all;
+// Solent IN for AROME/ARPEGE/DMI and OUT for ICON-2I; Oslofjord IN for
+// ARPEGE/DMI only; San Juan and Long Beach OUT for all four.
+const AROME_FR = { latMin: 38.5, latMax: 54, lonMin: -13.5, lonMax: 18 }
+const ARPEGE_EU = { latMin: 20, latMax: 73, lonMin: -32, lonMax: 42 }
+const ICON_2I_IT = { latMin: 33, latMax: 49.5, lonMin: 3, lonMax: 22 }
+const DMI_EU = { latMin: 38.5, latMax: 69, lonMin: -27, lonMax: 25 }
+
 // Coarse coverage box for MET Norway's Nordic model (the forecast behind yr.no).
 // Probed 2026-09-11 by bisection: data from ~52.7°N to ~73.8°N, and from ~-1°E
 // (at 60°N) / ~-7°E (at 68°N) to ~31°E (at 60°N) / ~39°E (at 70°N). The domain
@@ -44,6 +73,7 @@ export const MODELS = {
     color: '#2e7d32',
     endpoint: 'https://api.open-meteo.com/v1/meteofrance',
     modelParam: 'meteofrance_arome_france_hd',
+    coverage: AROME_FR,
     metaModel: 'meteofrance_arome_france_hd',
     mosModel: 'meteofrance_arome_france_hd',
     fieldGrid: 16,                 // high-res wind-field sampling (1.5 km model)
@@ -94,6 +124,7 @@ export const MODELS = {
     key: 'DMI', label: 'DMI Harmonie', color: '#00838f',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'dmi_harmonie_arome_europe',
+    coverage: DMI_EU,
     metaModel: 'dmi_harmonie_arome_europe',
     fieldGrid: 16,                 // high-res wind-field sampling (~2 km model)
     heights: [10, 100],
@@ -102,6 +133,7 @@ export const MODELS = {
     key: 'ITALIA', label: 'ItaliaMeteo', subtitle: 'ARPAE ICON-2I 2 km', color: '#ef6c00',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'italia_meteo_arpae_icon_2i',
+    coverage: ICON_2I_IT,
     metaModel: 'italia_meteo_arpae_icon_2i',
     mosModel: 'italia_meteo_arpae_icon_2i',
     fieldGrid: 16,                 // high-res wind-field sampling (ICON-2I 2 km)
@@ -112,6 +144,7 @@ export const MODELS = {
     key: 'ARPEGE', label: 'ARPEGE', subtitle: 'Météo-France 11 km', color: '#5d4037',
     endpoint: 'https://api.open-meteo.com/v1/meteofrance',
     modelParam: 'meteofrance_arpege_europe',
+    coverage: ARPEGE_EU,
     metaModel: 'meteofrance_arpege_europe',
     mosModel: 'meteofrance_arpege_europe',
     heights: [10, 20, 50, 80, 100],
@@ -254,7 +287,16 @@ export const MODELS = {
       // whose western edge is 23.5W, and this is 122.9W — it needs global driving
       // data first (docs/san-juan-islands-domain-2026-10.md).
       // Points grey out until san_juan_islands_2km's grid publishes:
-      { name: 'san_juan_islands', domain: 'san_juan_islands_2km', clon: -122.8946, clat: 48.5627, half: 0.30 },
+      // half 0.55, widened 2026-10-27 from 0.30. The 2 km GRID spans
+      // -124.094..-121.694 / 47.620..49.506, so 0.30 was publishing a box far
+      // smaller than what the model already computes: its western edge sat in
+      // Haro Strait, cutting off Victoria (-123.37) and the Strait of Juan de
+      // Fuca entrance — which is upstream fetch for the prevailing westerly and
+      // the first thing you want to see. 0.55 reaches -123.445, with ~0.65 deg
+      // still between the box and the grid edge, i.e. far outside the
+      // relaxation zone. Payload goes 900 -> 3,025 points, about 8 MB, which is
+      // the size solent_1km already ships.
+      { name: 'san_juan_islands', domain: 'san_juan_islands_2km', clon: -122.8946, clat: 48.5627, half: 0.55 },
       // La Spezia STOPPED 2026-06-27 (domain box removed; training window closed).
       // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
       { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.40 },
@@ -283,7 +325,14 @@ export const MODELS = {
       // Solent / Cowes 1 km nest off solent_2km (full-Solent race box, half 0.30):
       { name: 'solent', domain: 'solent_1km', clon: -1.30, clat: 50.76, half: 0.30 },
       // San Juan Islands 1 km nest off san_juan_islands_2km (solent_1km footprint):
-      { name: 'san_juan_islands', domain: 'san_juan_islands_1km', clon: -122.8946, clat: 48.5627, half: 0.30 },
+      // half 0.35, widened 2026-10-27 from 0.30 — and this one is GRID-LIMITED,
+      // which is the whole point. The 1 km grid spans only -123.350..-122.440,
+      // so even at its maximum the box stops at -123.26 once ~10 cells of
+      // relaxation zone are kept clear. Victoria sits at -123.37: OUTSIDE the
+      // computed grid, not merely outside the box. Reaching it needs a new
+      // Zonda grid — see grid/zonda_san_juan_islands_1km_WEST.json on the box,
+      // which moves the centre to -123.125 and widens to +-0.625 lon.
+      { name: 'san_juan_islands', domain: 'san_juan_islands_1km', clon: -122.8946, clat: 48.5627, half: 0.35 },
       // Porto Cervo 1 km nest off porto_cervo_2km (Costa Smeralda / Bonifacio gap jet):
       { name: 'porto_cervo', domain: 'porto_cervo_1km', clon: 9.45, clat: 41.22, half: 0.31 },
     ],

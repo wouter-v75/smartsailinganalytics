@@ -23,9 +23,26 @@ describe('the San Juan Islands venue', () => {
   it('matches the half-width the box publishes in venues.csv', () => {
     // A mismatch here is silent: the app would request a grid box the publisher
     // never wrote, and the points would grey out with nothing to explain it.
-    for (const k of ['ICONRACE', 'ICONRACE_1KM']) {
-      expect(venueAt(k, PIN.lat, PIN.lon).half).toBe(0.30)
-    }
+    // Widened 2026-10-27 from 0.30 at both resolutions, and they are no longer
+    // equal, because the two are limited by different things:
+    //   2 km  0.55 — a product-size choice. Its grid reaches -124.094, so the
+    //                box could go wider still; 0.55 reaches Victoria and keeps
+    //                the payload near what solent_1km already ships.
+    //   1 km  0.35 — the GRID's own limit. That grid stops at -123.350, so once
+    //                ~10 cells of relaxation zone are kept clear there is
+    //                nothing further west to publish. The revised Zonda request
+    //                (ZONDA_ISSUE_..._WEST.md) is what lifts it.
+    expect(venueAt('ICONRACE', PIN.lat, PIN.lon).half).toBe(0.55)
+    expect(venueAt('ICONRACE_1KM', PIN.lat, PIN.lon).half).toBe(0.35)
+  })
+
+  it('now reaches Victoria on the 2 km, and still cannot on the 1 km', () => {
+    // The distinction worth keeping: Victoria is outside the 1 km COMPUTED
+    // GRID, not merely outside its published box, so no amount of widening
+    // reaches it until the new grid lands.
+    const VICTORIA = { lat: 48.42, lon: -123.37 }
+    expect(venueAt('ICONRACE', VICTORIA.lat, VICTORIA.lon)?.name).toBe('san_juan_islands')
+    expect(venueAt('ICONRACE_1KM', VICTORIA.lat, VICTORIA.lon)).toBeUndefined()
   })
 
   it('does not collide with a European venue', () => {
