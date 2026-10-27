@@ -266,6 +266,10 @@ export const MODELS = {
   // output here, so its column is exact, not interpolated.
   ICONRACE: {
     key: 'ICONRACE', label: 'SSA-Race 2 km', subtitle: 'self-hosted ICON-LAM 2 km', color: '#e11d48',
+    // Served from OUR storage, not Open-Meteo. This flag — not `bunnyBase` — is
+    // what routes the fetch, because bunnyBase is an OPTIONAL pull-zone override
+    // and its default is null. See isSelfHostedModel().
+    selfHosted: true,
     // If NEXT_PUBLIC_ICONRACE_BASE is set (a public pull-zone fronting the
     // smartsailinganalytics storage zone, CORS enabled) we fetch from it
     // directly; otherwise (default) we go through the app's own same-origin
@@ -322,6 +326,7 @@ export const MODELS = {
   // 76-level vertical grid — the rig + sea-breeze band (10/20/30 m) is now native.
   ICONRACE_1KM: {
     key: 'ICONRACE_1KM', label: 'SSA-Race 1 km', subtitle: 'self-hosted nest 1 km', color: '#7c3aed',
+    selfHosted: true,
     bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
     venues: [
       { name: 'la_ciotat', domain: 'la_ciotat_1km', clon: 5.61, clat: 43.16, half: 0.15 },
@@ -375,6 +380,7 @@ export const MODELS = {
   // point 1 being inside the English Channel coverage.
   CURRENTS: {
     key: 'CURRENTS', label: 'Currents (AMM15)', subtitle: 'tidal current — English Channel', color: '#38BDF8',
+    selfHosted: true,
     bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
     isCurrent: true, heights: [],
   },
@@ -384,6 +390,7 @@ export const MODELS = {
   // no endpoint / heights / MOS; renders as a coloured shading overlay (no arrows).
   HPBL: {
     key: 'HPBL', label: 'Boundary layer', subtitle: 'PBL height — SSA-Race', color: '#A855F7',
+    selfHosted: true,
     isHpbl: true, heights: [],
   },
 }
@@ -404,6 +411,29 @@ export const MODEL_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICON
 // THIS is the list the Forecast picker and the Compare view walk. A model
 // missing here is invisible no matter what MODEL_ORDER says.
 export const COMPARE_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRDPS', 'HRRR', 'NAM']
+
+/**
+ * Is this model served from OUR storage rather than Open-Meteo?
+ *
+ * Routing used to ask `cfg.bunnyBase`, and that is the wrong question.
+ * `bunnyBase` is an OPTIONAL public pull-zone and **its default is null** — the
+ * normal configuration goes through the same-origin proxy `/api/bunny/storage`,
+ * which every URL builder here already falls back to. So with no
+ * NEXT_PUBLIC_ICONRACE_BASE set (the default, and not even listed in
+ * .env.example) both SSA-Race models were classified as Open-Meteo models,
+ * fell through to the Open-Meteo branch, and were fetched at
+ * `${cfg.endpoint}?latitude=...` with endpoint undefined — a request to the
+ * literal string "undefined", resolved RELATIVE to the current page. Six 404s
+ * per point placement, and the SSA-Race columns simply absent.
+ *
+ * It hid because the WIND FIELD is fine: fetchIconRaceField and
+ * iconRaceGridForPoint build their own URLs and handle a null bunnyBase
+ * correctly. Only the per-point surface fetch is routed, so the map showed
+ * SSA-Race while the comparison table did not.
+ */
+export function isSelfHostedModel(cfg) {
+  return !!(cfg && cfg.selfHosted)
+}
 
 // Region gate. A model with a `coverage` box is only fetched + shown for points
 // inside it (hides the North-American models in Europe); models without a box
@@ -905,7 +935,14 @@ export function withCycleLabel(model, tag) {
 
 export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezone }) {
   const cfg = MODELS[modelKey]
-  if (cfg && cfg.bunnyBase) return fetchBunnyModel(cfg, latitude, longitude)
+  if (isSelfHostedModel(cfg)) return fetchBunnyModel(cfg, latitude, longitude)
+  if (!cfg || !cfg.endpoint) {
+    // Neither ours nor Open-Meteo's. Say so instead of fetching the string
+    // "undefined", whose only symptom is a 404 in a console nobody reads.
+    // eslint-disable-next-line no-console
+    console.warn(`[weather] ${modelKey} has no endpoint and is not selfHosted — not fetched`)
+    return null
+  }
 
   // Retry transient failures with exponential backoff. Open-Meteo's free tier
   // rate-limits (HTTP 429) when we sweep several models across points, and a
@@ -1051,8 +1088,8 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
   for (const k of COMPARE_ORDER) if (!enabled.includes(k)) surfaceByModel[k] = null
   // SSA-Race / self-hosted (Bunny) models are NOT Open-Meteo — load them FIRST and
   // in parallel so the ICON data is always there even when Open-Meteo is throttled.
-  const ssaKeys = enabled.filter((k) => MODELS[k]?.bunnyBase)
-  const omKeys = enabled.filter((k) => !MODELS[k]?.bunnyBase)
+  const ssaKeys = enabled.filter((k) => isSelfHostedModel(MODELS[k]))
+  const omKeys = enabled.filter((k) => !isSelfHostedModel(MODELS[k]))
   await Promise.all(ssaKeys.map(async (modelKey) => {
     onProgress?.({ modelKey, phase: 'start' })
     surfaceByModel[modelKey] = await fetchSurfaceModel({ modelKey, latitude, longitude, timezone })

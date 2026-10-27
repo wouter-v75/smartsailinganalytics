@@ -12,7 +12,7 @@
 // venue should have.
 
 import { describe, expect, it } from 'vitest'
-import { MODELS, MODEL_ORDER, COMPARE_ORDER } from '../openMeteo'
+import { MODELS, MODEL_ORDER, COMPARE_ORDER, isSelfHostedModel } from '../openMeteo'
 
 const VENUES: Record<string, [number, number]> = {
   'Porto Cervo': [41.135, 9.538],
@@ -88,7 +88,14 @@ describe('a model in MODELS is invisible until it is in the RIGHT list', () => {
   // render (ForecastView's MODEL_PICK_ORDER is built from it). Adding a model
   // to MODELS buys nothing; adding it to MODEL_ORDER alone buys nothing a user
   // can see. Neither failure produces an error.
-  const forecast = Object.keys(MODELS).filter((k) => MODELS[k].endpoint || MODELS[k].bunnyBase)
+  // `|| MODELS[k].bunnyBase` here was the same mistake the routing made: that
+  // field is an OPTIONAL pull-zone whose default is null, so both SSA-Race
+  // models fell out of this set and the check below never covered them. Ask
+  // isSelfHostedModel instead, and exclude the two FIELD-ONLY layers, which are
+  // self-hosted but are not forecast models and never belong in COMPARE_ORDER.
+  const forecast = Object.keys(MODELS).filter((k) => (
+    (MODELS[k].endpoint || isSelfHostedModel(MODELS[k])) && !MODELS[k].isCurrent && !MODELS[k].isHpbl
+  ))
 
   it('shows every forecast model in the picker', () => {
     const unlisted = forecast.filter((k) => !COMPARE_ORDER.includes(k))
