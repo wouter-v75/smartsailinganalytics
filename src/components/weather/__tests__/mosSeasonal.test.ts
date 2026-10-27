@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyMOS, seasonMonths, hasSeasonal, modelSpecFor, correctedWind30,
-  specFor, calibratedVenues,
+  specFor, calibratedVenues, needsPreLift,
 } from '../mos'
 import { wallMonth } from '../venueTz'
 import { applyMosToField } from '../windField'
@@ -76,11 +76,37 @@ describe('seasonMonths and hasSeasonal', () => {
     expect(hasSeasonal({ seasonal: { months: [], models: {} } })).toBe(false)
   })
 
-  it('is false for every shipped Mediterranean spec', () => {
-    // Those were fitted on summer regatta days but carry no window, so they
-    // keep applying year-round exactly as they always have. Anything else
-    // would change three venues' numbers as a side effect of this feature.
-    for (const key of calibratedVenues()) expect(hasSeasonal(specFor(key)), key).toBe(false)
+  it('is set only where a REGIME split earned it', () => {
+    // St Tropez has one. Its archive holds a June sea-breeze regatta and two
+    // October gradient ones, raw rmse 3.0-3.6 kn against 1.9-2.9, and one
+    // correction across both helps one and hurts the other. So AROME's
+    // coefficients are fitted on the gradient regatta pair and the May-July
+    // window is set to raw explicitly, because those coefficients were never
+    // asked to work in June.
+    //
+    // Sorrento and Porto Cervo have no split: their archives are one season
+    // each (May and September), so there is no second regime to separate and
+    // the specs must stay year-round exactly as they were.
+    expect(hasSeasonal(specFor('st-tropez'))).toBe(true)
+    expect(seasonMonths(specFor('st-tropez'))).toEqual([5, 6, 7])
+    expect(hasSeasonal(specFor('sorrento'))).toBe(false)
+    expect(hasSeasonal(specFor('porto-cervo'))).toBe(false)
+  })
+
+  it('St Tropez suppresses in June only what was fitted outside it', () => {
+    // The distinction the window exists to carry. AROME's default comes from
+    // the gradient arm alone -> raw in June. icon_eu's comes from the pooled
+    // fit, which had to hold in EVERY regatta including the June one (3.56 ->
+    // 3.09), so it is absent from the window and keeps applying there.
+    const st = specFor('st-tropez')
+    expect(modelSpecFor(st, 'meteofrance_arome_france_hd', 6).m.type).toBe('raw')
+    expect(modelSpecFor(st, 'meteofrance_arome_france_hd', 10).m.type).toBe('sector')
+    expect(modelSpecFor(st, 'icon_eu', 6).m.type).toBe('bias_scale')
+    expect(modelSpecFor(st, 'icon_eu', 10).m.type).toBe('bias_scale')
+  })
+
+  it('and no shipped spec needs a pre-lift, which the window must not change', () => {
+    for (const key of calibratedVenues()) expect(needsPreLift(specFor(key)), key).toBe(false)
   })
 })
 
@@ -193,5 +219,24 @@ describe('a path with no date in scope refuses a seasonal spec', () => {
   it('still corrects a 30 m spec with no window', () => {
     const plain = { target_height_m: 30, bands: [], models: { metno_nordic: { type: 'bias_scale', a: 1.1, b: 1.5 } } }
     expect(applyMosToField(field, plain, 'metno_nordic')).not.toBe(field)
+  })
+
+  it('but DOES correct a seasonal spec once the frames carry stamps', () => {
+    // `stamps` is what localStamp() built with the venue's timezone, for both
+    // the Open-Meteo and the Icon-Race field shapes, so the month is there and
+    // venue-local. Refusing the whole field when it is available would mean
+    // the map and the hourly table showing different numbers all summer —
+    // which is what St Tropez's regime window would have caused.
+    const spec30 = { ...SPEC, fit_height_m: 30, target_height_m: 30 }
+    const june = { ...field, stamps: [{ wd: 'Sat', dd: '14', mon: 'Jun', hh: 14, mm: '00' }] }
+    const january = { ...field, stamps: [{ wd: 'Wed', dd: '14', mon: 'Jan', hh: 14, mm: '00' }] }
+    const jun = applyMosToField(june, spec30, 'metno_nordic')
+    const jan = applyMosToField(january, spec30, 'metno_nordic')
+    expect(jun).not.toBe(june)
+    expect(jan).not.toBe(january)
+    const speed = (f: Record<string, any>) => Math.hypot(f.frames[0].u[0], f.frames[0].v[0]) * 1.94384
+    // June b = -3, January b = +2, so June must come out the lower of the two.
+    expect(speed(jun)).toBeLessThan(speed(jan))
+    expect(speed(jan) - speed(jun)).toBeCloseTo(5, 4)
   })
 })

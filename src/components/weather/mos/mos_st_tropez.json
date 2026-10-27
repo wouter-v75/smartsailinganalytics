@@ -23,17 +23,25 @@
   ],
   "models": {
     "meteofrance_arome_france_hd": {
-      "type": "raw",
-      "best": "raw",
-      "not_shipped": "sector",
-      "why": "the gain did not hold in every held-out regatta",
-      "cv_rmse": 2.675,
-      "raw_rmse": 2.811,
-      "reduction_pct": 4.8,
-      "sector_agreement": 0.79,
-      "n": 417,
-      "folds": 3,
-      "holds_every_regatta": false
+      "type": "sector",
+      "a": 0.8017780768260352,
+      "b": 2.180008793611618,
+      "delta": {
+        "E-SE": -0.42820765595183824,
+        "S-W": 0.37307591391411243,
+        "other": -0.15912495750690422
+      },
+      "global": 8.491467649615205e-13,
+      "best": "sector",
+      "cv_rmse": 2.042,
+      "raw_rmse": 2.151,
+      "reduction_pct": 5.1,
+      "sector_agreement": 0.83,
+      "n": 258,
+      "folds": 2,
+      "blocked_by": "regatta",
+      "holds_every_regatta": true,
+      "regime": "gradient"
     },
     "meteofrance_arpege_europe": {
       "type": "raw",
@@ -46,6 +54,7 @@
       "sector_agreement": 0.76,
       "n": 417,
       "folds": 3,
+      "blocked_by": "regatta",
       "holds_every_regatta": false
     },
     "icon_eu": {
@@ -59,6 +68,7 @@
       "sector_agreement": 0.82,
       "n": 417,
       "folds": 3,
+      "blocked_by": "regatta",
       "holds_every_regatta": true
     },
     "ecmwf_ifs025": {
@@ -72,7 +82,25 @@
       "sector_agreement": 0.72,
       "n": 267,
       "folds": 2,
+      "blocked_by": "regatta",
       "holds_every_regatta": false
+    }
+  },
+  "seasonal": {
+    "months": [
+      5,
+      6,
+      7
+    ],
+    "label": "seabreeze",
+    "note": "seabreeze regime. applyMOS uses these inside the window and spec.models outside it; a model absent here keeps the default, which is only safe when the default was validated across every regatta including this regime's",
+    "models": {
+      "meteofrance_arome_france_hd": {
+        "type": "raw",
+        "best": "raw",
+        "regime": "seabreeze",
+        "why": "the default coefficients were fitted on the gradient regime alone and are not validated here; the seabreeze-only fit did not earn its own"
+      }
     }
   }
 }

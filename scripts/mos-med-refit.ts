@@ -78,10 +78,27 @@ const LOCAL_OFFSET_H = 2    // CEST, as the original pipeline assumed
 const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 
 /** config.py's venue boxes and bands, transcribed. */
+/**
+ * A REGIME SPLIT, where a venue has one.
+ *
+ * config.py's regime_for() labels St Tropez's May-July regattas `seabreeze_jun`
+ * and everything else `gradient_oct`, and never conditioned on the label —
+ * mos.py fitted all three regattas together. The refit showed what that costs:
+ * every model's raw rmse there is 3.0-3.6 kn in the June sea-breeze regatta
+ * against 1.9-2.9 in the two October gradient ones, and one correction across
+ * both helps one and hurts the other, which is why three of four models failed
+ * the held-out-regatta bar.
+ *
+ * `months` are the in-season ones. They become the spec's `seasonal` block,
+ * which applyMOS already honours; everything outside them stays in `models`,
+ * so the nine months that include both October regattas are the default and
+ * the sea-breeze weeks are the override.
+ */
 const VENUES: Record<string, {
   bbox: [number, number, number, number]
   models: string[]
   bands: Band[]
+  regime?: { label: string; otherLabel: string; months: number[] }
 }> = {
   sorrento: {
     bbox: [40.50, 40.72, 14.28, 14.55],
@@ -98,6 +115,7 @@ const VENUES: Record<string, {
     bbox: [43.16, 43.36, 6.50, 6.78],
     models: ['meteofrance_arome_france_hd', 'meteofrance_arpege_europe', 'icon_eu', 'ecmwf_ifs025'],
     bands: [['NW', 270, 330], ['S-W', 160, 260], ['E-SE', 30, 150]],
+    regime: { label: 'seabreeze', otherLabel: 'gradient', months: [5, 6, 7] },
   },
 }
 const GRID_N = 3
@@ -127,6 +145,9 @@ interface Obs {
   twd: number
   zEff: number
   localHour: number
+  /** Venue-local, because a regime window is a statement about the weather. */
+  localMonth: number
+  localDay: string
 }
 
 function readObs(venue: string): Obs[] {
@@ -159,6 +180,8 @@ function readObs(venue: string): Obs[] {
       twd,
       zEff,
       localHour: new Date(tMid + LOCAL_OFFSET_H * 3600_000).getUTCHours(),
+      localMonth: new Date(tMid + LOCAL_OFFSET_H * 3600_000).getUTCMonth() + 1,
+      localDay: new Date(tMid + LOCAL_OFFSET_H * 3600_000).toISOString().slice(0, 10),
     })
   }
   return out.sort((a, b) => a.tMid - b.tMid)
@@ -251,7 +274,10 @@ async function fetchField(
 
 // ── the forms, as mos.py fits them ─────────────────────────────────────────
 
-interface Row { ws: number; wd: number; obs: number; obsTwd: number; hour: number; regatta: string }
+interface Row {
+  ws: number; wd: number; obs: number; obsTwd: number
+  hour: number; month: number; day: string; regatta: string
+}
 type Spec = Record<string, any>
 
 function assignSector(twd: number, bands: readonly Band[]): string {
@@ -313,6 +339,37 @@ function predict(m: Spec, r: Row, bands: readonly Band[]): number {
   return r.ws
 }
 
+/**
+ * Blocked CV where the training POOL and the test rows can differ.
+ *
+ * That separation is the whole point: it lets a regime-only fit and the pooled
+ * fit be scored on THE SAME held-out blocks, which is the only comparison that
+ * answers "does splitting the regimes pay?". Both arms exclude the same block
+ * from training, so the comparison is fair even where the absolute numbers are
+ * optimistic — and for a single-regatta regime, blocked by DAY, they are.
+ */
+function cvOn(
+  trainPool: readonly Row[], testRows: readonly Row[],
+  blockOf: (r: Row) => string, kind: string, bands: readonly Band[],
+) {
+  const blocks = Array.from(new Set(testRows.map(blockOf))).sort()
+  const rawE: number[] = []; const adjE: number[] = []
+  const perFold: Array<{ g: string; n: number; raw: number; adj: number }> = []
+  const rms = (e: number[]) => Math.sqrt(e.reduce((q, x) => q + x * x, 0) / e.length)
+  for (const b of blocks) {
+    const te = testRows.filter((r) => blockOf(r) === b)
+    const tr = trainPool.filter((r) => blockOf(r) !== b)
+    if (!te.length || tr.length < 6) continue
+    const m = fit(kind, tr, bands)
+    const a: number[] = []; const z: number[] = []
+    for (const r of te) { a.push(predict(m, r, bands) - r.obs); z.push(r.ws - r.obs) }
+    adjE.push(...a); rawE.push(...z)
+    perFold.push({ g: b, n: te.length, raw: rms(z), adj: rms(a) })
+  }
+  if (!adjE.length) return null
+  return { raw: rms(rawE), adj: rms(adjE), n: adjE.length, perFold, folds: blocks.length }
+}
+
 /** Leave-one-regatta-out, with the per-fold figures kept. */
 function cv(rows: readonly Row[], kind: string, bands: readonly Band[]) {
   const groups = Array.from(new Set(rows.map((r) => r.regatta))).sort()
@@ -332,6 +389,97 @@ function cv(rows: readonly Row[], kind: string, bands: readonly Band[]) {
   if (!adjE.length) return null
   const rms = (e: number[]) => Math.sqrt(e.reduce((s, x) => s + x * x, 0) / e.length)
   return { raw: rms(rawE), adj: rms(adjE), n: adjE.length, perFold, folds: groups.length }
+}
+
+
+/** What a ladder + CV + the bars decided, for one arm of the data. */
+interface Decision {
+  best: string
+  rawRmse: number
+  cvRmse: number
+  pi: number
+  holds: boolean
+  ship: boolean
+  folds: number
+  perFold: Array<{ g: string; n: number; raw: number; adj: number }>
+  guarded: string
+  table: string
+  agree: number
+  n: number
+}
+
+/**
+ * Run the ladder on one arm and apply every rule: the original's choice of the
+ * best form that beats raw, its 70 % sector-agreement guard, and the two bars
+ * mos-fit.ts enforces (the gain must hold in EVERY held-out block and clear
+ * MIN_PI %).
+ *
+ * `trainPool` and `testRows` are separate so the same held-out blocks can score
+ * a pooled fit and a regime-only fit against each other.
+ */
+function chooseForm(
+  trainPool: readonly Row[], testRows: readonly Row[],
+  blockOf: (r: Row) => string, bands: readonly Band[],
+): Decision | null {
+  if (!testRows.length) return null
+  const agree = testRows.filter((r) => assignSector(r.wd, bands) === assignSector(r.obsTwd, bands)).length / testRows.length
+  const results: Record<string, ReturnType<typeof cvOn>> = {}
+  let rawRmse = NaN
+  for (const kind of ['bias_scale', 'diurnal', 'sector']) {
+    const r = cvOn(trainPool, testRows, blockOf, kind, bands)
+    if (r) { results[kind] = r; rawRmse = r.raw }
+  }
+  if (!Number.isFinite(rawRmse)) return null
+
+  let best = 'raw'; let cvRmse = rawRmse
+  for (const [k, r] of Object.entries(results)) {
+    if (r && r.adj < cvRmse - 1e-9) { best = k; cvRmse = r.adj }
+  }
+  let guarded = ''
+  if (best === 'sector' && agree < AGREE_MIN) {
+    const alt = Object.entries(results).filter(([k]) => k !== 'sector')
+      .sort((p, q) => (p[1]!.adj - q[1]!.adj))[0]
+    if (alt && alt[1]!.adj < rawRmse) {
+      guarded = ` (sector best but agreement ${(100 * agree).toFixed(0)}% < 70% -> ${alt[0]})`
+      best = alt[0]; cvRmse = alt[1]!.adj
+    }
+  }
+  const chosen = results[best]
+  const pi = 100 * (1 - cvRmse / rawRmse)
+  const holds = chosen ? chosen.perFold.every((f) => f.adj < f.raw) : false
+  const cell = (k: string) => (results[k] ? f2(results[k]!.adj).padStart(8) : '       -')
+  return {
+    best, rawRmse, cvRmse, pi, holds,
+    ship: best !== 'raw' && holds && pi >= MIN_PI,
+    folds: chosen?.folds ?? 0,
+    perFold: chosen?.perFold ?? [],
+    guarded,
+    table: `${f2(rawRmse).padStart(5)}  ${cell('bias_scale')}  ${cell('diurnal')}  ${cell('sector')}`,
+    agree,
+    n: testRows.length,
+  }
+}
+
+/** The spec entry a decision produces, shipped or honestly not. */
+function entryFor(d: Decision, trainPool: readonly Row[], bands: readonly Band[], blockName: string): Spec {
+  const m = d.ship ? fit(d.best, trainPool, bands) : { type: 'raw' }
+  return {
+    ...m,
+    best: d.ship ? d.best : 'raw',
+    ...(d.ship || d.best === 'raw' ? {} : {
+      not_shipped: d.best,
+      why: d.holds ? `cross-validated gain ${d.pi.toFixed(1)} % is below the ${MIN_PI} % bar`
+        : `the gain did not hold in every held-out ${blockName}`,
+    }),
+    cv_rmse: Number(d.cvRmse.toFixed(3)),
+    raw_rmse: Number(d.rawRmse.toFixed(3)),
+    reduction_pct: Number(d.pi.toFixed(1)),
+    sector_agreement: Number(d.agree.toFixed(2)),
+    n: d.n,
+    folds: d.folds,
+    blocked_by: blockName,
+    [`holds_every_${blockName}`]: d.holds,
+  }
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
@@ -373,6 +521,9 @@ async function main() {
       models: {},
     }
 
+    // Kept so the regime pass below can re-use the pairing rather than fetch
+    // and interpolate it a second time.
+    const rowsByModel: Record<string, Row[]> = {}
     console.log('\n  model                        n  agree    raw   bias_scale  diurnal  sector  ->  chosen')
     for (const mosId of cfg.models) {
       const heights = heightsFor(mosId)
@@ -405,25 +556,24 @@ async function main() {
         }
         const m = interpToMast(levels, o.zEff)
         if (!m) continue
-        rows.push({ ws: m.speed, wd: m.dir, obs: o.tws, obsTwd: o.twd, hour: o.localHour, regatta: o.regatta })
+        rows.push({
+          ws: m.speed, wd: m.dir, obs: o.tws, obsTwd: o.twd,
+          hour: o.localHour, month: o.localMonth, day: o.localDay, regatta: o.regatta,
+        })
       }
       if (rows.length < 20) { console.log(`  ${mosId.padEnd(28)} only ${rows.length} paired bins — skipped`); continue }
+      rowsByModel[mosId] = rows
 
       // Sector agreement: how often the model puts the wind in the band the
       // boat was actually in. The observed direction is carried on the row —
       // an earlier version looked it up by matching tws values, which pairs
       // the wrong bin whenever two bins recorded the same speed.
-      const agree = rows.filter((r) => assignSector(r.wd, cfg.bands)
-        === assignSector(r.obsTwd, cfg.bands)).length / rows.length
-      const results: Record<string, ReturnType<typeof cv>> = {}
-      let rawRmse = NaN
-      for (const kind of ['bias_scale', 'diurnal', 'sector']) {
-        const r = cv(rows, kind, cfg.bands)
-        if (r) { results[kind] = r; rawRmse = r.raw }
-      }
-      if (!Number.isFinite(rawRmse)) {
-        // One regatta only: there is nothing to hold out, so ship raw rather
-        // than an in-sample fit. The old spec said the same for ICON-2I.
+      const byRegatta = (r: Row) => r.regatta
+      const d = chooseForm(rows, rows, byRegatta, cfg.bands)
+      if (!d) {
+        // One regatta only: nothing to hold out, so ship raw rather than an
+        // in-sample fit. The old spec said the same for ICON-2I.
+        const agree = rows.filter((r) => assignSector(r.wd, cfg.bands) === assignSector(r.obsTwd, cfg.bands)).length / rows.length
         const sc = score(rows.map((r) => r.ws), rows.map((r) => r.obs))
         console.log(`  ${mosId.padEnd(28)} ${String(rows.length).padStart(4)}  ${(100 * agree).toFixed(0)}%`
           + `   only one regatta — no CV, shipping raw (in-sample rmse ${f2(sc.rmse)})`)
@@ -433,30 +583,10 @@ async function main() {
         }
         continue
       }
-
-      let best = 'raw'; let bestRmse = rawRmse
-      for (const [k, r] of Object.entries(results)) {
-        if (r && r.adj < bestRmse - 1e-9) { best = k; bestRmse = r.adj }
-      }
-      // A sector correction is only as good as the model's ability to put the
-      // wind in the right band. Below 70 % agreement the next-best form wins.
-      let guarded = ''
-      if (best === 'sector' && agree < AGREE_MIN) {
-        const alt = Object.entries(results)
-          .filter(([k]) => k !== 'sector')
-          .sort((p, q) => (p[1]!.adj - q[1]!.adj))[0]
-        if (alt && alt[1]!.adj < rawRmse) {
-          guarded = ` (sector best but agreement ${(100 * agree).toFixed(0)}% < 70% -> ${alt[0]})`
-          best = alt[0]; bestRmse = alt[1]!.adj
-        }
-      }
-      const cell = (k: string) => (results[k] ? f2(results[k]!.adj).padStart(8) : '       -')
-      console.log(`  ${mosId.padEnd(28)} ${String(rows.length).padStart(4)}  ${(100 * agree).toFixed(0)}%`
-        + `  ${f2(rawRmse).padStart(5)}  ${cell('bias_scale')}  ${cell('diurnal')}  ${cell('sector')}`
-        + `  ->  ${best} (${f2(bestRmse)})${guarded}`)
-      const chosen = results[best]
-      if (chosen) {
-        console.log(`      per regatta held out: ${chosen.perFold.map((f) => `${f.g.replace(`${venue}_`, '')} raw ${f2(f.raw)} -> ${f2(f.adj)}`).join('   ')}`)
+      console.log(`  ${mosId.padEnd(28)} ${String(d.n).padStart(4)}  ${(100 * d.agree).toFixed(0)}%`
+        + `  ${d.table}  ->  ${d.best} (${f2(d.cvRmse)})${d.guarded}`)
+      if (d.perFold.length) {
+        console.log(`      per regatta held out: ${d.perFold.map((f) => `${f.g.replace(`${venue}_`, '')} raw ${f2(f.raw)} -> ${f2(f.adj)}`).join('   ')}`)
       }
       const oldM = old.models?.[mosId]
       if (oldM) {
@@ -465,30 +595,108 @@ async function main() {
           + `${oldM.reduction_pct != null ? ` (${oldM.reduction_pct}%)` : ''}`
           + `${oldM.not_shipped ? ` [voided: ${oldM.not_shipped}]` : ''}`)
       }
-
-      const pi = 100 * (1 - bestRmse / rawRmse)
-      const holds = chosen ? chosen.perFold.every((f) => f.adj < f.raw) : false
-      const ship = best !== 'raw' && holds && pi >= MIN_PI
-      if (best !== 'raw' && !ship) {
-        console.log(`      NOT SHIPPED: written as raw. ${holds ? `${f2(pi)} % is below the ${MIN_PI} % bar`
+      if (d.best !== 'raw' && !d.ship) {
+        console.log(`      NOT SHIPPED: written as raw. ${d.holds ? `${f2(d.pi)} % is below the ${MIN_PI} % bar`
           : 'the gain does not hold in every held-out regatta'}.`)
       }
-      const m = ship ? fit(best, rows, cfg.bands) : { type: 'raw' }
-      spec.models[mosId] = {
-        ...m,
-        best: ship ? best : 'raw',
-        ...(ship ? {} : best === 'raw' ? {} : {
-          not_shipped: best,
-          why: holds ? `cross-validated gain ${pi.toFixed(1)} % is below the ${MIN_PI} % bar`
-            : 'the gain did not hold in every held-out regatta',
-        }),
-        cv_rmse: Number(bestRmse.toFixed(3)),
-        raw_rmse: Number(rawRmse.toFixed(3)),
-        reduction_pct: Number(pi.toFixed(1)),
-        sector_agreement: Number(agree.toFixed(2)),
-        n: rows.length,
-        folds: chosen?.folds ?? null,
-        holds_every_regatta: holds,
+      spec.models[mosId] = entryFor(d, rows, cfg.bands, 'regatta')
+    }
+
+
+    // ── THE REGIME SPLIT ───────────────────────────────────────────────────
+    if (cfg.regime) {
+      const { label, otherLabel, months } = cfg.regime
+      const inRegime = (r: Row) => months.includes(r.month)
+      console.log(`\n  REGIME SPLIT — ${label} (months ${months.join(',')}) against ${otherLabel} (the rest)`)
+      console.log('  Both arms are scored on the SAME held-out blocks, one trained on the whole')
+      console.log('  archive and one on its own regime, so the only question asked is whether')
+      console.log('  fitting the regime apart does better on those blocks.')
+      const seasonalModels: Record<string, Spec> = {}
+      /** Models whose default entry came from the OTHER regime's own arm. */
+      const fromOtherArm = new Set<string>()
+
+      for (const [mosId, rows] of Object.entries(rowsByModel)) {
+        for (const [armLabel, armRows, isSeasonal] of [
+          [otherLabel, rows.filter((r) => !inRegime(r)), false],
+          [label, rows.filter(inRegime), true],
+        ] as Array<[string, Row[], boolean]>) {
+          if (armRows.length < 40) {
+            console.log(`\n  ${mosId} / ${armLabel}: only ${armRows.length} bins — skipped`)
+            continue
+          }
+          const regattas = Array.from(new Set(armRows.map((r) => r.regatta)))
+          const byDay = regattas.length < 2
+          const blockOf = byDay ? (r: Row) => r.day : (r: Row) => r.regatta
+          const blockName = byDay ? 'day' : 'regatta'
+          const pooled = chooseForm(rows, armRows, blockOf, cfg.bands)
+          const armOnly = chooseForm(armRows, armRows, blockOf, cfg.bands)
+          console.log(`\n  ${mosId} / ${armLabel}: ${armRows.length} bins, ${regattas.length} regatta(s)`
+            + `, blocked by ${blockName}${byDay ? ' — ONE regatta, so this is a weaker test than the others' : ''}`)
+          if (!pooled || !armOnly) { console.log('      not enough blocks to cross-validate — arm skipped'); continue }
+          console.log(`      pooled fit on these blocks   ${f2(pooled.rawRmse)} -> ${f2(pooled.cvRmse)}`
+            + `  (${pooled.best})  holds ${pooled.holds ? 'yes' : 'NO'}`)
+          console.log(`      ${armLabel}-only fit`.padEnd(35) + `${f2(armOnly.rawRmse)} -> ${f2(armOnly.cvRmse)}`
+            + `  (${armOnly.best})  holds ${armOnly.holds ? 'yes' : 'NO'}${armOnly.guarded}`)
+          console.log(`      per ${blockName} held out: ${armOnly.perFold.map((f) => `${f.g.replace(`${venue}_`, '')} ${f2(f.raw)} -> ${f2(f.adj)}`).join('  ')}`)
+
+          const wins = armOnly.cvRmse < pooled.cvRmse
+          if (!wins) {
+            console.log(`      VERDICT: keep the pooled coefficients — the ${armLabel}-only fit is no better`)
+            continue
+          }
+          if (!armOnly.ship) {
+            console.log(`      VERDICT: the ${armLabel}-only fit beats the pooled one but fails a bar`
+              + ` (${armOnly.holds ? `${f2(armOnly.pi)} % < ${MIN_PI} %` : `not every held-out ${blockName}`}) — raw`)
+          } else {
+            console.log(`      VERDICT: fit the ${armLabel} regime separately — ${armOnly.best},`
+              + ` ${f2(armOnly.pi)} % against raw, holding in every held-out ${blockName}`)
+          }
+          const entry = entryFor(armOnly, armRows, cfg.bands, blockName)
+          entry.regime = armLabel
+          if (isSeasonal) { if (armOnly.ship) seasonalModels[mosId] = entry }
+          else { spec.models[mosId] = entry; fromOtherArm.add(mosId) }
+        }
+
+        // WHAT THE WINDOW GETS WHEN ITS OWN FIT DID NOT EARN COEFFICIENTS, and
+        // this is the part that needs stating. applyMOS falls back to
+        // spec.models outside the window AND for any model the window does not
+        // name, so leaving a model out of `seasonal` means the default applies
+        // inside the window too. That is right when the default came from the
+        // POOLED fit, which had to hold in every regatta including this
+        // regime's — icon_eu at St Tropez improves the June regatta 3.56 ->
+        // 3.09, so it should keep doing that in June.
+        //
+        // It is WRONG when the default came from the other regime's own arm:
+        // those coefficients were fitted on October and were never asked to
+        // work in June. AROME is exactly that case. So the window gets an
+        // explicit `raw` — which is a statement, not an absence.
+        const def = spec.models[mosId]
+        if (!seasonalModels[mosId] && fromOtherArm.has(mosId) && def && (def.type || 'raw') !== 'raw') {
+          seasonalModels[mosId] = {
+            type: 'raw',
+            best: 'raw',
+            regime: label,
+            why: `the default coefficients were fitted on the ${otherLabel} regime alone and are not `
+              + `validated here; the ${label}-only fit did not earn its own`,
+          }
+          console.log(`\n  ${mosId} / ${label}: the default now comes from the ${otherLabel} arm, which was`)
+          console.log(`      never tested here — so the ${label} window is set to raw explicitly.`)
+        }
+      }
+
+      if (Object.keys(seasonalModels).length) {
+        spec.seasonal = {
+          months,
+          label,
+          note: `${label} regime. applyMOS uses these inside the window and spec.models outside it; `
+            + 'a model absent here keeps the default, which is only safe when the default was '
+            + 'validated across every regatta including this regime\'s',
+          models: seasonalModels,
+        }
+      } else {
+        console.log(`\n  Nothing to say about the ${label} window that the defaults do not already`)
+        console.log('  cover, so no seasonal block is written — an empty one would read as a')
+        console.log('  window that exists.')
       }
     }
 

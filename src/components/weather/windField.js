@@ -35,18 +35,22 @@ export function applyMosToField(field, spec, mosModelId) {
   // Absent beats wrong, the same rule the project applies to a sail's target
   // shape: no correction is honest, another height's correction is not. The
   // hourly table and the deck both use correctedWind30 and do get it right.
-  //
-  // A SEASONAL spec is refused here for a second, separate reason: the field's
-  // only time information is a label like "Sat 14:00", which carries an hour
-  // and no date, so this path cannot tell which side of a season boundary it
-  // is on. Applying the year-round coefficients instead would quietly disagree
-  // with the hourly table all summer — the map and the table showing different
-  // numbers for the same hour, with nothing on screen to say why.
-  if (needsPreLift(spec) || hasSeasonal(spec)) return field
+  if (needsPreLift(spec)) return field
+  // A SEASONAL spec needs the venue-local MONTH of each frame, and `stamps`
+  // already carries it — localStamp() computed it in the venue's zone for both
+  // source shapes, which is why the month comes from there and not from
+  // `labels` ("Sat 14:00" has an hour and no date) or from `times` (UTC for the
+  // Icon-Race grids). Without usable stamps the field is left RAW rather than
+  // corrected with the wrong half of the spec: the map and the hourly table
+  // would then show different numbers for the same hour with nothing on screen
+  // to say why.
+  if (hasSeasonal(spec) && !field.stamps?.some((s) => s && MON_INDEX[s.mon])) return field
   const KN = 1.94384
   const hourOf = (t) => { const h = parseInt((field.labels?.[t] || '').slice(-5, -3), 10); return Number.isNaN(h) ? null : h }
+  const monthOf = (t) => MON_INDEX[field.stamps?.[t]?.mon] || null
   const frames = field.frames.map((fr, t) => {
     const lh = hourOf(t)
+    const lm = monthOf(t)
     const n = fr.u.length
     const u = new Array(n); const v = new Array(n)
     for (let p = 0; p < n; p++) {
@@ -54,7 +58,7 @@ export function applyMosToField(field, spec, mosModelId) {
       const ws = Math.hypot(uu, vv) * KN          // raw mast wind, knots
       if (ws < 1e-3) { u[p] = uu; v[p] = vv; continue }
       const dirTrue = (((Math.atan2(-uu, -vv) * 180) / Math.PI) % 360 + 360) % 360
-      const r = applyMOS(spec, mosModelId, ws, dirTrue, lh)
+      const r = applyMOS(spec, mosModelId, ws, dirTrue, lh, lm)
       const f = r && r.ws > 0 ? r.ws / ws : 1
       u[p] = uu * f; v[p] = vv * f
     }
@@ -121,6 +125,8 @@ function localLabel(iso, timezone, isUTC) {
 // the short labels the MOS step parses. UTC sources (Icon-Race) are formatted in
 // `timezone`; Open-Meteo's already-local wall-clock strings are read with getUTC*.
 const STAMP_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** 'Jun' -> 6, for reading a frame's venue-local month back off its stamp. */
+const MON_INDEX = Object.fromEntries(STAMP_MON.map((m, i) => [m, i + 1]))
 const STAMP_WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 function localStamp(iso, timezone, isUTC) {
   if (!iso) return null
