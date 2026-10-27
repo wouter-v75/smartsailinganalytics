@@ -825,6 +825,68 @@ this."* Generating weights from a 2.9 M-cell global source is expensive enough t
 once and reused, which is exactly how that collision happened. DWD also publishes prebuilt weights
 and target descriptions for the global grid; use them rather than generating ours.
 
+## 5c-bis. The first 1 km nest run — a Mediterranean SST on a Pacific grid (27 Oct 2026)
+
+The San Juan 1 km nest had **never run**. Its first attempt died three forecast
+hours in with
+
+```
+mo_srtm:srtm_setcoef: Uppermost model layer too low for RRTM.
+```
+
+which is about the model top, and had nothing whatever to do with the fault.
+Worth keeping because every obvious reading of that message is wrong.
+
+**What it actually was.** `preprocess_nest.sh` swaps a ~1 km CMEMS SST onto the
+nest's sea points, and its default was a hard-coded **Mediterranean** file.
+`run_nest.sh` passes no `-s` at all. So the Med analysis was bilinearly remapped
+onto a grid in the Pacific Northwest, ~9,000 km away: no source data, an
+all-missing field, and the `ifthenelse`/`replace` chain wrote **`t_g` = −32768 K
+over every cell** — the int16 fill, straight into the ground temperature.
+
+ICON initialised on that. The surface scheme destroyed the lowest-level
+momentum and `MAXABS VN` went from 17.94 m/s to **exactly zero inside time step
+4**; the model then ground on for 1,681 steps on a dead atmosphere until RRTM
+met a column it could not classify and aborted. `0.22331346+163` in the first
+vertical-CFL print is the same event — Fortran drops the `E` at a three-digit
+exponent, so it reads like a number and is actually 0.22 × 10¹⁶³.
+
+**Why every structural check came back clean**, in the order they were ruled
+out: the namelist is **byte-identical** to `solent_1km`'s, which works; the
+vertical grid is the validated 10/37/75/121/173/232 m profile (`run_nest.sh
+--verify-vgrid` confirms it, and that short run *succeeds*); the terrain is the
+**gentlest** of any 1 km nest here (657 m max against st Tropez's 1529 m); the
+IC and every boundary file carry real wind, 100 % finite, with no collapsed
+layers. Re-running st Tropez's 3 Oct nest from its own preserved IC **today**
+gives CFL 0.075 and zero zeros in 6,000 prints, which clears the box and the
+binary. Only a variable-by-variable diff of the two ICs found it, and only
+because `t_g` was uniform: `min == max == −32768`.
+
+**The fix, in two parts, applied to both levels.**
+
+| | before | after |
+|---|---|---|
+| default SST | one hard-coded Med file for every domain | per basin: `san_juan_islands_* → pacific`, `solent_* → channel`, else `med` — the same mapping `daily_pipeline.sh` already used |
+| wrong file | silently remapped, fill written into `t_g` | valid-coverage fraction measured; **< 1 % refuses the swap** and keeps the parent's own `t_g` |
+
+`setmisstonn` was already in both scripts, flagged "THIS WAS THE KEY MED FIX —
+do NOT remove", precisely because a land-masked source leaves gaps at near-coast
+cells and `ifthenelse` would otherwise write NaN into `t_g` **and abort RRTM**.
+So this failure mode was already known and already paid for once. What
+`setmisstonn` cannot do is rescue a remap that returned nothing valid anywhere:
+there is no nearest neighbour to fill from. That is the gap the coverage check
+closes, and it is why the guard belongs beside the existing fix rather than
+replacing it.
+
+After the fix the prep reports `SST covers 0.7238 of the inner grid`, `t_g` is
+283.3–284.7 K (10–11 °C, right for the Salish Sea in late October), CFL runs
+0.018–0.039, `MAXABS VN` 18 → 26 m/s, and **0 of 6,000 VN prints are zero**.
+
+**The lesson worth carrying**: a basin-specific default is a trap for every
+domain that is not in that basin, and it fails silently because a remap with no
+source data is not an error. Anything defaulted per-region should either be
+derived from the domain or refused when it does not cover it.
+
 ## 5d. The repeat issues — things this project has already paid for
 
 Every one of these was a day lost somewhere. A new domain re-trips them for free unless they are
