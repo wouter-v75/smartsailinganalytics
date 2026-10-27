@@ -147,6 +147,86 @@ function localStamp(iso, timezone, isUTC) {
   }
 }
 
+// ── "Now" on the time axis ──────────────────────────────────────────────────
+// `field.times` holds TWO formats and they cannot be compared as instants.
+// Open-Meteo is asked for `timezone=auto` and answers zone-less strings whose
+// digits ALREADY are venue time ("2026-09-13T09:00" means 09:00 in Newport);
+// Icon-Race and the currents grid carry real UTC. Worse, those UTC ones are not
+// reliably Z-suffixed -- localStamp appends the Z itself -- so the string cannot
+// be sniffed. Each builder therefore stamps `timesAreUtc` on the field and this
+// reads it; a field restored from an older session store has no flag, so the
+// regex stands in.
+//
+// Both sides are reduced to VENUE WALL CLOCK before comparing, because that is
+// the one quantity both formats can express. The result is a pseudo-epoch --
+// UTC-shaped wall-clock digits, not an instant -- so only the DIFFERENCE between
+// two of them means anything. Reading a zone-less string as an instant instead
+// is the bug venueTz.js exists to kill, and here it would put "now" off by the
+// venue offset: 8 frames at Newport seen from Amsterdam.
+const FIELD_HAS_ZONE = /(Z|[+-]\d{2}:?\d{2})$/
+
+function venueWallMs(date, timezone) {
+  const p = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date)
+  const g = (t) => p.find((x) => x.type === t)?.value || '00'
+  return Date.parse(`${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}:${g('second')}Z`)
+}
+
+function wallClockMs(iso, timezone, timesAreUtc) {
+  if (typeof iso !== 'string' || iso.length < 13) return NaN
+  const isUtc = timesAreUtc == null ? FIELD_HAS_ZONE.test(iso) : !!timesAreUtc
+  if (!isUtc) return Date.parse(`${iso.length <= 16 ? `${iso}:00` : iso.slice(0, 19)}Z`)
+  return venueWallMs(new Date(iso.endsWith('Z') ? iso : `${iso}Z`), timezone)
+}
+
+/**
+ * Index of the frame nearest the venue's current time, or -1 when the field has
+ * no usable times. CLAMPED to the field, so a cycle whose window has run out
+ * still answers with its last frame; use nowFraction() to tell whether now is
+ * actually inside the window.
+ */
+export function nowFrameIndex(field, timezone, now = new Date()) {
+  const times = field?.times
+  if (!Array.isArray(times) || times.length === 0) return -1
+  const target = venueWallMs(now, timezone)
+  if (!Number.isFinite(target)) return -1
+  let best = -1
+  let bestD = Infinity
+  for (let i = 0; i < times.length; i += 1) {
+    const ms = wallClockMs(times[i], timezone, field.timesAreUtc)
+    if (!Number.isFinite(ms)) continue
+    const d = Math.abs(ms - target)
+    if (d < bestD) { bestD = d; best = i }
+  }
+  return best
+}
+
+/**
+ * Where now sits along the time axis, 0..1, for a marker on the slider -- or
+ * null when it is outside the field's window, which is the signal not to draw
+ * one. Interpolated BETWEEN frames rather than snapped to the nearest, so the
+ * marker creeps through the hour instead of jumping, and lands exactly where
+ * the slider's own 0..n-1 positions put that time.
+ */
+export function nowFraction(field, timezone, now = new Date()) {
+  const times = field?.times
+  const n = Array.isArray(times) ? times.length : 0
+  if (n < 2) return null
+  const target = venueWallMs(now, timezone)
+  const ms = times.map((t) => wallClockMs(t, timezone, field.timesAreUtc))
+  if (!Number.isFinite(target) || !Number.isFinite(ms[0]) || !Number.isFinite(ms[n - 1])) return null
+  if (target < ms[0] || target > ms[n - 1]) return null
+  for (let i = 0; i < n - 1; i += 1) {
+    const a = ms[i]
+    const b = ms[i + 1]
+    if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) continue
+    if (target >= a && target <= b) return (i + (target - a) / (b - a)) / (n - 1)
+  }
+  return null
+}
+
 // Heights available for the field selector for a given model: the model's own
 // `heights`, but capped at a sensible ceiling for sailing (<=200 m).
 export function fieldHeightsFor(modelKey) {
@@ -321,7 +401,7 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
   // single height the 3D viewer's level picker would offer one button and
   // buildSurfaceVectors already does that case better.
   const volume = heights.length > 1 && cellAt.some(Boolean) ? { cellAt, heights, header } : undefined
-  return { times, labels, stamps, frames, header, maxSpeed, box, volume }
+  return { times, labels, stamps, frames, header, maxSpeed, box, volume, timesAreUtc: false }
 }
 
 // Build the field from Icon-Race's own grid.json (self-hosted model). The grid
@@ -375,7 +455,7 @@ export async function fetchIconRaceField({ lat, lon, height, timezone, modelKey 
   // kept so the 3D viewer can render arrows at multiple altitudes. cellAt is the
   // j*nx+i grid of raw cells; heights are metres ASL.
   const volume = { cellAt, heights, header }
-  return { times, labels, stamps, frames, header, maxSpeed, box, volume }
+  return { times, labels, stamps, frames, header, maxSpeed, box, volume, timesAreUtc: true }
 }
 
 // speed (km/h) + dir at a height from an Icon-Race cell's spd/dir maps.
@@ -536,7 +616,7 @@ export function currentJsonToField(j, timezone) {
   const box = { north: h.la1, south: h.la1 - h.dy * (h.ny - 1), west: h.lo1, east: h.lo1 + h.dx * (h.nx - 1) }
   const labels = times.map((t) => localLabel(t, timezone, true))
   const stamps = times.map((t) => localStamp(t, timezone, true))
-  return { times, labels, stamps, frames, header: h, maxSpeed, box, isCurrent: true, resKm: j.res_km }
+  return { times, labels, stamps, frames, header: h, maxSpeed, box, isCurrent: true, resKm: j.res_km, timesAreUtc: true }
 }
 
 export async function fetchCurrentField({ lat, lon, timezone }) {
@@ -766,7 +846,7 @@ export async function fetchIconRaceHpblField({ lat, lon, timezone, modelKey = 'I
   // box = the ACTUAL published cell extent (centres ± half a cell), so the overlay
   // always aligns with the grid regardless of the venue.half / grid-extent match.
   const box = { north: lats[0] + header.dy / 2, south: lats[ny - 1] - header.dy / 2, west: lons[0] - header.dx / 2, east: lons[nx - 1] + header.dx / 2 }
-  return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true }
+  return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true, timesAreUtc: true }
 }
 
 // GFS boundary-layer height, for everywhere the SSA-Race grid does not reach.
@@ -805,7 +885,7 @@ export async function fetchGfsHpblField({ lat, lon, timezone, nm = 30, n = 10 })
   // wall-clock strings like the Open-Meteo wind models, not UTC: isUTC false.
   const labels = times.map((tt) => localLabel(tt, timezone, false))
   const stamps = times.map((tt) => localStamp(tt, timezone, false))
-  return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true, hpblSource: 'GFS ~25 km' }
+  return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true, hpblSource: 'GFS ~25 km', timesAreUtc: false }
 }
 
 // hpbl from the best source available at this point: the SSA-Race 2 km grid

@@ -25,7 +25,7 @@ import {
   labelWithCycle, withCycleLabel, localRacingWindow, venueHalf,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
-import { resolveVenueTz, deviceTz, wallHour, formatWall } from './venueTz'
+import { resolveVenueTz, deviceTz, tzAbbrev, wallHour, formatWall } from './venueTz'
 import {
   matchVenue, specFor, mosSeries, correctionInfo, correctedWind30,
 } from './mos'
@@ -36,6 +36,7 @@ import {
   fetchHpblField,
   applyMosToField, preferredFieldHeight, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
   scalarImageURL, sampleScalarField, hpblRamp, HPBL_MAX_M, buildHpblContourSvg,
+  nowFrameIndex, nowFraction,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -198,6 +199,15 @@ export default function ForecastView({
   // the fetches below wait for it so nothing is fetched twice in two zones.
   const [tzResolved, setTzResolved] = useState(() => deviceTz())
   const [tzFor, setTzFor] = useState(null)
+  // A minute tick, so the NOW marker on the time slider creeps forward instead
+  // of freezing at whatever the clock said when the field loaded. One state
+  // update a minute; anything faster would re-render the map for sub-pixel
+  // movement, and the frames are hourly anyway.
+  const [nowTs, setNowTs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowTs(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
   const allThree = !!(locations['1'] && locations['2'] && locations['3'])
 
   // The placed points, with their marker colour — passed to the 3D viewer so the
@@ -305,10 +315,17 @@ export default function ForecastView({
         const ff = isMos ? applyMosToField(f, specFor(fieldVenue), fieldMosId) : f
         if (fieldModel === 'CURRENTS') { curOverviewRef.current = ff; curTierRef.current = 'overview' }
         setField(ff)
-        // keep the same wall-clock hour selected across model switches
+        // Keep the same wall-clock hour across a model switch; failing that open
+        // on NOW. Frame 0 is the field's own START -- today 00:00 venue time for
+        // an Open-Meteo model -- so the viewer used to open on the middle of
+        // last night, and every visit began by dragging the slider rightwards.
+        // A session returning through the firstFieldRun guard above never gets
+        // here, which is deliberate: it keeps the hour the user had chosen.
         const want = selLabelRef.current
         const ni = want && ff.labels ? ff.labels.findIndex((l) => l === want) : -1
+        const nowI = nowFrameIndex(ff, tzResolved)
         if (ni >= 0) setFieldHourIdx(ni)
+        else if (nowI >= 0) setFieldHourIdx(nowI)
         else setFieldHourIdx((i) => Math.min(i, Math.max(0, ff.times.length - 1)))
       })
       .catch((e) => { if (!cancelled) { setField(null); setFieldErr(e?.message || 'fetch failed') } })
@@ -966,9 +983,22 @@ export default function ForecastView({
           const cur = Math.min(fieldHourIdx, n - 1)
           const stamps = field.stamps || []
           const st = stamps[cur]
+          // The zone goes ON the cursor. Every time in this viewer is VENUE
+          // time, never the viewer's (see venueTz.js), and the two coincide
+          // often enough at a home regatta that the distinction was invisible
+          // until it mattered -- a Newport field read on a laptop in Amsterdam.
+          // tzAbbrev names the zone (PDT, CEST) and only falls back to an
+          // offset when the platform has no name for it.
+          const tzLab = tzAbbrev(tzResolved)
           const curLabel = st
-            ? `${st.wd} ${st.dd} ${st.mon} · ${String(st.hh).padStart(2, '0')}:${st.mm}`
+            ? `${st.wd} ${st.dd} ${st.mon} · ${String(st.hh).padStart(2, '0')}:${st.mm}${tzLab ? ` ${tzLab}` : ''}`
             : (field.labels?.[cur] || '')
+          const nowI = nowFrameIndex(field, tzResolved, new Date(nowTs))
+          // null when now is outside the field's window -- an old cycle, or a
+          // model whose run has already expired -- which is the signal to draw
+          // no marker rather than pin one to an end.
+          const nowFrac = nowFraction(field, tzResolved, new Date(nowTs))
+          const nowPct = nowFrac == null ? null : nowFrac * 100
           // Adaptive tick spacing so long horizons stay readable: 6 h for short
           // ranges (≤ ~2 d), ~daily for a few days (ARPEGE 4 d), every 2 days
           // beyond a week (ECMWF 14 d). Index i ≈ hours from today 00:00.
@@ -983,7 +1013,25 @@ export default function ForecastView({
           const curPct = n > 1 ? (cur / (n - 1)) * 100 : 0
           return (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 8 }}>
-              <button onClick={() => setFieldPlaying((p) => !p)} style={{ marginTop: 26, background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
+              {/* Side by side, both level with the TRACK. The two obvious
+                  stackings each collide with something: below play puts NOW
+                  level with the tick row, crowding the first tick's date, and
+                  above play puts it under the cursor label, which overhangs
+                  this far left whenever the slider is at frame 0. */}
+              <div style={{ marginTop: 26, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <button
+                  onClick={() => { setFieldPlaying(false); if (nowI >= 0) setFieldHourIdx(nowI) }}
+                  disabled={nowI < 0}
+                  title={nowI < 0 ? 'This field does not cover the current time' : `Jump to the current venue time${tzLab ? ` (${tzLab})` : ''}`}
+                  style={{
+                    background: 'transparent', color: nowI < 0 ? '#475569' : '#38BDF8',
+                    border: `1px solid ${nowI < 0 ? '#1E3A5A' : '#38BDF8'}`, borderRadius: 4,
+                    padding: '2px 8px', cursor: nowI < 0 ? 'default' : 'pointer',
+                    fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+                  }}
+                >now</button>
+                <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 {/* current time in a box ABOVE the slider thumb (follows its position) */}
                 <div style={{ position: 'relative', paddingTop: 26 }}>
@@ -996,7 +1044,23 @@ export default function ForecastView({
                     {curLabel}
                     <div style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '6px solid #D97706' }} />
                   </div>
-                  <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ width: '100%', display: 'block' }} />
+                  {/* Current venue time, drawn BEHIND the thumb label (zIndex 1
+                      vs 2) and running down across the tick row so it reads
+                      against the dates. Positioned with the same percentage the
+                      thumb label uses, so the two agree with each other even
+                      where a range input's thumb inset puts both a pixel or two
+                      off the track ends. Same cyan as the NOW button. */}
+                  {nowPct != null && (
+                    <div
+                      aria-hidden
+                      style={{
+                        position: 'absolute', left: `${nowPct}%`, top: 22, height: 48, width: 2,
+                        marginLeft: -1, background: '#38BDF8', opacity: 0.85,
+                        pointerEvents: 'none', zIndex: 1,
+                      }}
+                    />
+                  )}
+                  <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ width: '100%', display: 'block', position: 'relative', zIndex: 1 }} />
                 </div>
                 <div style={{ position: 'relative', height: 24 }}>
                   {ticks.map((tk) => (
