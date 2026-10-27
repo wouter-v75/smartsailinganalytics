@@ -218,6 +218,52 @@ and `inVenueBox(ven, lat, lon)` read `halfLat`/`halfLon` with a fallback to
 Every cell the 1 km box publishes is 10 km clear of the grid edge, by
 construction — the box *is* the interior.
 
+### The BOX also had to be rectangular — and that is on the box, not just in the app
+
+Changing `openMeteo.js` alone would have achieved nothing, which is worth
+stating because it is invisible from the app side. The publisher
+(`/opt/regatta-nwp/scripts/publish_products.sh`) builds the served raster from
+`domains/<domain>/venues.csv`, and that file carried a single
+`half_width_deg` — still the old `-122.8946 / 48.5627, 0.35`. Install the new
+grid and the publisher would have gone on writing the OLD footprint
+(`-123.245..-122.545`), so the western strip the app now asks for would have
+had no cells in it: the exact symptom the regrid was done to remove, one layer
+further down.
+
+So `venues.csv` takes an **optional 6th column**, the latitude half-width.
+Absent — every other domain — it equals column 4 and the box stays square, so
+nothing else changes. Present, column 4 is the longitude half-width:
+
+```
+# name,center_lon,center_lat,half_width_deg,res_deg[,half_lat_deg]
+san_juan_islands,-122.9506,48.5765,0.3554,0.01,0.2044
+```
+
+Two things this cost finding out:
+
+- **There are TWO boxes in that script, not one.** The wind raster at `res`
+  and a second, coarser one at `SND_RES` (~0.08°) for the Skew-T sounding.
+  Patching only the first would have left soundings published on the old square
+  footprint — silently, since a sounding is one point and looks fine.
+- **The cell count floored.** `int(2*half/res)+1` is exact for every square
+  venue (0.30/0.01, 0.55/0.02 … are all integral) but not for a pinned
+  half-width: 0.2044 came out 41 rows, ending **975 m short of the northern
+  pin**, and 0.3554 ended 57 m short in the east. It now rounds up, inside a
+  `1e-9` tolerance — the tolerance is the point, because `2*0.23/0.01` can land
+  on either side of 46 in floating point and a naive `ceil` would then add a
+  phantom column to St Tropez. Verified: all 12 existing venue rows produce
+  byte-identical geometry, and the new row reaches both pins (73 × 42 = 3,066
+  points, lighter than the old 71 × 71 = 5,041).
+
+The app needs no matching change for the shape: `windField.js` derives `nx` and
+`ny` independently from the published cell list (`[...new Set(cells.map(lon))]`),
+so a non-square grid already worked client-side. `grid_tab_to_json.py` emits a
+cell list with no raster header at all, so it is geometry-agnostic too.
+
+**The two definitions must stay in step** — `venues.csv` on the box and the
+venue entry in `openMeteo.js`. A mismatch is silent in the worst way: the app
+requests a box the publisher never wrote, and the points simply grey out.
+
 
 ## 3. Terrain — the research, and why the answer is still MERIT
 
