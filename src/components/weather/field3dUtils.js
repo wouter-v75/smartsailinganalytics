@@ -15,14 +15,26 @@ export const DECK_JS = 'https://unpkg.com/deck.gl@9.0.36/dist.min.js'   // expos
 // default in the 3D multi-level view. The grid may publish exact round levels
 // (10,20,30,50,75,100,…) or true model levels; defaultLevels() snaps each target
 // to the closest available level so the defaults always land on real data.
-export const DEFAULT_LEVELS = [10, 30, 50, 100]
+// EVERY published level up to here, rather than a snap to fixed targets. The
+// old rule took [10,30,50,100] and snapped each to the nearest available, which
+// on HRDPS's 10/40/80/120 ladder produced 10/40/80 and silently dropped 120 —
+// the level a 30 m masthead most wants context from, since it is the one that
+// shows whether the gradient aloft is coming down. Asking for "all levels to
+// 100 m" and then "also 120" is just this rule.
+export const DEFAULT_MAX_LEVEL_M = 120
 
-// Nearest available level to each DEFAULT_LEVELS target (deduped, ascending).
+/**
+ * Every level the model publishes at or below DEFAULT_MAX_LEVEL_M, ascending.
+ *
+ * Falls back to the single lowest level when a model publishes nothing that
+ * low, so the viewer never opens with no arrows at all.
+ */
 export function defaultLevels(heights) {
-  const hs = (heights || []).map(Number).filter((h) => Number.isFinite(h))
+  const hs = [...new Set((heights || []).map(Number).filter((h) => Number.isFinite(h) && h > 0))]
+    .sort((a, b) => a - b)
   if (!hs.length) return []
-  const nearest = (t) => hs.reduce((best, h) => (Math.abs(h - t) < Math.abs(best - t) ? h : best), hs[0])
-  return [...new Set(DEFAULT_LEVELS.map(nearest))].sort((a, b) => a - b)
+  const within = hs.filter((h) => h <= DEFAULT_MAX_LEVEL_M)
+  return within.length ? within : [hs[0]]
 }
 export const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const DEM_TILES = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'

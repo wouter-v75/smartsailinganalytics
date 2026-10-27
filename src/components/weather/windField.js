@@ -293,7 +293,35 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
   }
   const labels = times.map((t) => localLabel(t, timezone, false))
   const stamps = times.map((t) => localStamp(t, timezone, false))
-  return { times, labels, stamps, frames, header, maxSpeed, box }
+  // THE VERTICAL STACK, so the 3D viewer draws arrows at every published level
+  // instead of one. Only the SSA-Race path built this, so every Open-Meteo
+  // model fell back to buildSurfaceVectors and showed a single height in 3D --
+  // including HRDPS, whose 10/40/80/120 ladder is the whole reason it is here.
+  //
+  // The contract is the one field3dUtils reads: cellAt[j*nx+i] in the SAME
+  // north->south, west->east order sampleGrid emits, each cell carrying
+  // spd[h][t] and dir[h][t], and spd in KM/H — sampleVolumeAtHeight and
+  // buildProfileVectors both multiply by 0.539957 to get knots. This request
+  // asks Open-Meteo for m/s (wind_speed_unit=ms), so it is converted here;
+  // handing it m/s would under-read every arrow by a factor of 3.6.
+  const cellAt = new Array(nx * ny).fill(null)
+  for (let k = 0; k < nx * ny; k++) {
+    const hourly = points[k]?.hourly
+    if (!hourly) continue
+    const spd = {}; const dir = {}
+    for (const h of heights) {
+      const sp = hourly[`wind_speed_${h}m`]; const di = hourly[`wind_direction_${h}m`]
+      if (!sp || !di) continue
+      spd[String(h)] = sp.map((x) => (x == null ? null : x * 3.6))
+      dir[String(h)] = di
+    }
+    if (Object.keys(spd).length) cellAt[k] = { spd, dir }
+  }
+  // Only claim a volume when there is more than one level to show: with a
+  // single height the 3D viewer's level picker would offer one button and
+  // buildSurfaceVectors already does that case better.
+  const volume = heights.length > 1 && cellAt.some(Boolean) ? { cellAt, heights, header } : undefined
+  return { times, labels, stamps, frames, header, maxSpeed, box, volume }
 }
 
 // Build the field from Icon-Race's own grid.json (self-hosted model). The grid
