@@ -12,7 +12,7 @@
 import sorrento from './mos/mos_sorrento.json'
 import porto_cervo from './mos/mos_porto_cervo.json'
 import st_tropez from './mos/mos_st_tropez.json'
-import { wallHour } from './venueTz'
+import { wallHour, wallMonth } from './venueTz'
 import { venueAt, venueByKey, VENUE_MATCH_NM } from '../../lib/venues'
 import { solveSurfaceLayer, profileRatio, transferWind } from '../../lib/windProfile'
 import { deltaKFromHourly } from '../../lib/seaTemp'
@@ -194,27 +194,89 @@ function assignSector(twd, bands) {
   return 'other'
 }
 
+/**
+ * The months a spec's SEASONAL coefficients apply in, or null when it has none.
+ *
+ * A season window exists because the thing being corrected is seasonal. The
+ * three Mediterranean specs were fitted on regatta days, every one of them in
+ * summer, so their diurnal term is a summer sea-breeze harmonic that was never
+ * asked to survive a February gale. A fit that spans twelve months averages
+ * that amplitude against the months that have none and then applies the
+ * average in both, which is wrong twice.
+ */
+export function seasonMonths(spec) {
+  const m = spec?.seasonal?.months
+  return Array.isArray(m) && m.length ? m.map(Number) : null
+}
+
+/** Does this spec carry a separate set of seasonal coefficients? */
+export function hasSeasonal(spec) {
+  return !!(seasonMonths(spec) && spec.seasonal?.models)
+}
+
+/**
+ * The coefficients for one model at one month: the seasonal set inside the
+ * window, the year-round set outside it.
+ *
+ * A caller that cannot work out the venue-local month gets the year-round set.
+ * That is the right default — it is the set fitted on the most data — but it
+ * means a path with no date in scope silently disagrees with the hourly table
+ * inside the window, so such paths refuse a seasonal spec outright instead
+ * (see applyMosToField).
+ */
+export function modelSpecFor(spec, mosModelId, localMonth) {
+  const year = spec?.models?.[mosModelId] || null
+  const months = seasonMonths(spec)
+  if (!months || localMonth == null || !months.includes(Number(localMonth))) {
+    return { m: year, season: null }
+  }
+  const s = spec.seasonal?.models?.[mosModelId]
+  if (!s) return { m: year, season: null }
+  return { m: s, season: spec.seasonal.label || months.join(',') }
+}
+
 // Apply the fitted correction. `mosModelId` is the Open-Meteo id the MOS was
-// trained on (MODELS[key].mosModel). Returns { ws (kn), type } or null when no
-// correction exists for this model/venue.
-export function applyMOS(spec, mosModelId, ws30, twd, localHour) {
-  const m = spec?.models?.[mosModelId]
+// trained on (MODELS[key].mosModel). `localMonth` (1-12, venue-local) selects
+// the seasonal coefficients where a spec has them; omitting it keeps the
+// year-round set, which is what every pre-seasonal caller gets.
+// Returns { ws (kn), type, season } or null when no correction exists for this
+// model/venue.
+export function applyMOS(spec, mosModelId, ws30, twd, localHour, localMonth) {
+  const { m, season } = modelSpecFor(spec, mosModelId, localMonth)
   if (!m) return null
   const t = m.type || 'raw'
-  if (t === 'raw') return { ws: ws30, type: 'raw' }
+  if (t === 'raw') return { ws: ws30, type: 'raw', season }
   const base = m.a * ws30 + m.b
-  if (t === 'bias_scale') return { ws: base, type: t }
+  if (t === 'bias_scale') return { ws: base, type: t, season }
   if (t === 'diurnal') {
-    if (localHour == null) return { ws: base, type: t }
+    if (localHour == null) return { ws: base, type: t, season }
     const ang = (2 * Math.PI * localHour) / 24
-    return { ws: base + m.c0 + m.c1 * Math.sin(ang) + m.c2 * Math.cos(ang), type: t }
+    return { ws: base + m.c0 + m.c1 * Math.sin(ang) + m.c2 * Math.cos(ang), type: t, season }
   }
   if (t === 'sector') {
-    if (twd == null) return { ws: base, type: t }
+    if (twd == null) return { ws: base, type: t, season }
     const sec = assignSector(twd, spec.bands || [])
-    return { ws: base + (sec in m.delta ? m.delta[sec] : m.global), type: t, sector: sec }
+    const d = m.delta || {}
+    return { ws: base + (sec in d ? d[sec] : m.global), type: t, sector: sec, season }
   }
-  return { ws: ws30, type: 'raw' }
+  if (t === 'sector_diurnal') {
+    // Both terms, each degrading on its own: no direction drops the band
+    // offset and keeps the harmonic, no hour the other way round. predictSpecModel
+    // in lib/mosFit.ts mirrors this term for term and a test pins the two together.
+    let ws = base
+    let sec = null
+    if (twd != null) {
+      sec = assignSector(twd, spec.bands || [])
+      const d = m.delta || {}
+      ws += sec in d ? d[sec] : m.global
+    }
+    if (localHour != null) {
+      const ang = (2 * Math.PI * localHour) / 24
+      ws += (m.c0 || 0) + m.c1 * Math.sin(ang) + m.c2 * Math.cos(ang)
+    }
+    return { ws, type: t, sector: sec, season }
+  }
+  return { ws: ws30, type: 'raw', season }
 }
 
 // Local clock hour in a timezone (mirrors the table's hour calc). A zone-less
@@ -251,13 +313,16 @@ export function correctedWind30(hourly, heights, idx, spec, mosModelId, tz, sst 
   const fitZ = fitHeightM(spec)
   const dK = deltaKFromHourly(hourly, idx, sst)
   const hour = hourInTz(hourly.time[idx], tz)
+  // Venue-local, for the same reason the hour is: a season boundary is a
+  // statement about the weather there, not about the viewer's calendar.
+  const month = wallMonth(hourly.time[idx], tz)
 
   if (fitZ >= targetZ) {
     // Lift first, correct second — correct for a spec fitted at the target.
     const w = wind30(hourly, heights, idx, targetZ, 0.11, dK)
     if (!w) return null
-    const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hour)
-    return r ? { ws: r.ws, twd: w.twd, fitZ, lifted: false } : null
+    const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hour, month)
+    return r ? { ws: r.ws, twd: w.twd, fitZ, lifted: false, season: r.season } : null
   }
 
   // Correct at the fit height, then lift. wind30 at the fit height returns the
@@ -265,9 +330,9 @@ export function correctedWind30(hourly, heights, idx, spec, mosModelId, tz, sst 
   // exactly 1, so nothing is modelled on the way in.
   const w = wind30(hourly, heights, idx, fitZ, 0.11, dK)
   if (!w) return null
-  const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hour)
+  const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hour, month)
   if (!r) return null
-  if (!(r.ws > 0)) return { ws: r.ws, twd: w.twd, fitZ, lifted: false }
+  if (!(r.ws > 0)) return { ws: r.ws, twd: w.twd, fitZ, lifted: false, season: r.season }
   const layer = solveSurfaceLayer(r.ws * 0.514444, Number.isFinite(dK) ? dK : 0, { refZ: fitZ })
   const t = transferWind(r.ws, fitZ, targetZ, layer)
   // `uncertainty` is carried out deliberately. The research is explicit that
@@ -275,7 +340,7 @@ export function correctedWind30(hourly, heights, idx, spec, mosModelId, tz, sst 
   // the fit height and the lift is a separate, unverified step. Returning its
   // own uncertainty is what keeps those two things from being confused.
   return {
-    ws: t.kn, twd: w.twd, fitZ, lifted: true,
+    ws: t.kn, twd: w.twd, fitZ, lifted: true, season: r.season,
     quality: t.quality, liftRatio: t.ratio, liftUncertainty: t.uncertainty, note: t.note,
   }
 }

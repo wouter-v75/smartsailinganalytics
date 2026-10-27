@@ -41,9 +41,17 @@ export interface Pair {
   twd: number | null
   /** Local hour of day at the venue, 0-23, fractional allowed. */
   hour: number
+  /**
+   * Venue-local calendar month, 1-12. Optional, and the local one MATTERS:
+   * a season window is a statement about the weather, which keeps venue time,
+   * not UTC. `inMonths` falls back to the UTC month when it is absent, which
+   * is off by an hour at the edges of a day and so by one day at the edge of a
+   * month — tolerable for a season boundary, wrong for anything finer.
+   */
+  month?: number
 }
 
-export type MosType = 'raw' | 'bias_scale' | 'diurnal' | 'sector'
+export type MosType = 'raw' | 'bias_scale' | 'diurnal' | 'sector' | 'sector_diurnal'
 
 /** A direction band, as the spec stores it: [name, loDeg, hiDeg]. */
 export type Band = [string, number, number]
@@ -103,6 +111,22 @@ export function predictSpecModel(
     const d = m.delta ?? {}
     return base + (sec in d ? d[sec] : (m.global ?? 0))
   }
+  if (t === 'sector_diurnal') {
+    // Both terms, each degrading independently: a missing direction drops the
+    // band offset and keeps the harmonic, a missing hour the other way round.
+    // That is what applyMOS does, and the two must agree term for term.
+    let v = base
+    if (twd != null) {
+      const sec = assignSector(twd, bands)
+      const d = m.delta ?? {}
+      v += sec in d ? d[sec] : (m.global ?? 0)
+    }
+    if (localHour != null) {
+      const ang = (2 * Math.PI * localHour) / 24
+      v += (m.c0 ?? 0) + (m.c1 ?? 0) * Math.sin(ang) + (m.c2 ?? 0) * Math.cos(ang)
+    }
+    return v
+  }
   return ws
 }
 
@@ -113,6 +137,10 @@ export function paramCount(m: MosModelSpec, bands: readonly Band[]): number {
     case 'bias_scale': return 2
     case 'diurnal': return 4            // a, b, c1, c2 — c0 is pinned to 0
     case 'sector': return 2 + Math.max(0, bands.length - 1)
+    // a, b, c1, c2 and one offset per band beyond the reference. Seven with
+    // four bands, which is why selectForm also asks for effective samples per
+    // parameter rather than trusting a flat ceiling.
+    case 'sector_diurnal': return 4 + Math.max(0, bands.length - 1)
     default: return 0
   }
 }
@@ -194,7 +222,14 @@ export function fitForm(
     return beta ? { type, a: beta[0], b: beta[1], c0: 0, c1: beta[2], c2: beta[3] } : null
   }
 
-  // sector
+  if (type !== 'sector' && type !== 'sector_diurnal') return null
+
+  // sector, and sector_diurnal — the same dummy coding, with the 24 h harmonic
+  // carried as two more columns so every coefficient is fitted jointly. Fitting
+  // the bands first and the harmonic on the residual would give a different
+  // answer whenever the two are correlated, which on a thermal coast they are:
+  // the sea breeze arrives in the afternoon AND from one quadrant.
+  const harmonic = type === 'sector_diurnal'
   const minPer = opts.minPerBand ?? 50
   const withDir = rows.filter((r) => r.twd != null)
   if (!withDir.length) return null
@@ -228,15 +263,42 @@ export function fitForm(
   const free = levels.filter((n) => n !== ref)
   const X = used.map((r) => {
     const s = assignSector(r.twd!, bands)
-    return [r.model, 1, ...free.map((n) => (s === n ? 1 : 0))]
+    const ang = (2 * Math.PI * r.hour) / 24
+    return [
+      r.model, 1,
+      ...(harmonic ? [Math.sin(ang), Math.cos(ang)] : []),
+      ...free.map((n) => (s === n ? 1 : 0)),
+    ]
   })
   const beta = solveOls(X, used.map((r) => r.obs))
   if (!beta) return null
+  const k = harmonic ? 4 : 2
   const coef: Record<string, number> = { [ref]: 0 }
-  free.forEach((n, i) => { coef[n] = beta[2 + i] })
+  free.forEach((n, i) => { coef[n] = beta[k + i] })
   const delta: Record<string, number> = {}
   for (const n of names) delta[n] = coef[n] ?? 0
-  return { type, a: beta[0], b: beta[1], delta, global: fitOther ? (coef.other ?? 0) : 0 }
+  const out: MosModelSpec = {
+    type, a: beta[0], b: beta[1], delta, global: fitOther ? (coef.other ?? 0) : 0,
+  }
+  // c0 is pinned to 0 here for the same reason as in the diurnal form: it is
+  // the same column as b.
+  if (harmonic) { out.c0 = 0; out.c1 = beta[2]; out.c2 = beta[3] }
+  return out
+}
+
+/**
+ * The rows whose venue-local month is in `months` (1-12).
+ *
+ * A season window, which is the Mediterranean specs' hidden ingredient: those
+ * were fitted on regatta days, every one of them in summer, so their diurnal
+ * term is a SUMMER harmonic. Fitting the same term across twelve months
+ * averages a sea-breeze amplitude against the five months that have none, and
+ * the amplitude comes out shrunk by roughly the fraction of the year that is
+ * not summer — then gets applied in January, where it is noise.
+ */
+export function inMonths(rows: readonly Pair[], months: readonly number[]): Pair[] {
+  const want = new Set(months)
+  return rows.filter((r) => want.has(r.month ?? new Date(r.t).getUTCMonth() + 1))
 }
 
 // ── scoring ────────────────────────────────────────────────────────────────
@@ -495,28 +557,58 @@ export interface FormResult {
 export function crossValidateForms(
   rows: readonly Pair[],
   bands: readonly Band[],
-  opts: { bufferMs?: number; minPerBand?: number; minRowsPerBlock?: number } = {},
+  opts: { bufferMs?: number; minPerBand?: number; minRowsPerBlock?: number; types?: MosType[] } = {},
 ): { blocks: number; results: FormResult[] } {
   const blocks = yearBlocks(rows, opts.minRowsPerBlock ?? 2000)
-  const types: MosType[] = ['raw', 'bias_scale', 'diurnal', 'sector']
+  // Training on "every other block" and training on "every year not in this
+  // block" are the same thing here, because yearBlocks partitions by whole
+  // years. So this is the general function with the whole series as its pool.
+  return { blocks: blocks.length, results: crossValidateAgainstBlocks(rows, blocks, bands, opts) }
+}
+
+/** The ladder, in order. Each step adds one idea to the one before it. */
+export const LADDER: MosType[] = ['raw', 'bias_scale', 'diurnal', 'sector', 'sector_diurnal']
+
+/**
+ * Fit each form on a training POOL and score it on given held-out blocks.
+ *
+ * Separating the pool from the blocks is what lets a season-restricted fit be
+ * compared with a year-round one ON THE SAME HELD-OUT HOURS — the only
+ * comparison that answers "does fitting summer separately pay?". Both arms
+ * hold out the same summer; one trains on summers, the other on whole years.
+ *
+ * Training rows are excluded by YEAR, not by membership of the test block: a
+ * summer block of 2025 must not be predicted by a model trained on April 2025,
+ * and a 48 h buffer would not have stopped that.
+ */
+export function crossValidateAgainstBlocks(
+  trainPool: readonly Pair[],
+  testBlocks: readonly Pair[][],
+  bands: readonly Band[],
+  opts: { bufferMs?: number; minPerBand?: number; types?: MosType[] } = {},
+): FormResult[] {
+  const types = opts.types ?? LADDER
   const results: FormResult[] = []
+  const yearOf = (r: Pair) => new Date(r.t).getUTCFullYear()
 
   for (const type of types) {
     const pred: number[] = []
     const obs: number[] = []
     const perBlock: FormResult['perBlock'] = []
     let refused: string | undefined
-    for (let i = 0; i < blocks.length; i++) {
-      const test = blocks[i]
-      const trainRaw = blocks.filter((_, j) => j !== i).flat()
-      const train = withBuffer(trainRaw, test, opts.bufferMs ?? 48 * 3600_000)
+    for (let i = 0; i < testBlocks.length; i++) {
+      const test = testBlocks[i]
+      if (!test.length) continue
+      const years = new Set(test.map(yearOf))
+      const pool = trainPool.filter((r) => !years.has(yearOf(r)))
+      const train = withBuffer(pool, test, opts.bufferMs ?? 48 * 3600_000)
       const m = fitForm(type, train, bands, { minPerBand: opts.minPerBand })
       if (!m) { refused = `fold ${i + 1} could not be fitted (rank or band support)`; break }
       const bp: number[] = []
       const bo: number[] = []
       const bm: number[] = []
       for (const r of test) {
-        if (type === 'sector' && r.twd == null) continue
+        if ((type === 'sector' || type === 'sector_diurnal') && r.twd == null) continue
         const v = predictSpecModel(m, r.model, r.twd, r.hour, bands)
         pred.push(v); obs.push(r.obs)
         bp.push(v); bo.push(r.obs); bm.push(r.model)
@@ -544,9 +636,9 @@ export function crossValidateForms(
       })
       continue
     }
-    // The shipped coefficients are refitted on everything; the CV scores above
-    // are what justify the FORM, not these numbers.
-    const full = fitForm(type, rows, bands, { minPerBand: opts.minPerBand })
+    // The shipped coefficients are refitted on the whole pool; the CV scores
+    // above are what justify the FORM, not these numbers.
+    const full = fitForm(type, trainPool, bands, { minPerBand: opts.minPerBand })
     results.push({
       type,
       spec: full ?? { type },
@@ -555,7 +647,32 @@ export function crossValidateForms(
       perBlock,
     })
   }
-  return { blocks: blocks.length, results }
+  return results
+}
+
+/**
+ * Does fitting a season on its own beat fitting the whole year?
+ *
+ * Both arms are scored on the SAME held-out season hours, blocked by year. The
+ * seasonal arm trains only on the season; the year-round arm trains on every
+ * month of the other years. If the seasonal arm does not win here it should
+ * not be shipped, because a season-restricted spec trades away five sixths of
+ * its training data for the privilege of having its own coefficients.
+ */
+export function seasonComparison(
+  rows: readonly Pair[],
+  bands: readonly Band[],
+  months: readonly number[],
+  opts: { bufferMs?: number; minPerBand?: number; minRowsPerBlock?: number; types?: MosType[] } = {},
+): { blocks: number; nSeason: number; yearRound: FormResult[]; seasonal: FormResult[] } {
+  const season = inMonths(rows, months)
+  const blocks = yearBlocks(season, opts.minRowsPerBlock ?? 500)
+  return {
+    blocks: blocks.length,
+    nSeason: season.length,
+    yearRound: crossValidateAgainstBlocks(rows, blocks, bands, opts),
+    seasonal: crossValidateAgainstBlocks(season, blocks, bands, opts),
+  }
 }
 
 /**
@@ -567,8 +684,18 @@ export function crossValidateForms(
  * inside the noise, and preferring the simpler one is how that gets respected
  * rather than ignored. The standard error uses nEff, not n.
  */
-export function selectForm(results: readonly FormResult[], maxParams = 6): FormResult | null {
-  const ok = results.filter((r) => !r.refused && Number.isFinite(r.cv.rmse) && r.params <= maxParams)
+export function selectForm(
+  results: readonly FormResult[],
+  maxParams = 7,
+  minEffPerParam = 20,
+): FormResult | null {
+  // A flat parameter ceiling is the wrong instrument on its own: six
+  // parameters are comfortable on 24,000 year-round hours and reckless on a
+  // single summer's worth. So a form must ALSO have `minEffPerParam`
+  // effective samples per parameter — the classic twenty — measured on nEff,
+  // because that is the number the autocorrelation leaves.
+  const ok = results.filter((r) => !r.refused && Number.isFinite(r.cv.rmse) && r.params <= maxParams
+    && (r.params === 0 || r.cv.nEff / r.params >= minEffPerParam))
   if (!ok.length) return null
   const best = ok.reduce((p, q) => (q.cv.rmse < p.cv.rmse ? q : p))
   // SE of an RMSE is approximately rmse / sqrt(2·nEff).

@@ -14,7 +14,8 @@ import {
   predictSpecModel, assignSector, fitForm, solveOls, score, effectiveN, lag1,
   yearBlocks, withBuffer, dieboldMariano, blockBootstrapCI, crossValidateForms,
   selectForm, paramCount, piRmse, skill, persistenceRmse,
-  type Pair, type Band, type MosModelSpec,
+  inMonths, crossValidateAgainstBlocks, seasonComparison,
+  type Pair, type Band, type MosModelSpec, type FormResult,
 } from '../mosFit'
 import { applyMOS } from '../../components/weather/mos'
 
@@ -27,6 +28,10 @@ describe('predictSpecModel is applyMOS, term for term', () => {
     { type: 'diurnal', a: 0.52, b: 6.24, c0: -0.61, c1: -2.43, c2: -0.0063 },
     { type: 'diurnal', a: 1.04, b: 1.1, c0: 0, c1: 0.8, c2: -0.3 },
     { type: 'sector', a: 1.05, b: 1.84, delta: { 'N-NE': 0, 'SE-S': -1.08, 'SW-W': -0.98, NW: 1.07 }, global: 0.078 },
+    {
+      type: 'sector_diurnal', a: 1.02, b: 1.4, c0: 0, c1: 0.9, c2: -0.45,
+      delta: { 'N-NE': 0, 'SE-S': -0.7, 'SW-W': 0.3, NW: 1.1 }, global: -0.2,
+    },
   ]
 
   it('agrees for every type, across speed, direction and hour', () => {
@@ -189,16 +194,24 @@ describe('fitForm', () => {
   })
 })
 
-describe('paramCount respects the four-to-six ceiling', () => {
+describe('paramCount and the parameter ceiling', () => {
   it('counts c0 as pinned, not free', () => {
     expect(paramCount({ type: 'raw' }, BANDS)).toBe(0)
     expect(paramCount({ type: 'bias_scale' }, BANDS)).toBe(2)
     expect(paramCount({ type: 'diurnal' }, BANDS)).toBe(4)
     expect(paramCount({ type: 'sector' }, BANDS)).toBe(5)   // a, b, 3 free offsets
+    expect(paramCount({ type: 'sector_diurnal' }, BANDS)).toBe(7)  // + c1, c2
   })
 
   it('keeps a four-band sector inside the ceiling the report sets', () => {
     expect(paramCount({ type: 'sector' }, BANDS)).toBeLessThanOrEqual(6)
+  })
+
+  it('puts a four-band sector_diurnal just over it, which is the point', () => {
+    // Seven parameters is beyond what the report's four-to-six range allows on
+    // its own, so this form is only ever selected when the effective sample
+    // size genuinely supports it. selectForm, not this count, is the gate.
+    expect(paramCount({ type: 'sector_diurnal' }, BANDS)).toBe(7)
   })
 })
 
@@ -451,3 +464,175 @@ describe('crossValidateForms and selectForm', () => {
 })
 
 type FormResultLike = { type: string; params: number; refused?: string; cv: ReturnType<typeof score>; spec: unknown }
+
+describe('fitForm recovers a joint sector + diurnal signal', () => {
+  // Both terms at once, and CORRELATED on purpose: the afternoon hours are
+  // also the SW-W hours, which is what a sea breeze looks like. A two-stage
+  // fit — bands first, harmonic on the residual — gets this wrong, and the
+  // whole reason the design matrix carries all the columns together is so
+  // that it does not have to.
+  const truth = { a: 1.1, b: 0.8, c1: 1.3, c2: -0.6, delta: { 'N-NE': 0, 'SE-S': -1.2, 'SW-W': 0.9, NW: 0.4 } }
+  const rows: Pair[] = []
+  let seed = 11
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5 }
+  for (let i = 0; i < 9000; i++) {
+    const t = Date.UTC(2024, 0, 1) + i * 3600_000
+    const hour = new Date(t).getUTCHours()
+    // Afternoon hours lean SW-W, mornings lean N-NE: the two terms share
+    // information, which is the case that matters.
+    const twd = hour >= 12 && hour < 19 ? 220 + ((i * 7) % 45) : (i * 37) % 360
+    const model = 5 + 11 * Math.abs(Math.sin(i / 37)) + rnd()
+    const ang = (2 * Math.PI * hour) / 24
+    const sec = assignSector(twd, BANDS)
+    const off = sec in truth.delta ? (truth.delta as Record<string, number>)[sec] : 0
+    const obs = truth.a * model + truth.b + off
+      + truth.c1 * Math.sin(ang) + truth.c2 * Math.cos(ang) + rnd() * 0.4
+    rows.push({ t, model, obs, twd, hour, month: new Date(t).getUTCMonth() + 1 })
+  }
+
+  it('recovers every coefficient, harmonic and offsets together', () => {
+    const m = fitForm('sector_diurnal', rows, BANDS)!
+    expect(m.type).toBe('sector_diurnal')
+    expect(m.a).toBeCloseTo(truth.a, 2)
+    expect(m.c1).toBeCloseTo(truth.c1, 1)
+    expect(m.c2).toBeCloseTo(truth.c2, 1)
+    expect(m.c0).toBe(0)                      // pinned, same column as b
+    // Offsets are recovered up to the reference level being folded into b.
+    const ref = (m.delta as Record<string, number>)['SE-S']
+    for (const k of ['N-NE', 'SE-S', 'SW-W', 'NW']) {
+      expect((m.delta as Record<string, number>)[k] - ref)
+        .toBeCloseTo((truth.delta as Record<string, number>)[k] - truth.delta['SE-S'], 1)
+    }
+  })
+
+  it('beats sector alone on this data, because the harmonic is really there', () => {
+    const sd = fitForm('sector_diurnal', rows, BANDS)!
+    const se = fitForm('sector', rows, BANDS)!
+    const r = (m: MosModelSpec) => score(rows.map((x) => predictSpecModel(m, x.model, x.twd, x.hour, BANDS)), rows.map((x) => x.obs)).rmse
+    expect(r(sd)).toBeLessThan(r(se))
+  })
+
+  it('refuses when a declared band has no support, like sector does', () => {
+    const oneBand = rows.map((r) => ({ ...r, twd: 10 }))
+    expect(fitForm('sector_diurnal', oneBand, BANDS)).toBeNull()
+  })
+})
+
+describe('inMonths', () => {
+  const rows: Pair[] = [1, 4, 5, 8, 9, 12].map((mo) => ({
+    t: Date.UTC(2025, mo - 1, 15), model: 10, obs: 11, twd: 180, hour: 12, month: mo,
+  }))
+
+  it('keeps the window and nothing else', () => {
+    expect(inMonths(rows, [5, 6, 7, 8]).map((r) => r.month)).toEqual([5, 8])
+  })
+
+  it('prefers the VENUE-local month over the UTC one', () => {
+    // 31 Dec 23:30 UTC is 1 Jan at the venue. The local month is what a season
+    // boundary means, so a row carrying month=1 belongs to January.
+    const newYear: Pair = { t: Date.UTC(2025, 11, 31, 23, 30), model: 9, obs: 9, twd: 0, hour: 0.5, month: 1 }
+    expect(inMonths([newYear], [1])).toHaveLength(1)
+    expect(inMonths([newYear], [12])).toHaveLength(0)
+  })
+
+  it('falls back to the UTC month when none was supplied', () => {
+    const bare: Pair = { t: Date.UTC(2025, 6, 4, 12), model: 9, obs: 9, twd: 0, hour: 12 }
+    expect(inMonths([bare], [7])).toHaveLength(1)
+  })
+})
+
+describe('crossValidateAgainstBlocks', () => {
+  // Two years, with a deliberately DIFFERENT offset in each: a fit trained on
+  // the other year cannot do well unless it leaked.
+  const mk = (year: number, offset: number, n: number): Pair[] => Array.from({ length: n }, (_, i) => {
+    const t = Date.UTC(year, 0, 1) + i * 3600_000
+    const model = 6 + 8 * Math.abs(Math.sin(i / 29))
+    return { t, model, obs: model + offset, twd: (i * 23) % 360, hour: new Date(t).getUTCHours(), month: new Date(t).getUTCMonth() + 1 }
+  })
+  const rows = [...mk(2024, 2, 3000), ...mk(2025, -2, 3000)]
+
+  it('excludes the test block\'s whole YEAR from training, not just the block', () => {
+    // The test block is a 300-hour slice of 2025. If training kept the rest of
+    // 2025 the fit would be nearly perfect on it; holding out the year leaves
+    // only 2024's +2 offset to go on, so it predicts model+2 where the truth
+    // is model-2 and the bias comes out near +4.
+    const test = rows.filter((r) => new Date(r.t).getUTCFullYear() === 2025).slice(1000, 1300)
+    const res = crossValidateAgainstBlocks(rows, [test], BANDS, { types: ['bias_scale'] })
+    expect(res[0].cv.bias).toBeGreaterThan(3)
+  })
+
+  it('pools the predictions across blocks and labels each by year', () => {
+    const blocks = [
+      rows.filter((r) => new Date(r.t).getUTCFullYear() === 2024),
+      rows.filter((r) => new Date(r.t).getUTCFullYear() === 2025),
+    ]
+    const res = crossValidateAgainstBlocks(rows, blocks, BANDS, { types: ['bias_scale'] })
+    expect(res[0].perBlock.map((b) => b.label)).toEqual(['2024', '2025'])
+    expect(res[0].cv.n).toBe(6000)
+  })
+
+  it('runs the whole ladder by default, sector_diurnal included', () => {
+    const res = crossValidateAgainstBlocks(rows, [rows.slice(0, 500)], BANDS)
+    expect(res.map((r) => r.type)).toEqual(['raw', 'bias_scale', 'diurnal', 'sector', 'sector_diurnal'])
+  })
+})
+
+describe('seasonComparison', () => {
+  // A venue whose SUMMER needs a different offset from the rest of its year.
+  // Three years of it, so each summer can be held out in turn.
+  const rows: Pair[] = []
+  for (let i = 0; i < 24000; i++) {
+    const t = Date.UTC(2024, 0, 1) + i * 3600_000
+    const d = new Date(t)
+    const month = d.getUTCMonth() + 1
+    const summer = month >= 5 && month <= 8
+    const model = 6 + 9 * Math.abs(Math.sin(i / 41))
+    rows.push({
+      t, model, obs: model + (summer ? 3 : -1), twd: (i * 19) % 360,
+      hour: d.getUTCHours(), month,
+    })
+  }
+
+  it('holds out the same season hours in both arms', () => {
+    const cmp = seasonComparison(rows, BANDS, [5, 6, 7, 8], { types: ['bias_scale'] })
+    expect(cmp.nSeason).toBeGreaterThan(5000)
+    expect(cmp.blocks).toBeGreaterThanOrEqual(2)
+    expect(cmp.seasonal[0].cv.n).toBe(cmp.yearRound[0].cv.n)
+  })
+
+  it('the season-only arm wins when the season really is different', () => {
+    const cmp = seasonComparison(rows, BANDS, [5, 6, 7, 8], { types: ['bias_scale'] })
+    expect(cmp.seasonal[0].cv.rmse).toBeLessThan(cmp.yearRound[0].cv.rmse)
+    // and the year-round arm carries the tell-tale: an offset averaged across
+    // a season that needs +3 and nine months that need -1.
+    expect(Math.abs(cmp.yearRound[0].cv.bias)).toBeGreaterThan(1)
+  })
+
+  it('and does NOT win when the season is like the rest of the year', () => {
+    const flat = rows.map((r) => ({ ...r, obs: r.model + 1 }))
+    const cmp = seasonComparison(flat, BANDS, [5, 6, 7, 8], { types: ['bias_scale'] })
+    expect(cmp.seasonal[0].cv.rmse).toBeCloseTo(cmp.yearRound[0].cv.rmse, 2)
+  })
+})
+
+describe('selectForm asks for effective samples per parameter', () => {
+  const mk = (type: Parameters<typeof paramCount>[0]['type'], params: number, rmse: number, nEff: number) => ({
+    type, params, spec: { type }, perBlock: [], cv: { ...score([1], [1]), rmse, nEff },
+  }) as unknown as FormResult
+
+  it('rejects a form with too few effective samples for its parameters', () => {
+    // 100 effective samples will support two parameters at the classic twenty
+    // apiece and not seven, however well it scored.
+    const results = [mk('bias_scale', 2, 3.0, 100), mk('sector_diurnal', 7, 2.0, 100)]
+    expect(selectForm(results)!.type).toBe('bias_scale')
+  })
+
+  it('accepts it once there are enough', () => {
+    const results = [mk('bias_scale', 2, 3.0, 4000), mk('sector_diurnal', 7, 2.0, 4000)]
+    expect(selectForm(results)!.type).toBe('sector_diurnal')
+  })
+
+  it('never rejects raw, which has no parameters to support', () => {
+    expect(selectForm([mk('raw', 0, 3.0, 5)])!.type).toBe('raw')
+  })
+})

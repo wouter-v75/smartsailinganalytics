@@ -90,6 +90,12 @@ export function wallDay(t, tz) {
   return new Date(t).toLocaleDateString('en-CA', { timeZone: tz || 'UTC' })
 }
 
+/** Month (1-12) of a model time, in the venue's zone. */
+export function wallMonth(t, tz) {
+  const d = wallDay(t, tz)
+  return d.length >= 7 ? Number(d.slice(5, 7)) : NaN
+}
+
 /** Format a model time for display without shifting it. `opts` as for toLocaleString. */
 export function formatWall(t, tz, opts = {}) {
   if (typeof t !== 'string' || !t) return ''

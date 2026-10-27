@@ -102,7 +102,8 @@ export function pointWindweightByHour({
     // the honest move is to leave the speed uncorrected and say so via mosOn.
     if (spec && mosId && !needsPreLift(spec)) {
       const twd = interpolateDirectionAtHeight(hourly, heights, mastHeight, i)
-      const m = applyMOS(spec, mosId, vHKt, twd, hr)
+      // `day` is already venue-local, so its month is the season's month.
+      const m = applyMOS(spec, mosId, vHKt, twd, hr, Number(day.slice(5, 7)))
       if (m && m.ws > 0 && m.type !== 'raw') { vHKt = m.ws; mosOn = true }
     }
 

@@ -17,7 +17,7 @@
 // ----------------------------------------------------------------------------
 
 import { MODELS, iconRaceGridForPoint, forecastDaysFor, stitchHourly } from './openMeteo'
-import { applyMOS, needsPreLift } from './mos'
+import { applyMOS, needsPreLift, hasSeasonal } from './mos'
 
 const NM_DEG = 1 / 60 // 1 nautical mile in degrees latitude
 
@@ -35,7 +35,14 @@ export function applyMosToField(field, spec, mosModelId) {
   // Absent beats wrong, the same rule the project applies to a sail's target
   // shape: no correction is honest, another height's correction is not. The
   // hourly table and the deck both use correctedWind30 and do get it right.
-  if (needsPreLift(spec)) return field
+  //
+  // A SEASONAL spec is refused here for a second, separate reason: the field's
+  // only time information is a label like "Sat 14:00", which carries an hour
+  // and no date, so this path cannot tell which side of a season boundary it
+  // is on. Applying the year-round coefficients instead would quietly disagree
+  // with the hourly table all summer — the map and the table showing different
+  // numbers for the same hour, with nothing on screen to say why.
+  if (needsPreLift(spec) || hasSeasonal(spec)) return field
   const KN = 1.94384
   const hourOf = (t) => { const h = parseInt((field.labels?.[t] || '').slice(-5, -3), 10); return Number.isNaN(h) ? null : h }
   const frames = field.frames.map((fr, t) => {
