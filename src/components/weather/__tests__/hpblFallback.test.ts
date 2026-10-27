@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fetchGfsHpblField, fetchHpblField } from '../windField'
+import { fetchGfsHpblField, fetchHpblField, sampleScalarField } from '../windField'
 
 describe('fetchHpblField exists and takes a point', () => {
   // The source selection itself (SSA-Race first, GFS on any failure) is not
@@ -57,5 +57,37 @@ describe('the hpbl field shape is the one the renderer expects', () => {
     } finally {
       globalThis.fetch = prev
     }
+  })
+})
+
+describe('the hover readout has something to read', () => {
+  // 3D showed no number over a boundary-layer field: its mousemove handler
+  // called sampleField, which only understands u/v frames, so an hpbl field —
+  // whose frames carry `scalar` — fell through to no readout at all. 2D had
+  // used sampleScalarField all along. This pins the data path both now use.
+  const field = async () => {
+    const body = {
+      latitude: 48.5, longitude: -122.9,
+      hourly: { time: ['2026-10-27T00:00'], boundary_layer_height: [640] },
+    }
+    const prev = globalThis.fetch
+    globalThis.fetch = vi.fn(() => Promise.resolve({
+      ok: true, text: () => Promise.resolve(JSON.stringify(new Array(100).fill(body))),
+    } as Response)) as never
+    try {
+      return await fetchGfsHpblField({ lat: 48.5627, lon: -122.8946, timezone: 'UTC' })
+    } finally { globalThis.fetch = prev }
+  }
+
+  it('samples a metre value at the cursor', async () => {
+    const f = await field() as never as Parameters<typeof sampleScalarField>[0]
+    const r = sampleScalarField(f, 0, 48.5627, -122.8946)
+    expect(r).toBeTruthy()
+    expect(r!.value).toBeCloseTo(640, 6)
+  })
+
+  it('returns null outside the box, so the readout hides instead of lying', async () => {
+    const f = await field() as never as Parameters<typeof sampleScalarField>[0]
+    expect(sampleScalarField(f, 0, 10, 10)).toBeNull()
   })
 })

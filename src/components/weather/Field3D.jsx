@@ -9,7 +9,7 @@
 // ----------------------------------------------------------------------------
 import React, { useEffect, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
-import { sampleField } from './windField'
+import { sampleField, sampleScalarField } from './windField'
 import {
   MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, defaultLevels, SAT_TILES, DEM_TILES,
   meanFromDir, ringGeoJSON, fieldKind, drapeImageURL, drapeOpacity, boxCoords,
@@ -27,7 +27,10 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
   const pointMarkersRef = useRef([])
   const [loaded, setLoaded] = useState(false)   // reactive: triggers a layer refresh once the map is ready
   const [err, setErr] = useState('')
-  const [readout, setReadout] = useState(null)   // { x, y, kt, dir }
+  // { x, y } plus either { kt, dir } for a wind/current field or { pbl } for
+  // the boundary-layer scalar. The two are different quantities, so the readout
+  // carries whichever it has rather than pretending hpbl has a direction.
+  const [readout, setReadout] = useState(null)
   const fi = field?.frames?.length ? Math.min(frameIdx, field.frames.length - 1) : 0
   const kind = fieldKind(field)
   const heights = field?.volume?.heights || []
@@ -38,6 +41,10 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
   // scrub the time bar).
   const fiRef = useRef(fi); fiRef.current = fi
   const mastRef = useRef(mastHeight); mastRef.current = mastHeight
+  // Same reason as fiRef and mastRef: the mousemove handler is registered once
+  // per field, so it must read the CURRENT kind rather than close over the one
+  // in scope when the map was built.
+  const kindRef = useRef(kind); kindRef.current = kind
   const [levels, setLevels] = useState(() => defaultLevels(heights))
 
   // Keep the selected levels valid for the current field. The state is seeded
@@ -142,6 +149,15 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
       // Match what's drawn: the shading / contours / arrows all use the displayed
       // FRAME field, so sample that (at the current time). Fall back to the mast-
       // height volume only when there are no frames.
+      // BOUNDARY LAYER IS A SCALAR, and sampleField only knows u/v frames: an
+      // hpbl field carries `scalar`, so every hover fell through to no readout
+      // at all. 2D has shown "PBL nnn m" all along; this is 3D catching up.
+      if (kindRef.current === 'hpbl') {
+        const r = sampleScalarField(field, cfi, e.lngLat.lat, e.lngLat.lng)
+        if (r && r.value != null) setReadout({ x: e.point.x, y: e.point.y, pbl: Math.round(r.value) })
+        else setReadout(null)
+        return
+      }
       let s = sampleField(field, cfi, e.lngLat.lat, e.lngLat.lng)
       if (!s || s.kt == null) s = field.volume ? sampleVolumeAtHeight(field.volume, cfi, mastRef.current, e.lngLat.lat, e.lngLat.lng) : null
       if (s && s.kt != null) setReadout({ x: e.point.x, y: e.point.y, kt: Math.round(s.kt), dir: Math.round(s.dirTrue) })
@@ -202,7 +218,9 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
       )}
       {readout && (
         <div style={{ position: 'absolute', left: readout.x + 12, top: readout.y + 12, pointerEvents: 'none', background: 'rgba(3,15,26,0.9)', color: '#fff', font: '700 12px ui-monospace, monospace', padding: '3px 7px', borderRadius: 6, border: '1px solid #1E3A5A', whiteSpace: 'nowrap', zIndex: 3 }}>
-          {String(readout.dir).padStart(3, '0')}° · {readout.kt} kn
+          {readout.pbl != null
+            ? `PBL ${readout.pbl} m`
+            : `${String(readout.dir).padStart(3, '0')}° · ${readout.kt} kn`}
         </div>
       )}
       <div style={{ position: 'absolute', left: 8, bottom: 8, display: 'flex', gap: 5, flexWrap: 'wrap', maxWidth: 'calc(100% - 16px)' }}>
