@@ -77,6 +77,7 @@ describe('fetchWindField builds a vertical stack', () => {
 
 describe('the default levels match what was asked for', () => {
   it('gives HRDPS every published level, 120 m included', () => {
+    // which is now simply all of them
     expect(defaultLevels([10, 40, 80, 120])).toEqual([10, 40, 80, 120])
   })
 
@@ -84,17 +85,18 @@ describe('the default levels match what was asked for', () => {
     expect(defaultLevels([10, 80])).toEqual([10, 80])
   })
 
-  it('stops above 120 m, so a deep ladder does not fill the view', () => {
-    // ECMWF publishes to 200 m and ICON to 180; those upper levels are
-    // synoptic context, not racing air, and drawing them by default buries
-    // the ones that matter.
-    expect(defaultLevels([10, 80, 120, 180])).toEqual([10, 80, 120])
-    expect(defaultLevels([10, 80, 100, 120, 180, 200])).toEqual([10, 80, 100, 120])
-    expect(defaultLevels([10, 20, 50, 100, 150, 200])).toEqual([10, 20, 50, 100])
+  it('shows every level the app actually holds, to 200 m', () => {
+    // fetchWindField filters a model's heights to <= 200, so the default view
+    // and the fetch share one ceiling: nothing is downloaded and then hidden.
+    expect(defaultLevels([10, 80, 120, 180])).toEqual([10, 80, 120, 180])          // ICON
+    expect(defaultLevels([10, 80, 100, 120, 180, 200])).toEqual([10, 80, 100, 120, 180, 200])  // ECMWF
+    expect(defaultLevels([10, 20, 50, 100, 150, 200])).toEqual([10, 20, 50, 100, 150, 200])    // AROME
+    expect(defaultLevels([10, 20, 50, 80, 100])).toEqual([10, 20, 50, 80, 100])    // ARPEGE
   })
 
-  it('still shows something when every level is above the cap', () => {
-    expect(defaultLevels([150, 200])).toEqual([150])
+  it('drops anything above the ceiling, and still shows something if all of it is', () => {
+    expect(defaultLevels([10, 80, 250, 400])).toEqual([10, 80])
+    expect(defaultLevels([250, 400])).toEqual([250])
   })
 
   it('never invents a level the model does not publish', () => {

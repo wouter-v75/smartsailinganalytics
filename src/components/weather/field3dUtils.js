@@ -19,9 +19,14 @@ export const DECK_JS = 'https://unpkg.com/deck.gl@9.0.36/dist.min.js'   // expos
 // old rule took [10,30,50,100] and snapped each to the nearest available, which
 // on HRDPS's 10/40/80/120 ladder produced 10/40/80 and silently dropped 120 —
 // the level a 30 m masthead most wants context from, since it is the one that
-// shows whether the gradient aloft is coming down. Asking for "all levels to
-// 100 m" and then "also 120" is just this rule.
-export const DEFAULT_MAX_LEVEL_M = 120
+// shows whether the gradient aloft is coming down.
+//
+// 200 m is not an arbitrary cap: fetchWindField already filters a model's
+// heights to `<= 200`, so this is simply every level the app holds. The two
+// numbers are the same ceiling for the same reason — above it the air is
+// synoptic rather than anything a rig sails in — and keeping them equal is
+// what stops a level being fetched and then never drawn.
+export const DEFAULT_MAX_LEVEL_M = 200
 
 /**
  * Every level the model publishes at or below DEFAULT_MAX_LEVEL_M, ascending.
