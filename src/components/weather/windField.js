@@ -17,7 +17,7 @@
 // ----------------------------------------------------------------------------
 
 import { MODELS, iconRaceGridForPoint, forecastDaysFor, stitchHourly } from './openMeteo'
-import { applyMOS } from './mos'
+import { applyMOS, needsPreLift } from './mos'
 
 const NM_DEG = 1 / 60 // 1 nautical mile in degrees latitude
 
@@ -27,6 +27,15 @@ const NM_DEG = 1 / 60 // 1 nautical mile in degrees latitude
 // labels ("Sat 14:00"). Returns a new field; unchanged if no spec.
 export function applyMosToField(field, spec, mosModelId) {
   if (!field || !spec || !mosModelId) return field
+  // THIS PATH CANNOT REORDER. The field arrives as u/v already at mast
+  // height, so there is no 10 m field here to correct before lifting. A spec
+  // fitted at 10 m applied to these values would keep its slope and get its
+  // intercept wrong by the lift ratio, so the field is left RAW instead.
+  //
+  // Absent beats wrong, the same rule the project applies to a sail's target
+  // shape: no correction is honest, another height's correction is not. The
+  // hourly table and the deck both use correctedWind30 and do get it right.
+  if (needsPreLift(spec)) return field
   const KN = 1.94384
   const hourOf = (t) => { const h = parseInt((field.labels?.[t] || '').slice(-5, -3), 10); return Number.isNaN(h) ? null : h }
   const frames = field.frames.map((fr, t) => {

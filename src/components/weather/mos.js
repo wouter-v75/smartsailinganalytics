@@ -14,7 +14,7 @@ import porto_cervo from './mos/mos_porto_cervo.json'
 import st_tropez from './mos/mos_st_tropez.json'
 import { wallHour } from './venueTz'
 import { venueAt, venueByKey, VENUE_MATCH_NM } from '../../lib/venues'
-import { solveSurfaceLayer, profileRatio } from '../../lib/windProfile'
+import { solveSurfaceLayer, profileRatio, transferWind } from '../../lib/windProfile'
 import { deltaKFromHourly } from '../../lib/seaTemp'
 
 // SPECS ARE KEYED BY VENUE KEY — the one in lib/venues.ts, hyphenated. This
@@ -57,6 +57,49 @@ export function specFor(venue) {
 /** Venue keys that actually have fitted coefficients. */
 export function calibratedVenues() {
   return Object.keys(SPECS)
+}
+
+/**
+ * The height the correction was FITTED at, which decides the order of
+ * operations — and it is not always the height the correction is wanted at.
+ *
+ * The three Mediterranean specs were fitted against a boat's 30 m masthead
+ * log, so for them the model is lifted to 30 m and the correction applied
+ * there. An Oslofjord spec is fitted against a 10 m lighthouse anemometer,
+ * because that is where the only truth is, and it must be applied to the
+ * model's own 10 m field BEFORE the lift.
+ *
+ * Getting that backwards is not a subtlety. A 10 m-fitted `a·x + b` applied to
+ * a 30 m value keeps its slope but its INTERCEPT is wrong by the lift ratio —
+ * about 1.08-1.12 in near-neutral marine air and considerably more on a stable
+ * fjord morning, which is exactly when the lift is largest. So a +1.0 kn
+ * offset silently becomes the wrong number precisely where it matters most.
+ *
+ * `fit_height_m` is the explicit answer; `target_height_m` is honoured as a
+ * fallback so an older spec keeps its meaning, and 30 is the final default
+ * because that is what every existing spec says.
+ */
+export function fitHeightM(spec) {
+  const v = spec?.fit_height_m ?? spec?.target_height_m
+  return Number.isFinite(v) && v > 0 ? v : 30
+}
+
+/**
+ * Does this spec have to be applied BEFORE the vertical lift?
+ *
+ * True only when it was fitted below the height it is wanted at — a 10 m
+ * lighthouse fit for a 30 m display. The three Mediterranean specs were fitted
+ * at the display height itself, so they are false and keep their old
+ * behaviour exactly, including where a boat's mast is not precisely 30 m.
+ *
+ * This is the question the call sites actually need answered. An earlier
+ * version asked "is the fit height equal to the height I am working at",
+ * which broke every existing path the moment a mast was 28 or 40 m rather
+ * than exactly 30 — the spec was never claiming that precision.
+ */
+export function needsPreLift(spec) {
+  const target = Number.isFinite(spec?.target_height_m) ? spec.target_height_m : 30
+  return fitHeightM(spec) < target
 }
 
 // ── wind vectors (meteorological FROM convention) ──────────────────────
@@ -183,6 +226,60 @@ export function hourInTz(timeStr, tz) {
   return Number.isFinite(h) ? h : new Date(timeStr).getHours()
 }
 
+/**
+ * The corrected 30 m wind for one hour, in the right order for this spec.
+ *
+ * ONE PLACE OWNS THE ORDERING. Both orders are here because both are needed:
+ *
+ *   fit at 30 m  ->  lift the model to 30 m, then correct    (the Med specs)
+ *   fit at 10 m  ->  correct the model's 10 m field, then lift  (Oslofjord)
+ *
+ * The second order is what the research concluded: fit the statistical step in
+ * the space where the observations are, so the residual is a pure measure of
+ * model-versus-observation disagreement and the profile's own error stays a
+ * separate, inspectable term instead of being absorbed into the slope. The
+ * literature has no head-to-head test of the two orders, but it is unanimous
+ * in practice about fitting where the truth is.
+ *
+ * The surface layer is solved from the CORRECTED speed, not the raw one: once
+ * the correction is applied, that is our best estimate of the actual wind, and
+ * the roughness and stability length should follow it.
+ *
+ * Returns { ws, twd, fitZ, lifted } or null.
+ */
+export function correctedWind30(hourly, heights, idx, spec, mosModelId, tz, sst = null, targetZ = 30) {
+  const fitZ = fitHeightM(spec)
+  const dK = deltaKFromHourly(hourly, idx, sst)
+  const hour = hourInTz(hourly.time[idx], tz)
+
+  if (fitZ >= targetZ) {
+    // Lift first, correct second — correct for a spec fitted at the target.
+    const w = wind30(hourly, heights, idx, targetZ, 0.11, dK)
+    if (!w) return null
+    const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hour)
+    return r ? { ws: r.ws, twd: w.twd, fitZ, lifted: false } : null
+  }
+
+  // Correct at the fit height, then lift. wind30 at the fit height returns the
+  // model's own field there: for a single-level model the profile ratio is
+  // exactly 1, so nothing is modelled on the way in.
+  const w = wind30(hourly, heights, idx, fitZ, 0.11, dK)
+  if (!w) return null
+  const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hour)
+  if (!r) return null
+  if (!(r.ws > 0)) return { ws: r.ws, twd: w.twd, fitZ, lifted: false }
+  const layer = solveSurfaceLayer(r.ws * 0.514444, Number.isFinite(dK) ? dK : 0, { refZ: fitZ })
+  const t = transferWind(r.ws, fitZ, targetZ, layer)
+  // `uncertainty` is carried out deliberately. The research is explicit that
+  // nothing in this data validates a 30 m value: the correction is verified at
+  // the fit height and the lift is a separate, unverified step. Returning its
+  // own uncertainty is what keeps those two things from being confused.
+  return {
+    ws: t.kn, twd: w.twd, fitZ, lifted: true,
+    quality: t.quality, liftRatio: t.ratio, liftUncertainty: t.uncertainty, note: t.note,
+  }
+}
+
 // Whole MOS-corrected 30 m series (kn) for a model's hourly payload, or null.
 export function mosSeries(hourly, heights, spec, mosModelId, tz, sst = null) {
   if (!hourly?.time || !spec?.models?.[mosModelId]) return null
@@ -190,9 +287,7 @@ export function mosSeries(hourly, heights, spec, mosModelId, tz, sst = null) {
   return hourly.time.map((t, i) => {
     // The venue's SST, where it was fetched, gives the stability term its
     // air-sea difference. Null simply falls back to the neutral profile.
-    const w = wind30(hourly, heights, i, 30, 0.11, deltaKFromHourly(hourly, i, sst))
-    if (!w) return null
-    const r = applyMOS(spec, mosModelId, w.ws30, w.twd, hourInTz(t, tz))
+    const r = correctedWind30(hourly, heights, i, spec, mosModelId, tz, sst)
     return r ? r.ws : null
   })
 }

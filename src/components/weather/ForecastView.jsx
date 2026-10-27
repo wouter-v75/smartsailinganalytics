@@ -27,7 +27,7 @@ import {
 import { useModelCycles } from './modelCycles'
 import { resolveVenueTz, deviceTz, wallHour, formatWall } from './venueTz'
 import {
-  matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
+  matchVenue, specFor, mosSeries, correctionInfo, correctedWind30,
 } from './mos'
 import { useVenueSst } from './useVenueSst'
 import { deltaKFromHourly } from '../../lib/seaTemp'
@@ -1222,12 +1222,12 @@ function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed
         // Stability: the venue's SST against the model's own 2 m air
         // temperature at this hour. Null when either is missing, which falls
         // back to the neutral profile rather than inventing a difference.
-        const w = wind30(hourly, model.heights, index, 30, 0.11,
-          deltaKFromHourly(hourly, index, venueSst))
-        if (w) {
-          const r = applyMOS(spec, mosId, w.ws30, w.twd, hour)
-          mos = r ? r.ws : null
-        }
+        // correctedWind30 owns the ORDER of the correction and the lift: a
+        // spec fitted at 30 m is lifted then corrected, one fitted at 10 m is
+        // corrected on the model's own 10 m field and then lifted. Doing it
+        // here by hand is how the two got out of step.
+        const r = correctedWind30(hourly, model.heights, index, spec, mosId, timezone, venueSst)
+        mos = r ? r.ws : null
       }
       rows.push({
         time: formatWall(timeStr, timezone, { weekday: 'short', hour: '2-digit', minute: '2-digit' }),

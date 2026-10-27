@@ -1,0 +1,589 @@
+// Fitting a MOS correction — the maths, kept pure so it can be tested.
+//
+// Built to the recommendation in reports/Mesoscale wind MOS post processing.md.
+// The orchestration (fetching observations and archived forecasts) lives in
+// scripts/mos-fit.ts; everything here is arithmetic on arrays.
+//
+// THREE THINGS THIS FILE EXISTS TO GET RIGHT.
+//
+// 1. THE FITTED FORM MUST BE THE FORM THE APP APPLIES. `applyMOS()` in
+//    components/weather/mos.js computes a·x + b, optionally plus a 24 h
+//    harmonic or a per-band offset. If the fit here parameterises any of that
+//    differently, the stored spec silently does not reproduce the fit that
+//    justified it. `predictSpecModel` below mirrors applyMOS term for term and
+//    a test asserts the two agree to floating point.
+//
+// 2. b AND c0 ARE THE SAME COLUMN. applyMOS's diurnal form is
+//    a·x + b + c0 + c1·sin + c2·cos, so b and c0 are both constants and a
+//    joint least-squares fit of all five is singular. The existing
+//    Mediterranean specs carry both non-zero, which means they were fitted in
+//    some two-stage way that cannot be recovered from the JSON. So this fits
+//    a, b, c1, c2 jointly and sets c0 = 0, folding the whole constant into b.
+//    Four parameters, non-singular, and identical in output to any other split
+//    of the same sum.
+//
+// 3. THE EFFECTIVE SAMPLE SIZE IS THE BINDING CONSTRAINT. Gullholmen's hourly
+//    wind has a lag-1 autocorrelation of 0.883, so 33,932 hours behave like
+//    about 2,100 independent samples. Every score here is reported with both
+//    n and nEff, and the significance machinery (Diebold-Mariano with a
+//    Newey-West long-run variance, plus a block bootstrap) exists because a
+//    naive standard error on this data is about four times too narrow.
+
+/** One paired hour: the model's wind, the observation, and when it was. */
+export interface Pair {
+  /** Epoch milliseconds, UTC. */
+  t: number
+  /** Model wind speed at the fit height, knots. */
+  model: number
+  /** Observed wind speed at the same height, knots. */
+  obs: number
+  /** Model wind direction, degrees FROM. Null where unavailable. */
+  twd: number | null
+  /** Local hour of day at the venue, 0-23, fractional allowed. */
+  hour: number
+}
+
+export type MosType = 'raw' | 'bias_scale' | 'diurnal' | 'sector'
+
+/** A direction band, as the spec stores it: [name, loDeg, hiDeg]. */
+export type Band = [string, number, number]
+
+/** The coefficients for one model, in the shape the spec JSON stores. */
+export interface MosModelSpec {
+  type: MosType
+  a?: number
+  b?: number
+  c0?: number
+  c1?: number
+  c2?: number
+  delta?: Record<string, number>
+  global?: number
+}
+
+// ── the form the app applies ───────────────────────────────────────────────
+
+/**
+ * Which band a direction falls in — mirrors assignSector in mos.js, including
+ * the wrap-around case where lo > hi and the 'other' fallback.
+ */
+export function assignSector(twd: number, bands: readonly Band[]): string {
+  const t = ((twd % 360) + 360) % 360
+  for (const [name, lo, hi] of bands) {
+    if (lo <= hi) { if (t >= lo && t <= hi) return name } else if (t >= lo || t <= hi) return name
+  }
+  return 'other'
+}
+
+/**
+ * The corrected wind, computed exactly as applyMOS does.
+ *
+ * Kept here rather than imported because mos.js is a browser module and this
+ * runs in scripts and tests; the test that pins them together is what stops
+ * the two drifting.
+ */
+export function predictSpecModel(
+  m: MosModelSpec,
+  ws: number,
+  twd: number | null,
+  localHour: number | null,
+  bands: readonly Band[],
+): number {
+  const t = m.type || 'raw'
+  if (t === 'raw') return ws
+  const base = (m.a ?? 1) * ws + (m.b ?? 0)
+  if (t === 'bias_scale') return base
+  if (t === 'diurnal') {
+    if (localHour == null) return base
+    const ang = (2 * Math.PI * localHour) / 24
+    return base + (m.c0 ?? 0) + (m.c1 ?? 0) * Math.sin(ang) + (m.c2 ?? 0) * Math.cos(ang)
+  }
+  if (t === 'sector') {
+    if (twd == null) return base
+    const sec = assignSector(twd, bands)
+    const d = m.delta ?? {}
+    return base + (sec in d ? d[sec] : (m.global ?? 0))
+  }
+  return ws
+}
+
+/** How many free parameters a form carries — for the parameter ceiling. */
+export function paramCount(m: MosModelSpec, bands: readonly Band[]): number {
+  switch (m.type) {
+    case 'raw': return 0
+    case 'bias_scale': return 2
+    case 'diurnal': return 4            // a, b, c1, c2 — c0 is pinned to 0
+    case 'sector': return 2 + Math.max(0, bands.length - 1)
+    default: return 0
+  }
+}
+
+// ── least squares ──────────────────────────────────────────────────────────
+
+/**
+ * Solve (XᵀX + λI)β = Xᵀy by Gaussian elimination with partial pivoting.
+ *
+ * The ridge term is a numerical floor, not a statistical choice: λ is tiny and
+ * only stops a singular or near-singular normal matrix from returning
+ * nonsense. A design that is genuinely rank-deficient — an empty direction
+ * band, say — is caught by the caller, which refuses the form rather than
+ * letting the ridge quietly invent a coefficient.
+ */
+export function solveOls(X: readonly number[][], y: readonly number[], lambda = 1e-10): number[] | null {
+  const n = X.length
+  if (!n || n !== y.length) return null
+  const p = X[0].length
+  if (p === 0) return []
+  const A: number[][] = Array.from({ length: p }, () => new Array(p + 1).fill(0))
+  for (let i = 0; i < n; i++) {
+    const xi = X[i]
+    for (let r = 0; r < p; r++) {
+      for (let c = 0; c < p; c++) A[r][c] += xi[r] * xi[c]
+      A[r][p] += xi[r] * y[i]
+    }
+  }
+  for (let r = 0; r < p; r++) A[r][r] += lambda
+  for (let col = 0; col < p; col++) {
+    let piv = col
+    for (let r = col + 1; r < p; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r
+    if (Math.abs(A[piv][col]) < 1e-12) return null
+    if (piv !== col) { const tmp = A[piv]; A[piv] = A[col]; A[col] = tmp }
+    const d = A[col][col]
+    for (let c = col; c <= p; c++) A[col][c] /= d
+    for (let r = 0; r < p; r++) {
+      if (r === col) continue
+      const f = A[r][col]
+      if (f === 0) continue
+      for (let c = col; c <= p; c++) A[r][c] -= f * A[col][c]
+    }
+  }
+  return A.map((row) => row[p])
+}
+
+// ── fitting each form ──────────────────────────────────────────────────────
+
+/**
+ * The reference band is the one with the most cases, and its offset is folded
+ * into b so the design is not rank-deficient. `global` — applyMOS's fallback
+ * for a direction in no band — is set to 0 for the same reason: it is the
+ * reference level, not a free parameter.
+ */
+export function fitForm(
+  type: MosType,
+  rows: readonly Pair[],
+  bands: readonly Band[],
+  opts: { minPerBand?: number } = {},
+): MosModelSpec | null {
+  if (type === 'raw') return { type: 'raw' }
+  if (!rows.length) return null
+
+  const y = rows.map((r) => r.obs)
+
+  if (type === 'bias_scale') {
+    const X = rows.map((r) => [r.model, 1])
+    const beta = solveOls(X, y)
+    return beta ? { type, a: beta[0], b: beta[1] } : null
+  }
+
+  if (type === 'diurnal') {
+    const X = rows.map((r) => {
+      const ang = (2 * Math.PI * r.hour) / 24
+      return [r.model, 1, Math.sin(ang), Math.cos(ang)]
+    })
+    const beta = solveOls(X, y)
+    // c0 is pinned to 0: it is the same column as b (see the header note).
+    return beta ? { type, a: beta[0], b: beta[1], c0: 0, c1: beta[2], c2: beta[3] } : null
+  }
+
+  // sector
+  const minPer = opts.minPerBand ?? 50
+  const withDir = rows.filter((r) => r.twd != null)
+  if (!withDir.length) return null
+  const counts = new Map<string, number>()
+  for (const r of withDir) {
+    const s = assignSector(r.twd!, bands)
+    counts.set(s, (counts.get(s) ?? 0) + 1)
+  }
+  // Every band the spec declares must be populated, or the offset for an empty
+  // one is whatever the ridge says. Refuse instead.
+  for (const [name] of bands) if ((counts.get(name) ?? 0) < minPer) return null
+
+  // 'other' — a direction in NO declared band — is its own level, because
+  // applyMOS gives those rows `global` rather than any band's offset. Folding
+  // them into the reference band instead (the first version of this) fits a
+  // model the app does not apply: with bands of 0-70/80-200/200-270/270-360
+  // the 10-degree gap is ~3% of rows, and giving them the reference offset
+  // dragged every recovered offset about 3% short of truth.
+  //
+  // If 'other' is too rare to estimate, those rows are DROPPED from the fit
+  // and `global` stays 0, which is the reference level — honest, and the only
+  // value that cannot be worse than an offset invented from a dozen cases.
+  const names = bands.map(([n]) => n)
+  const otherN = counts.get('other') ?? 0
+  const fitOther = otherN >= minPer
+  const levels = fitOther ? [...names, 'other'] : names
+  const used = fitOther ? withDir : withDir.filter((r) => assignSector(r.twd!, bands) !== 'other')
+  if (!used.length) return null
+
+  const ref = levels.slice().sort((p, q) => (counts.get(q) ?? 0) - (counts.get(p) ?? 0))[0]
+  const free = levels.filter((n) => n !== ref)
+  const X = used.map((r) => {
+    const s = assignSector(r.twd!, bands)
+    return [r.model, 1, ...free.map((n) => (s === n ? 1 : 0))]
+  })
+  const beta = solveOls(X, used.map((r) => r.obs))
+  if (!beta) return null
+  const coef: Record<string, number> = { [ref]: 0 }
+  free.forEach((n, i) => { coef[n] = beta[2 + i] })
+  const delta: Record<string, number> = {}
+  for (const n of names) delta[n] = coef[n] ?? 0
+  return { type, a: beta[0], b: beta[1], delta, global: fitOther ? (coef.other ?? 0) : 0 }
+}
+
+// ── scoring ────────────────────────────────────────────────────────────────
+
+export interface Scores {
+  n: number
+  nEff: number
+  bias: number
+  mae: number
+  rmse: number
+  /** Regression slope of obs on prediction — 1.0 means variance preserved. */
+  slope: number
+  /** sd(prediction) / sd(observation). Below 1 means the fit flattened variance. */
+  varRatio: number
+}
+
+const mean = (a: readonly number[]) => a.reduce((s, x) => s + x, 0) / (a.length || 1)
+
+export function lag1(series: readonly number[]): number {
+  const n = series.length
+  if (n < 3) return 0
+  const mu = mean(series)
+  let num = 0; let den = 0
+  for (let i = 0; i < n; i++) {
+    den += (series[i] - mu) ** 2
+    if (i) num += (series[i] - mu) * (series[i - 1] - mu)
+  }
+  return den > 0 ? num / den : 0
+}
+
+/**
+ * Wilks' effective sample size, N(1−r₁)/(1+r₁).
+ *
+ * Measured on Gullholmen's own series this takes 8,753 hourly rows to 542 —
+ * 6.2% — so a standard error computed on the nominal count is about four
+ * times too narrow. Floored at 2 because a non-positive effective n is
+ * meaningless, and clamped at n because a negative r₁ should not manufacture
+ * more information than was collected.
+ */
+export function effectiveN(n: number, r1: number): number {
+  if (!(n > 0)) return 0
+  const r = Math.max(-0.999, Math.min(0.999, r1))
+  return Math.max(2, Math.min(n, (n * (1 - r)) / (1 + r)))
+}
+
+export function score(pred: readonly number[], obs: readonly number[]): Scores {
+  const n = Math.min(pred.length, obs.length)
+  // An empty set has no score. Without this the mean() helper divides by 1 and
+  // reports a confident rmse of 0 — "perfect" — for no data at all, which is
+  // the worst possible way to fail.
+  if (!n) return { n: 0, nEff: 0, bias: NaN, mae: NaN, rmse: NaN, slope: NaN, varRatio: NaN }
+  const e: number[] = []
+  for (let i = 0; i < n; i++) e.push(pred[i] - obs[i])
+  const mp = mean(pred.slice(0, n)); const mo = mean(obs.slice(0, n))
+  let sxy = 0; let sxx = 0; let syy = 0
+  for (let i = 0; i < n; i++) {
+    sxy += (pred[i] - mp) * (obs[i] - mo)
+    sxx += (pred[i] - mp) ** 2
+    syy += (obs[i] - mo) ** 2
+  }
+  return {
+    n,
+    nEff: effectiveN(n, lag1(e)),
+    bias: mean(e),
+    mae: mean(e.map(Math.abs)),
+    rmse: Math.sqrt(mean(e.map((x) => x * x))),
+    slope: sxx > 0 ? sxy / sxx : NaN,
+    varRatio: syy > 0 ? Math.sqrt(sxx / syy) : NaN,
+  }
+}
+
+/** Percentage RMSE improvement against the uncorrected model. */
+export function piRmse(rmseMos: number, rmseRaw: number): number {
+  return rmseRaw > 0 ? 100 * (1 - rmseMos / rmseRaw) : NaN
+}
+
+/** Skill score against a reference forecast: 1 is perfect, 0 is no better. */
+export function skill(rmse: number, rmseRef: number): number {
+  return rmseRef > 0 ? 1 - rmse / rmseRef : NaN
+}
+
+/**
+ * Persistence as a reference: the observation one hour earlier.
+ *
+ * The harder benchmark inside a few hours and the easier one beyond about
+ * half a day, which is why the report asks for both this and climatology.
+ * Only consecutive hours count — a gap must not be scored as persistence.
+ */
+export function persistenceRmse(rows: readonly Pair[], maxGapMs = 3600_000 * 1.5): number {
+  const s = rows.slice().sort((p, q) => p.t - q.t)
+  const e: number[] = []
+  for (let i = 1; i < s.length; i++) {
+    if (s[i].t - s[i - 1].t <= maxGapMs) e.push(s[i - 1].obs - s[i].obs)
+  }
+  return e.length ? Math.sqrt(mean(e.map((x) => x * x))) : NaN
+}
+
+// ── cross-validation blocking ──────────────────────────────────────────────
+
+/**
+ * Leave-one-year-out blocks, which is what the report prescribes: four blocks
+ * over this archive, blocking at a scale far beyond any plausible residual
+ * timescale while also testing across-season and across-year transfer.
+ *
+ * A year with fewer than `minRows` hours is merged into the next one, so the
+ * Dec-2022 stub joins 2023 rather than becoming a block of its own.
+ */
+export function yearBlocks(rows: readonly Pair[], minRows = 2000): Pair[][] {
+  const byYear = new Map<number, Pair[]>()
+  for (const r of rows) {
+    const y = new Date(r.t).getUTCFullYear()
+    const a = byYear.get(y) ?? []
+    a.push(r)
+    byYear.set(y, a)
+  }
+  const years = Array.from(byYear.keys()).sort()
+  const out: Pair[][] = []
+  let carry: Pair[] = []
+  for (const y of years) {
+    const block = carry.concat(byYear.get(y)!)
+    if (block.length < minRows) { carry = block; continue }
+    out.push(block)
+    carry = []
+  }
+  if (carry.length) {
+    if (out.length) out[out.length - 1] = out[out.length - 1].concat(carry)
+    else out.push(carry)
+  }
+  return out
+}
+
+/**
+ * Drop training rows within `bufferMs` of any test row.
+ *
+ * At a lag-1 autocorrelation of 0.883 an adjacent hour is very nearly the same
+ * observation, so a block boundary without a buffer still leaks. The report
+ * asks for at least 48 h, bracketed by the measured 11 h speed decorrelation
+ * above and the 6.3-6.5 h literature figure for residuals below.
+ */
+export function withBuffer(train: readonly Pair[], test: readonly Pair[], bufferMs = 48 * 3600_000): Pair[] {
+  if (!test.length) return train.slice()
+  const times = test.map((r) => r.t).sort((a, b) => a - b)
+  // Find the insertion point, then check only its two neighbours. The nearest
+  // test row to t is necessarily one of those, which makes this obviously
+  // correct rather than correct-if-you-trace-the-probes.
+  const near = (t: number) => {
+    let lo = 0; let hi = times.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (times[mid] < t) lo = mid + 1; else hi = mid
+    }
+    if (lo < times.length && times[lo] - t <= bufferMs) return true
+    if (lo > 0 && t - times[lo - 1] <= bufferMs) return true
+    return false
+  }
+  return train.filter((r) => !near(r.t))
+}
+
+// ── significance ───────────────────────────────────────────────────────────
+
+/**
+ * Diebold-Mariano on a paired loss differential, with a Newey-West long-run
+ * variance.
+ *
+ * `d` is lossA − lossB per observation (squared error for an RMSE comparison,
+ * absolute error for MAE). A positive statistic means A is worse. The HAC
+ * bandwidth should come from the residual autocorrelation, not from a rule of
+ * thumb — the caller measures it.
+ */
+export function dieboldMariano(d: readonly number[], bandwidth: number): { stat: number; meanDiff: number; se: number } {
+  const n = d.length
+  if (n < 10) return { stat: NaN, meanDiff: NaN, se: NaN }
+  const md = mean(d)
+  const dev = d.map((x) => x - md)
+  let lrv = dev.reduce((s, x) => s + x * x, 0) / n
+  const L = Math.max(0, Math.min(Math.floor(bandwidth), n - 2))
+  for (let k = 1; k <= L; k++) {
+    let g = 0
+    for (let i = k; i < n; i++) g += dev[i] * dev[i - k]
+    g /= n
+    lrv += 2 * (1 - k / (L + 1)) * g      // Bartlett kernel
+  }
+  const se = Math.sqrt(Math.max(lrv, 0) / n)
+  return { stat: se > 0 ? md / se : NaN, meanDiff: md, se }
+}
+
+/**
+ * Block bootstrap confidence interval for the mean of a loss differential.
+ *
+ * Blocks of at least a day, per the report, so that the resampling preserves
+ * the dependence the Newey-West correction only approximates. Deterministic by
+ * default: the seed is fixed so a reported interval is reproducible.
+ */
+export function blockBootstrapCI(
+  d: readonly number[],
+  blockLen: number,
+  iters = 2000,
+  alpha = 0.05,
+  seed = 20261027,
+): { lo: number; hi: number } {
+  const n = d.length
+  if (n < blockLen * 3) return { lo: NaN, hi: NaN }
+  let s = seed >>> 0
+  const rnd = () => {
+    s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0
+    return s / 4294967296
+  }
+  const nb = Math.ceil(n / blockLen)
+  const means: number[] = []
+  for (let it = 0; it < iters; it++) {
+    let sum = 0; let cnt = 0
+    for (let b = 0; b < nb; b++) {
+      const start = Math.floor(rnd() * (n - blockLen + 1))
+      for (let i = 0; i < blockLen; i++) { sum += d[start + i]; cnt++ }
+    }
+    means.push(sum / cnt)
+  }
+  means.sort((a, b) => a - b)
+  return {
+    lo: means[Math.floor((alpha / 2) * iters)],
+    hi: means[Math.min(iters - 1, Math.floor((1 - alpha / 2) * iters))],
+  }
+}
+
+// ── nested selection ───────────────────────────────────────────────────────
+
+export interface FormResult {
+  type: MosType
+  spec: MosModelSpec
+  /** Out-of-sample scores, pooled across the held-out blocks. */
+  cv: Scores
+  params: number
+  /**
+   * Per-block scores, which the pooled figure hides.
+   *
+   * The report's bar for a meaningful gain is that it "hold in sign in EVERY
+   * held-out year rather than on average". A pooled RMSE cannot answer that: a
+   * form that helps hugely in three years and hurts in the fourth averages out
+   * looking fine, and that fourth year is the one that says the correction is
+   * not stationary — which is the live risk when the underlying model is
+   * upgraded mid-archive.
+   */
+  perBlock: Array<{ label: string; n: number; rmse: number; rawRmse: number; piRmse: number }>
+  /** Why this form was rejected, where it was. */
+  refused?: string
+}
+
+/**
+ * Fit each candidate form on the training blocks and score it on the held-out
+ * ones, pooling predictions across folds.
+ *
+ * Nested on purpose, so each comparison is one step: raw, then a·x+b, then the
+ * harmonic, then the sector offsets. A step is kept only if it wins out of
+ * sample — the protocol the report takes from Schulz & Lerch.
+ */
+export function crossValidateForms(
+  rows: readonly Pair[],
+  bands: readonly Band[],
+  opts: { bufferMs?: number; minPerBand?: number; minRowsPerBlock?: number } = {},
+): { blocks: number; results: FormResult[] } {
+  const blocks = yearBlocks(rows, opts.minRowsPerBlock ?? 2000)
+  const types: MosType[] = ['raw', 'bias_scale', 'diurnal', 'sector']
+  const results: FormResult[] = []
+
+  for (const type of types) {
+    const pred: number[] = []
+    const obs: number[] = []
+    const perBlock: FormResult['perBlock'] = []
+    let refused: string | undefined
+    for (let i = 0; i < blocks.length; i++) {
+      const test = blocks[i]
+      const trainRaw = blocks.filter((_, j) => j !== i).flat()
+      const train = withBuffer(trainRaw, test, opts.bufferMs ?? 48 * 3600_000)
+      const m = fitForm(type, train, bands, { minPerBand: opts.minPerBand })
+      if (!m) { refused = `fold ${i + 1} could not be fitted (rank or band support)`; break }
+      const bp: number[] = []
+      const bo: number[] = []
+      const bm: number[] = []
+      for (const r of test) {
+        if (type === 'sector' && r.twd == null) continue
+        const v = predictSpecModel(m, r.model, r.twd, r.hour, bands)
+        pred.push(v); obs.push(r.obs)
+        bp.push(v); bo.push(r.obs); bm.push(r.model)
+      }
+      if (bp.length) {
+        const sc = score(bp, bo)
+        const sr = score(bm, bo)
+        perBlock.push({
+          label: String(new Date(test[0].t).getUTCFullYear()),
+          n: bp.length,
+          rmse: sc.rmse,
+          rawRmse: sr.rmse,
+          piRmse: piRmse(sc.rmse, sr.rmse),
+        })
+      }
+    }
+    if (refused || !pred.length) {
+      results.push({
+        type,
+        spec: { type },
+        cv: score([], []),
+        params: paramCount({ type }, bands),
+        perBlock,
+        refused: refused ?? 'no out-of-sample predictions',
+      })
+      continue
+    }
+    // The shipped coefficients are refitted on everything; the CV scores above
+    // are what justify the FORM, not these numbers.
+    const full = fitForm(type, rows, bands, { minPerBand: opts.minPerBand })
+    results.push({
+      type,
+      spec: full ?? { type },
+      cv: score(pred, obs),
+      params: paramCount({ type }, bands),
+      perBlock,
+    })
+  }
+  return { blocks: blocks.length, results }
+}
+
+/**
+ * Pick the form to ship.
+ *
+ * The one-standard-error rule: among forms whose CV RMSE is within one
+ * standard error of the best, take the one with the fewest parameters. With
+ * about 2,100 independent samples the difference between two forms is usually
+ * inside the noise, and preferring the simpler one is how that gets respected
+ * rather than ignored. The standard error uses nEff, not n.
+ */
+export function selectForm(results: readonly FormResult[], maxParams = 6): FormResult | null {
+  const ok = results.filter((r) => !r.refused && Number.isFinite(r.cv.rmse) && r.params <= maxParams)
+  if (!ok.length) return null
+  const best = ok.reduce((p, q) => (q.cv.rmse < p.cv.rmse ? q : p))
+  // SE of an RMSE is approximately rmse / sqrt(2·nEff).
+  const se = best.cv.rmse / Math.sqrt(2 * Math.max(2, best.cv.nEff))
+  const within = ok.filter((r) => r.cv.rmse <= best.cv.rmse + se)
+  return within.reduce((p, q) => (q.params < p.params ? q : p))
+}
+
+/**
+ * Does the gain hold in sign in every held-out block?
+ *
+ * The report's bar, and the one a pooled average cannot answer. `raw` is
+ * exempt because it has no gain to hold.
+ */
+export function gainHoldsEveryBlock(r: FormResult): boolean {
+  if (r.type === 'raw' || r.refused) return false
+  return r.perBlock.length > 1 && r.perBlock.every((b) => b.piRmse > 0)
+}

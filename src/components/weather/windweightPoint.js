@@ -19,7 +19,7 @@
 // on the other), not a load term.
 
 import { MODELS, rigDirectionShearDeg, interpolateDirectionAtHeight } from './openMeteo'
-import { matchVenue, specFor, applyMOS } from './mos'
+import { matchVenue, specFor, applyMOS, needsPreLift } from './mos'
 import { windweightFromProfile } from '../../lib/windweight'
 
 // The SSA-Race resolution a published windweight domain came from.
@@ -96,7 +96,11 @@ export function pointWindweightByHour({
     if (!raw) continue
     let vHKt = raw.vHKt
     let mosOn = false
-    if (spec && mosId) {
+    // Only a spec fitted AT the mast height may be applied to a mast-height
+    // speed. A 10 m-fitted correction belongs on the model's 10 m field,
+    // before the profile lifts it — there is no 10 m value in scope here, so
+    // the honest move is to leave the speed uncorrected and say so via mosOn.
+    if (spec && mosId && !needsPreLift(spec)) {
       const twd = interpolateDirectionAtHeight(hourly, heights, mastHeight, i)
       const m = applyMOS(spec, mosId, vHKt, twd, hr)
       if (m && m.ws > 0 && m.type !== 'raw') { vHKt = m.ws; mosOn = true }
