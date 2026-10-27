@@ -379,20 +379,19 @@ export const MODELS = {
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
 // venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
 // HRRR/NAM trail the European set and region-gate themselves off in Europe.
-// A MODEL IS INVISIBLE UNTIL IT IS IN THIS LIST. Adding an entry to MODELS is
-// not enough — the picker and the field viewer both walk MODEL_ORDER, so a new
-// model silently never appears. HRDPS was added to MODELS on 2026-10-27 and did
-// not show up at San Juan for exactly that reason. modelCoverage.test.ts now
-// asserts that every forecast model is either here or in a documented exclusion.
+// A MODEL IS INVISIBLE UNTIL IT IS IN A LIST — and there are TWO of them, which
+// is the trap. MODEL_ORDER drives the fetch order and the default pick;
+// COMPARE_ORDER below drives what the Forecast picker and the Compare view
+// actually show (MODEL_PICK_ORDER in ForecastView is built from it). HRDPS was
+// added to MODELS, then to MODEL_ORDER, and was STILL not visible, because the
+// viewer never reads MODEL_ORDER. modelCoverage.test.ts now checks both.
 export const MODEL_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRDPS', 'HRRR', 'NAM']
 
-// In MODELS but deliberately NOT offered. DMI HARMONIE was added for evaluation
-// and never promoted; it stays out of the picker until someone decides it earns
-// a place, and this list is what stops that decision being mistaken for the
-// oversight above.
-export const MODELS_NOT_OFFERED = ['DMI']
+
 // All models fetched (Phase 2 Compare consumes the extras).
-export const COMPARE_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRRR', 'NAM']
+// THIS is the list the Forecast picker and the Compare view walk. A model
+// missing here is invisible no matter what MODEL_ORDER says.
+export const COMPARE_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRDPS', 'HRRR', 'NAM']
 
 // Region gate. A model with a `coverage` box is only fetched + shown for points
 // inside it (hides the North-American models in Europe); models without a box
@@ -1084,7 +1083,7 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
 // standard MODEL_ORDER (AROME first) when no SSA-Race data is present.
 // Then the local regional models (region-gated, so only one ever has data) ahead
 // of the globals: HRRR at a North-American venue, not ECMWF.
-const LOCAL_FIRST = ['AROME', 'METNO', 'HRRR', 'NAM']
+const LOCAL_FIRST = ['AROME', 'METNO', 'HRDPS', 'HRRR', 'NAM']
 const DEFAULT_ACTIVE_ORDER = ['ICONRACE_1KM', 'ICONRACE', ...LOCAL_FIRST, ...MODEL_ORDER.filter((k) => !k.startsWith('ICONRACE') && !LOCAL_FIRST.includes(k))]
 export function pickDefaultActiveModel(allPoints) {
   for (const k of DEFAULT_ACTIVE_ORDER) {

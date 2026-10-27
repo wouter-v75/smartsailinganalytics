@@ -784,13 +784,22 @@ export async function fetchGfsHpblField({ lat, lon, timezone, nm = 30, n = 10 })
 // where there is one, GFS everywhere else. The fallback is taken on ANY
 // SSA-Race failure — outside a venue box, a cycle that has elapsed, or a cycle
 // published without hpbl — because all three mean the same thing to the viewer.
-export async function fetchHpblField({ lat, lon, timezone, modelKey = 'ICONRACE' }) {
-  try {
-    const f = await fetchIconRaceHpblField({ lat, lon, timezone, modelKey })
-    return { ...f, hpblSource: 'SSA-Race 2 km' }
-  } catch {
-    return fetchGfsHpblField({ lat, lon, timezone })
+export async function fetchHpblField({ lat, lon, timezone }) {
+  // 1 km FIRST, at every venue that has one. The 1 km grid.json carries the
+  // same per-cell hpbl series as the 2 km, so where a venue publishes both
+  // there is no reason to read the coarser one — and boundary-layer depth is
+  // exactly the field where terrain resolution shows, since it is the mixing
+  // over the islands and headlands that sets it.
+  for (const [modelKey, label] of [['ICONRACE_1KM', 'SSA-Race 1 km'], ['ICONRACE', 'SSA-Race 2 km']]) {
+    try {
+      const f = await fetchIconRaceHpblField({ lat, lon, timezone, modelKey })
+      return { ...f, hpblSource: label }
+    } catch {
+      // fall through: no venue box at this resolution, cycle elapsed, or a
+      // cycle published without hpbl — all the same thing to the viewer
+    }
   }
+  return fetchGfsHpblField({ lat, lon, timezone })
 }
 
 // Bilinear sample of a scalar field at (lat,lon) -> { value } (or null outside).

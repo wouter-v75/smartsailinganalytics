@@ -12,7 +12,7 @@
 // venue should have.
 
 import { describe, expect, it } from 'vitest'
-import { MODELS, MODEL_ORDER, MODELS_NOT_OFFERED } from '../openMeteo'
+import { MODELS, MODEL_ORDER, COMPARE_ORDER } from '../openMeteo'
 
 const VENUES: Record<string, [number, number]> = {
   'Porto Cervo': [41.135, 9.538],
@@ -81,22 +81,33 @@ describe('every coverage box is well formed', () => {
   })
 })
 
-describe('a model in MODELS is useless unless it is also in MODEL_ORDER', () => {
-  // How HRDPS came to be "not visible" after being added: the picker and the
-  // field viewer both walk MODEL_ORDER, so MODELS alone buys nothing. The
-  // failure is silent — no error, the model simply never appears.
-  it('offers every forecast model, or records why not', () => {
-    const forecast = Object.keys(MODELS).filter((k) => MODELS[k].endpoint || MODELS[k].bunnyBase)
-    const unlisted = forecast.filter((k) => !MODEL_ORDER.includes(k) && !MODELS_NOT_OFFERED.includes(k))
-    expect(unlisted, `in MODELS but neither offered nor documented: ${unlisted.join(', ')}`).toEqual([])
+describe('a model in MODELS is invisible until it is in the RIGHT list', () => {
+  // How HRDPS stayed invisible through two fixes. There are two lists and they
+  // do different jobs: MODEL_ORDER drives the fetch order and the default pick,
+  // COMPARE_ORDER drives what the Forecast picker and the Compare view actually
+  // render (ForecastView's MODEL_PICK_ORDER is built from it). Adding a model
+  // to MODELS buys nothing; adding it to MODEL_ORDER alone buys nothing a user
+  // can see. Neither failure produces an error.
+  const forecast = Object.keys(MODELS).filter((k) => MODELS[k].endpoint || MODELS[k].bunnyBase)
+
+  it('shows every forecast model in the picker', () => {
+    const unlisted = forecast.filter((k) => !COMPARE_ORDER.includes(k))
+    expect(unlisted, `in MODELS but not in COMPARE_ORDER, so invisible: ${unlisted.join(', ')}`).toEqual([])
   })
 
-  it('does not order a model that does not exist', () => {
-    for (const k of MODEL_ORDER) expect(MODELS[k], k).toBeTruthy()
-    for (const k of MODELS_NOT_OFFERED) expect(MODELS[k], k).toBeTruthy()
+  it('fetches every forecast model it shows', () => {
+    const unfetched = COMPARE_ORDER.filter((k) => !MODEL_ORDER.includes(k))
+    // DMI is the known gap: it is shown in Compare but is not in MODEL_ORDER,
+    // which predates this test. Recorded rather than silently tolerated.
+    expect(unfetched).toEqual(['DMI'])
   })
 
-  it('includes HRDPS, which is the one San Juan needs', () => {
+  it('never orders a model that does not exist', () => {
+    for (const k of [...MODEL_ORDER, ...COMPARE_ORDER]) expect(MODELS[k], k).toBeTruthy()
+  })
+
+  it('includes HRDPS in BOTH, which is the one San Juan needs', () => {
     expect(MODEL_ORDER).toContain('HRDPS')
+    expect(COMPARE_ORDER).toContain('HRDPS')
   })
 })
