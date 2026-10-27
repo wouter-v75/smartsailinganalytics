@@ -741,6 +741,58 @@ export async function fetchIconRaceHpblField({ lat, lon, timezone, modelKey = 'I
   return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true }
 }
 
+// GFS boundary-layer height, for everywhere the SSA-Race grid does not reach.
+//
+// hpbl was an SSA-Race-only layer, so it existed at five Mediterranean venues
+// and the Solent and nowhere else — including San Juan, where there is no
+// published grid yet. GFS carries `boundary_layer_height` globally, so the
+// layer can be offered anywhere at the cost of resolution: ~25 km against the
+// 2 km grid, sampled the way the wind field samples, which is honest for a
+// field whose whole use is "is the mixed layer deep enough to bring the gradient
+// down". The caller labels the source so the two are never confused.
+export async function fetchGfsHpblField({ lat, lon, timezone, nm = 30, n = 10 }) {
+  const box = boxAround(lat, lon, nm)
+  const { lats, lons, header } = sampleGrid(box, n, n)
+  const url = `https://api.open-meteo.com/v1/gfs?latitude=${lats.join(',')}&longitude=${lons.join(',')}`
+    + `&hourly=boundary_layer_height&timezone=${encodeURIComponent(timezone)}&forecast_days=3`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(res.status === 429 ? 'too many open meteo requests, try later' : `Open-Meteo ${res.status}`)
+  const json = parseOmJson(await res.text())
+  const pts = Array.isArray(json) ? json : [json]
+  if (pts.length !== lats.length) throw new Error(`grid mismatch: asked ${lats.length} points, got ${pts.length}`)
+  const times = pts.find((p) => p?.hourly?.time?.length)?.hourly?.time || []
+  if (!times.length) throw new Error('GFS returned no boundary-layer data for this area')
+  const frames = []
+  let scalarMax = 1
+  for (let t = 0; t < times.length; t++) {
+    const scalar = new Array(n * n)
+    for (let k = 0; k < pts.length; k++) {
+      const v = pts[k]?.hourly?.boundary_layer_height?.[t]
+      scalar[k] = v == null ? null : v
+      if (v != null && v > scalarMax) scalarMax = v
+    }
+    frames.push({ scalar })
+  }
+  // GFS times come back in the venue zone (timezone= is passed), so they are
+  // wall-clock strings like the Open-Meteo wind models, not UTC: isUTC false.
+  const labels = times.map((tt) => localLabel(tt, timezone, false))
+  const stamps = times.map((tt) => localStamp(tt, timezone, false))
+  return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true, hpblSource: 'GFS ~25 km' }
+}
+
+// hpbl from the best source available at this point: the SSA-Race 2 km grid
+// where there is one, GFS everywhere else. The fallback is taken on ANY
+// SSA-Race failure — outside a venue box, a cycle that has elapsed, or a cycle
+// published without hpbl — because all three mean the same thing to the viewer.
+export async function fetchHpblField({ lat, lon, timezone, modelKey = 'ICONRACE' }) {
+  try {
+    const f = await fetchIconRaceHpblField({ lat, lon, timezone, modelKey })
+    return { ...f, hpblSource: 'SSA-Race 2 km' }
+  } catch {
+    return fetchGfsHpblField({ lat, lon, timezone })
+  }
+}
+
 // Bilinear sample of a scalar field at (lat,lon) -> { value } (or null outside).
 export function sampleScalarField(field, idx, lat, lon) {
   if (!field || !field.frames || !field.frames[idx]) return null

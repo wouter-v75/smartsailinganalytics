@@ -33,8 +33,9 @@ import { useVenueSst } from './useVenueSst'
 import { deltaKFromHourly } from '../../lib/seaTemp'
 import {
   fetchWindField, fetchIconRaceField, fetchCurrentField, fetchCurrentHires, currentsCovered, toVelocityData, speedImageURL, sampleField,
+  fetchHpblField,
   applyMosToField, preferredFieldHeight, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
-  fetchIconRaceHpblField, scalarImageURL, sampleScalarField, hpblRamp, HPBL_MAX_M, buildHpblContourSvg,
+  scalarImageURL, sampleScalarField, hpblRamp, HPBL_MAX_M, buildHpblContourSvg,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -271,8 +272,14 @@ export default function ForecastView({
   const fieldVenue = p1lat != null ? matchVenue(p1lat, p1lon) : null
   const fieldMosId = MODELS[fieldModel]?.mosModel
   const fieldMosAvail = !!(fieldVenue && fieldMosId && correctionInfo(fieldVenue, fieldMosId))
+  // POINT 1 IS ENOUGH for the field-only layers. The three points describe a
+  // COURSE, which is what the wind field is framed around; a current or a
+  // boundary-layer field is sampled around point 1 alone and never looked at
+  // the other two. Requiring all three to see the tide was a gate inherited
+  // from the wind field rather than a thing either layer needs.
+  const fieldNeedsCourse = !['CURRENTS', 'HPBL'].includes(fieldModel)
   useEffect(() => {
-    if (!allThree || p1lat == null) { setField(null); return }
+    if ((fieldNeedsCourse && !allThree) || p1lat == null) { setField(null); return }
     if (!tzReady) return   // fetch once, in venue time
     if (!fieldModelHasData) return   // wait for point 1's data; the auto-pick chooses a model that covers it
     // On the first run after a remount (returning to the Weather tab), keep the
@@ -288,7 +295,7 @@ export default function ForecastView({
     const req = fieldModel === 'CURRENTS'
       ? fetchCurrentField({ lat: p1lat, lon: p1lon, timezone: tzResolved })
       : fieldModel === 'HPBL'
-        ? fetchIconRaceHpblField({ lat: p1lat, lon: p1lon, timezone: tzResolved, modelKey: 'ICONRACE' })
+        ? fetchHpblField({ lat: p1lat, lon: p1lon, timezone: tzResolved, modelKey: 'ICONRACE' })
         : fieldModel.startsWith('ICONRACE')
           ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved, modelKey: fieldModel })
           : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
@@ -310,7 +317,7 @@ export default function ForecastView({
     // `field` is read only for the first-run restore guard; it must NOT be a dep
     // (this effect SETS field, so depending on it would loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, tzReady, fieldModelHasData, fieldMosAvail, canMos])
+  }, [allThree, fieldNeedsCourse, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, tzReady, fieldModelHasData, fieldMosAvail, canMos])
 
   // Currents LOD: when the current field is showing, zoom IN (≥10) loads the native
   // ~1.5 km clip (20 km around point 1) and zoom OUT swaps back to the ~3 km overview.
@@ -759,11 +766,12 @@ export default function ForecastView({
     // Currents is a FIELD-ONLY layer (not a wind model): available when point 1 is
     // inside the Channel current coverage.
     out.CURRENTS = !!(p1lat != null && p1lon != null && currentsCovered(p1lat, p1lon))
-    // Boundary-layer height is a FIELD-ONLY scalar layer read from the SSA-Race
-    // 2 km grid. Gate it on that grid actually having returned data, not merely on
-    // point 1 sitting inside a venue box: a venue whose last cycle has elapsed is
-    // skipped by fetchBunnyModel, and offering HPBL there just yields an error.
-    out.HPBL = !!out.ICONRACE
+    // Boundary-layer height: the SSA-Race 2 km grid where there is one, GFS
+    // (~25 km, global) everywhere else — so the layer is offered wherever point
+    // 1 is, not only at the six venues with a published grid. fetchHpblField
+    // picks the source and labels it; the old gate on out.ICONRACE is what made
+    // this invisible at San Juan, which has no published grid yet.
+    out.HPBL = p1lat != null && p1lon != null
     return out
   }, [windData, p1lat, p1lon])
 
@@ -1035,9 +1043,10 @@ export default function ForecastView({
         {/* RIGHT — wind-field controls as buttons */}
         <div style={{ flex: '1 1 300px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>
-            🌀 Wind field {allThree ? '· point 1 (20 nm)' : ''}
+            🌀 Wind field {allThree || !fieldNeedsCourse ? '· point 1 (20 nm)' : ''}
           </div>
-          {!allThree && <div style={{ fontSize: 11, color: '#64748B' }}>Set 3 points to load the field.</div>}
+          {fieldNeedsCourse && !allThree
+            && <div style={{ fontSize: 11, color: '#64748B' }}>Set 3 points to load the field — currents and boundary layer need only point 1.</div>}
           <div style={{ fontSize: 11, color: '#94A3B8' }}>
             Model: <span style={{ color: MODELS[fieldModel]?.color, fontWeight: 700 }}>{labelWithCycle(fieldModel, cycles)}</span>
             <span style={{ color: '#475569' }}> — pick below</span>

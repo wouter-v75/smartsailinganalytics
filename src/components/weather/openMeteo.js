@@ -379,7 +379,18 @@ export const MODELS = {
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
 // venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
 // HRRR/NAM trail the European set and region-gate themselves off in Europe.
-export const MODEL_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRRR', 'NAM']
+// A MODEL IS INVISIBLE UNTIL IT IS IN THIS LIST. Adding an entry to MODELS is
+// not enough — the picker and the field viewer both walk MODEL_ORDER, so a new
+// model silently never appears. HRDPS was added to MODELS on 2026-10-27 and did
+// not show up at San Juan for exactly that reason. modelCoverage.test.ts now
+// asserts that every forecast model is either here or in a documented exclusion.
+export const MODEL_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRDPS', 'HRRR', 'NAM']
+
+// In MODELS but deliberately NOT offered. DMI HARMONIE was added for evaluation
+// and never promoted; it stays out of the picker until someone decides it earns
+// a place, and this list is what stops that decision being mistaken for the
+// oversight above.
+export const MODELS_NOT_OFFERED = ['DMI']
 // All models fetched (Phase 2 Compare consumes the extras).
 export const COMPARE_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRRR', 'NAM']
 

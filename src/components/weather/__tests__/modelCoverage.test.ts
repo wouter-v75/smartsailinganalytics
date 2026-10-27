@@ -12,7 +12,7 @@
 // venue should have.
 
 import { describe, expect, it } from 'vitest'
-import { MODELS } from '../openMeteo'
+import { MODELS, MODEL_ORDER, MODELS_NOT_OFFERED } from '../openMeteo'
 
 const VENUES: Record<string, [number, number]> = {
   'Porto Cervo': [41.135, 9.538],
@@ -78,5 +78,25 @@ describe('every coverage box is well formed', () => {
       expect(c.latMin, key).toBeLessThan(c.latMax)
       expect(c.lonMin, key).toBeLessThan(c.lonMax)
     }
+  })
+})
+
+describe('a model in MODELS is useless unless it is also in MODEL_ORDER', () => {
+  // How HRDPS came to be "not visible" after being added: the picker and the
+  // field viewer both walk MODEL_ORDER, so MODELS alone buys nothing. The
+  // failure is silent — no error, the model simply never appears.
+  it('offers every forecast model, or records why not', () => {
+    const forecast = Object.keys(MODELS).filter((k) => MODELS[k].endpoint || MODELS[k].bunnyBase)
+    const unlisted = forecast.filter((k) => !MODEL_ORDER.includes(k) && !MODELS_NOT_OFFERED.includes(k))
+    expect(unlisted, `in MODELS but neither offered nor documented: ${unlisted.join(', ')}`).toEqual([])
+  })
+
+  it('does not order a model that does not exist', () => {
+    for (const k of MODEL_ORDER) expect(MODELS[k], k).toBeTruthy()
+    for (const k of MODELS_NOT_OFFERED) expect(MODELS[k], k).toBeTruthy()
+  })
+
+  it('includes HRDPS, which is the one San Juan needs', () => {
+    expect(MODEL_ORDER).toContain('HRDPS')
   })
 })
