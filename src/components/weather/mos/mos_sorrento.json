@@ -1,6 +1,9 @@
 {
   "venue": "sorrento",
   "target_height_m": 30,
+  "cell_selection": "sea",
+  "truth": "445 ten-minute bins of calibrated 30 m logfile wind, 3 regattas",
+  "refitted_on": "2026-10-27",
   "bands": [
     [
       "SW-W",
@@ -19,58 +22,65 @@
     ]
   ],
   "models": {
-    "ecmwf_ifs025": {
-      "type": "diurnal",
-      "a": 0.5208695310887265,
-      "b": 6.24528046993578,
-      "c0": -0.6108245109083156,
-      "c1": -2.4330058459060484,
-      "c2": -0.006272156301655206,
-      "best": "diurnal",
-      "cv_rmse": 3.458,
-      "raw_rmse": 4.829,
-      "reduction_pct": 28.4,
-      "sector_agreement": 0.62,
-      "n": 445,
-      "cell_selection": "sea",
-      "cell_unchanged_by_fix": true
-    },
-    "gfs_seamless": {
-      "type": "bias_scale",
-      "a": 0.6230268472212506,
-      "b": 4.957944876828991,
-      "best": "bias_scale",
-      "cv_rmse": 3.743,
-      "raw_rmse": 4.155,
-      "reduction_pct": 9.9,
-      "sector_agreement": 0.57,
-      "n": 445,
-      "unused_by_app": "no MODELS entry has this mosModel"
-    },
-    "icon_eu": {
-      "type": "bias_scale",
-      "a": 0.7347893305366335,
-      "b": 5.363956465275883,
-      "best": "bias_scale",
-      "cv_rmse": 3.672,
-      "raw_rmse": 5.171,
-      "reduction_pct": 29,
-      "sector_agreement": 0.68,
-      "n": 445,
-      "cell_selection": "sea",
-      "cell_unchanged_by_fix": true
-    },
     "italia_meteo_arpae_icon_2i": {
       "type": "raw",
       "best": "raw",
-      "cv_rmse": 3.912,
-      "raw_rmse": 3.912,
+      "cv_rmse": 4.076,
+      "raw_rmse": 4.076,
       "reduction_pct": 0,
-      "sector_agreement": 0.59,
+      "sector_agreement": 0.62,
       "n": 287,
-      "cell_selection": "sea",
-      "cell_unchanged_by_fix": true
+      "folds": null,
+      "holds_every_regatta": false
+    },
+    "meteofrance_arpege_europe": {
+      "type": "raw",
+      "best": "raw",
+      "not_shipped": "bias_scale",
+      "why": "the gain did not hold in every held-out regatta",
+      "cv_rmse": 3.955,
+      "raw_rmse": 4.18,
+      "reduction_pct": 5.4,
+      "sector_agreement": 0.63,
+      "n": 445,
+      "folds": 3,
+      "holds_every_regatta": false
+    },
+    "icon_eu": {
+      "type": "sector",
+      "a": 0.7622258408353685,
+      "b": 4.896525050475138,
+      "delta": {
+        "SW-W": 0.1445783418266698,
+        "E-S": 2.3159413450468156,
+        "other": -2.317027114865411,
+        "N-NE": 2.715573928039667
+      },
+      "global": 1.0998303391613845e-12,
+      "best": "sector",
+      "cv_rmse": 3.508,
+      "raw_rmse": 4.841,
+      "reduction_pct": 27.5,
+      "sector_agreement": 0.7,
+      "n": 445,
+      "folds": 3,
+      "holds_every_regatta": true
+    },
+    "ecmwf_ifs025": {
+      "type": "diurnal",
+      "a": 0.5025373202255494,
+      "b": 6.141434328643975,
+      "c0": -0.7337123270462664,
+      "c1": -2.277784444580631,
+      "c2": -0.187381853195928,
+      "best": "diurnal",
+      "cv_rmse": 3.339,
+      "raw_rmse": 4.611,
+      "reduction_pct": 27.6,
+      "sector_agreement": 0.58,
+      "n": 445,
+      "folds": 3,
+      "holds_every_regatta": true
     }
-  },
-  "cell_selection": "sea"
+  }
 }

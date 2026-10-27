@@ -72,10 +72,14 @@ describe('applyMosToField — the deck/map path uses the same correction as the 
   })
 
   it("is a no-op for a model fitted 'raw' at this venue", () => {
-    // gfs_seamless is type 'raw' at Porto Cervo — the correction exists but is
-    // deliberately identity, and must not shift the field.
-    expect(spec.models.gfs_seamless.type).toBe('raw')
-    const out = applyMosToField(fieldAt(16, 200), spec, 'gfs_seamless')
+    // ICON-2I is type 'raw' at Porto Cervo — only one of its two regattas has
+    // data, so there is nothing to cross-validate and the entry is deliberately
+    // identity. It must not shift the field. (This used to use gfs_seamless,
+    // which the 2026 refit dropped from the specs altogether: no MODELS entry
+    // claims that mosModel, so the app never asked applyMOS for it.)
+    const rawId = MODELS.ITALIA.mosModel
+    expect(spec.models[rawId].type).toBe('raw')
+    const out = applyMosToField(fieldAt(16, 200), spec, rawId)
     expect(speedOf(out)).toBeCloseTo(16, 6)
   })
 
@@ -84,16 +88,20 @@ describe('applyMosToField — the deck/map path uses the same correction as the 
     expect(speedOf(out)).toBeCloseTo(16, 6)
   })
 
-  it('applies the diurnal term by local hour where one is fitted (St Tropez AROME)', () => {
-    const st = specFor('st-tropez')!
-    const id = MODELS.AROME.mosModel
-    expect(st.models[id].type).toBe('diurnal')
-    const morning = applyMosToField(fieldAt(14, 200, 'Sat 08:00'), st, id)
-    const afternoon = applyMosToField(fieldAt(14, 200, 'Sat 15:00'), st, id)
+  it('applies the diurnal term by local hour where one is fitted (Sorrento ECMWF)', () => {
+    // Sorrento's ECMWF entry, which the 2026 refit kept as a diurnal form at
+    // 27.6 % holding in all three regattas. It used to be St Tropez's AROME —
+    // that one is now raw, because its gain did not survive a held-out
+    // regatta, so the venue could no longer demonstrate a diurnal term.
+    const sor = specFor('sorrento')!
+    const id = MODELS.ECMWF.mosModel
+    expect(sor.models[id].type).toBe('diurnal')
+    const morning = applyMosToField(fieldAt(14, 200, 'Sat 08:00'), sor, id)
+    const afternoon = applyMosToField(fieldAt(14, 200, 'Sat 15:00'), sor, id)
     // the whole point of a diurnal fit: the same raw speed corrects differently
     expect(speedOf(morning)).not.toBeCloseTo(speedOf(afternoon), 3)
-    expect(speedOf(morning)).toBeCloseTo(applyMOS(st, id, 14, 200, 8)!.ws, 4)
-    expect(speedOf(afternoon)).toBeCloseTo(applyMOS(st, id, 14, 200, 15)!.ws, 4)
+    expect(speedOf(morning)).toBeCloseTo(applyMOS(sor, id, 14, 200, 8)!.ws, 4)
+    expect(speedOf(afternoon)).toBeCloseTo(applyMOS(sor, id, 14, 200, 15)!.ws, 4)
   })
 
   it('recomputes maxSpeed so the field palette matches the corrected wind', () => {

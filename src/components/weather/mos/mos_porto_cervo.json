@@ -1,6 +1,9 @@
 {
   "venue": "porto_cervo",
   "target_height_m": 30,
+  "cell_selection": "sea",
+  "truth": "261 ten-minute bins of calibrated 30 m logfile wind, 2 regattas",
+  "refitted_on": "2026-10-27",
   "bands": [
     [
       "NW",
@@ -19,110 +22,78 @@
     ]
   ],
   "models": {
-    "ecmwf_ifs025": {
-      "type": "raw",
-      "best": "raw",
-      "not_shipped": "sector",
-      "why": "fitted against the land cell; the re-expression did not beat raw on the sea cell",
-      "cell_selection": "sea",
-      "voided": {
-        "a": 0.8559380804566877,
-        "b": 1.9633517566274823,
-        "reduction_pct": 7.5
-      }
-    },
-    "gfs_seamless": {
-      "type": "raw",
-      "best": "raw",
-      "cv_rmse": 3.102,
-      "raw_rmse": 3.102,
-      "reduction_pct": 0,
-      "sector_agreement": 0.88,
-      "n": 261,
-      "unused_by_app": "no MODELS entry has this mosModel"
-    },
-    "icon_eu": {
-      "type": "bias_scale",
-      "a": 0.8690911609417737,
-      "b": 2.421926996945925,
-      "n": 261,
-      "best": "bias_scale (re-expressed for the sea cell)",
-      "cell_selection": "sea",
-      "reexpressed_from": {
-        "a": 1.0510081021789734,
-        "b": 1.843267785746618,
-        "cell_selection": "land"
-      },
-      "land_from_sea": {
-        "p": 0.8269,
-        "q": 0.5506,
-        "r2": 0.956,
-        "residual_sd_kn": 1.06
-      },
-      "checked_on": {
-        "hours": 33,
-        "rmse_kn": 2.98,
-        "bias_kn": -1.7,
-        "raw_rmse_kn": 3.72
-      }
-    },
     "italia_meteo_arpae_icon_2i": {
       "type": "raw",
       "best": "raw",
       "sector_agreement": 0.95,
       "n": 131,
-      "note": "insufficient regattas for CV",
-      "cell_selection": "sea",
-      "cell_fix_check": {
-        "hours": 33,
-        "land_rmse_kn": 4.61,
-        "sea_rmse_kn": 4.03
-      }
+      "note": "insufficient regattas for CV"
     },
     "meteofrance_arome_france_hd": {
       "type": "raw",
       "best": "raw",
       "not_shipped": "bias_scale",
-      "why": "fitted against the land cell; the re-expression did not beat raw on the sea cell",
-      "cell_selection": "sea",
-      "voided": {
-        "a": 0.8733167852389236,
-        "b": 2.591931603817258,
-        "reduction_pct": 2
-      }
+      "why": "the gain did not hold in every held-out regatta",
+      "cv_rmse": 3.72,
+      "raw_rmse": 3.76,
+      "reduction_pct": 1.1,
+      "sector_agreement": 0.89,
+      "n": 261,
+      "folds": 2,
+      "holds_every_regatta": false
     },
     "meteofrance_arpege_europe": {
       "type": "sector",
-      "a": 0.8076626952457339,
-      "b": 2.47757754207088,
+      "a": 0.8855676592913757,
+      "b": 3.0802033703507927,
       "delta": {
-        "SW-S": -0.4203483201423136,
-        "NW": 0.9385816549336791,
-        "SE-E": -1.012253935861066,
-        "other": 0.21360491672354587
+        "SW-S": -0.6232567116449439,
+        "NW": 1.572343070196953,
+        "SE-E": -1.5288655958850605,
+        "other": -0.854437392437057
       },
-      "global": -4.9819663082030015e-15,
+      "global": 1.1658822055930311e-12,
+      "best": "sector",
+      "cv_rmse": 2.984,
+      "raw_rmse": 3.634,
+      "reduction_pct": 17.9,
+      "sector_agreement": 0.92,
       "n": 261,
-      "best": "sector (re-expressed for the sea cell)",
-      "cell_selection": "sea",
-      "reexpressed_from": {
-        "a": 1.0627602318579177,
-        "b": 0.8057519890279009,
-        "cell_selection": "land"
+      "folds": 2,
+      "holds_every_regatta": true
+    },
+    "icon_eu": {
+      "type": "bias_scale",
+      "a": 0.9174493635713543,
+      "b": 2.6161001568968825,
+      "best": "bias_scale",
+      "cv_rmse": 3.077,
+      "raw_rmse": 3.401,
+      "reduction_pct": 9.5,
+      "sector_agreement": 0.83,
+      "n": 261,
+      "folds": 2,
+      "holds_every_regatta": true
+    },
+    "ecmwf_ifs025": {
+      "type": "sector",
+      "a": 0.7023804803364082,
+      "b": 2.733778856604742,
+      "delta": {
+        "SW-S": -1.1334168448368536,
+        "NW": 0.2733516178925016,
+        "SE-E": -0.13796946314635192,
+        "other": 0.2546644850109759
       },
-      "land_from_sea": {
-        "p": 0.76,
-        "q": 1.5731,
-        "r2": 0.84,
-        "residual_sd_kn": 1.93
-      },
-      "checked_on": {
-        "hours": 33,
-        "rmse_kn": 4.36,
-        "bias_kn": -2.92,
-        "raw_rmse_kn": 5.01
-      }
+      "global": 1.042646599114026e-12,
+      "best": "sector",
+      "cv_rmse": 2.898,
+      "raw_rmse": 3.646,
+      "reduction_pct": 20.5,
+      "sector_agreement": 0.87,
+      "n": 261,
+      "folds": 2,
+      "holds_every_regatta": true
     }
-  },
-  "cell_selection": "sea"
+  }
 }

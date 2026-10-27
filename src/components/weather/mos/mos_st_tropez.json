@@ -1,6 +1,9 @@
 {
   "venue": "st_tropez",
   "target_height_m": 30,
+  "cell_selection": "sea",
+  "truth": "417 ten-minute bins of calibrated 30 m logfile wind, 3 regattas",
+  "refitted_on": "2026-10-27",
   "bands": [
     [
       "NW",
@@ -19,128 +22,57 @@
     ]
   ],
   "models": {
-    "ecmwf_ifs025": {
-      "type": "bias_scale",
-      "a": 0.5635549316316532,
-      "b": 4.4134179136115295,
-      "n": 267,
-      "best": "bias_scale (re-expressed for the sea cell)",
-      "cell_selection": "sea",
-      "reexpressed_from": {
-        "a": 0.8969911065891987,
-        "b": 3.258254355002632,
-        "cell_selection": "land"
-      },
-      "land_from_sea": {
-        "p": 0.6283,
-        "q": 1.2878,
-        "r2": 0.744,
-        "residual_sd_kn": 1.84
-      },
-      "checked_on": {
-        "hours": 37,
-        "rmse_kn": 2.65,
-        "bias_kn": -0.89,
-        "raw_rmse_kn": 2.92
-      }
-    },
-    "gfs_seamless": {
-      "type": "bias_scale",
-      "a": 0.8046741159658484,
-      "b": 2.447952164728759,
-      "best": "bias_scale",
-      "cv_rmse": 2.357,
-      "raw_rmse": 2.558,
-      "reduction_pct": 7.9,
-      "sector_agreement": 0.83,
+    "meteofrance_arome_france_hd": {
+      "type": "raw",
+      "best": "raw",
+      "not_shipped": "sector",
+      "why": "the gain did not hold in every held-out regatta",
+      "cv_rmse": 2.675,
+      "raw_rmse": 2.811,
+      "reduction_pct": 4.8,
+      "sector_agreement": 0.79,
       "n": 417,
-      "unused_by_app": "no MODELS entry has this mosModel"
+      "folds": 3,
+      "holds_every_regatta": false
+    },
+    "meteofrance_arpege_europe": {
+      "type": "raw",
+      "best": "raw",
+      "not_shipped": "diurnal",
+      "why": "the gain did not hold in every held-out regatta",
+      "cv_rmse": 2.558,
+      "raw_rmse": 2.713,
+      "reduction_pct": 5.7,
+      "sector_agreement": 0.76,
+      "n": 417,
+      "folds": 3,
+      "holds_every_regatta": false
     },
     "icon_eu": {
       "type": "bias_scale",
-      "a": 0.8049253972330918,
-      "b": 3.3902135547733727,
+      "a": 0.8702379435767821,
+      "b": 2.941093483715987,
+      "best": "bias_scale",
+      "cv_rmse": 2.497,
+      "raw_rmse": 3.045,
+      "reduction_pct": 18,
+      "sector_agreement": 0.82,
       "n": 417,
-      "best": "bias_scale (re-expressed for the sea cell)",
-      "cell_selection": "sea",
-      "reexpressed_from": {
-        "a": 0.895312530709088,
-        "b": 2.8909464183865947,
-        "cell_selection": "land"
-      },
-      "land_from_sea": {
-        "p": 0.899,
-        "q": 0.5576,
-        "r2": 0.971,
-        "residual_sd_kn": 0.77
-      },
-      "checked_on": {
-        "hours": 37,
-        "rmse_kn": 3.07,
-        "bias_kn": -0.26,
-        "raw_rmse_kn": 3.64
-      }
+      "folds": 3,
+      "holds_every_regatta": true
     },
-    "meteofrance_arome_france_hd": {
-      "type": "diurnal",
-      "a": 0.9955098371924128,
-      "b": 1.5009718138417727,
-      "c0": -0.861935917214086,
-      "c1": 1.1120711759646495,
-      "c2": -1.4213706069712502,
-      "n": 417,
-      "best": "diurnal (re-expressed for the sea cell)",
-      "cell_selection": "sea",
-      "reexpressed_from": {
-        "a": 0.9724556669415771,
-        "b": 1.380373585954529,
-        "cell_selection": "land"
-      },
-      "land_from_sea": {
-        "p": 1.0237,
-        "q": 0.124,
-        "r2": 0.961,
-        "residual_sd_kn": 0.94
-      },
-      "checked_on": {
-        "hours": 37,
-        "rmse_kn": 2.33,
-        "bias_kn": 0.61,
-        "raw_rmse_kn": 2.35
-      }
-    },
-    "meteofrance_arpege_europe": {
-      "type": "sector",
-      "a": 0.670941099359555,
-      "b": 4.134813831686426,
-      "delta": {
-        "S-W": 0.3002301822733753,
-        "E-SE": -0.7496037353967796,
-        "other": 0.8650659132838302,
-        "NW": 0.5890276162950808
-      },
-      "global": 1.2609151665766766e-15,
-      "n": 417,
-      "best": "sector (re-expressed for the sea cell)",
-      "cell_selection": "sea",
-      "reexpressed_from": {
-        "a": 0.9444131842718618,
-        "b": 2.087088006648074,
-        "cell_selection": "land"
-      },
-      "land_from_sea": {
-        "p": 0.7104,
-        "q": 2.1683,
-        "r2": 0.779,
-        "residual_sd_kn": 1.95
-      },
-      "checked_on": {
-        "hours": 37,
-        "rmse_kn": 3.03,
-        "bias_kn": -1.83,
-        "raw_rmse_kn": 4.07
-      }
+    "ecmwf_ifs025": {
+      "type": "raw",
+      "best": "raw",
+      "not_shipped": "bias_scale",
+      "why": "the gain did not hold in every held-out regatta",
+      "cv_rmse": 2.791,
+      "raw_rmse": 2.972,
+      "reduction_pct": 6.1,
+      "sector_agreement": 0.72,
+      "n": 267,
+      "folds": 2,
+      "holds_every_regatta": false
     }
-  },
-  "cell_selection": "sea"
+  }
 }
