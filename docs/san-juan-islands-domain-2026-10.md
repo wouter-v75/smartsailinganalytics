@@ -1,6 +1,28 @@
 # San Juan Islands — SSA-Race domain setup
 
-**Status:** build note + research · 21 Oct 2026 · domains `san_juan_islands_2km` / `_1km`
+**Status:** build note + research · 21 Oct 2026, **status updated 27 Oct 2026** · domains
+`san_juan_islands_2km` / `_1km`
+
+> ### Where it stands, 27 Oct 2026
+>
+> **Decided and built:** driving data is ICON global, streamed, levels 45-120, **12z** (§6 phase 0).
+> `fetch_icon_global.sh` is written and dry-run (§5g) — the "I have not shipped a
+> `fetch_icon_global.sh`" line in §4 records the state on 21 Oct and is superseded by §5g.
+> Preprocessing is source-aware rather than forked (§5h), the box can run both roads in one day
+> under `flock` (§5j), and the icosahedral chain is proved end to end at 3 s per weight set with
+> `0 missing` (§5k).
+>
+> **App side is complete and tested.** Both resolutions are registered
+> (`openMeteo.js`, pinned by `sanJuanVenue.test.ts`), the venue is in `lib/venues.ts` as
+> `san-juan`, observations arrive keyless from NDBC (7 stations inside 25 nm), and HRRR at 3 km
+> already covers the venue today. The §5i follow-up "the app shows one chain" is **done**:
+> `ICONRACE_STATUS_FILES = ['status.json', 'status_usa.json']`, `fetchIconRaceStatus(name)`,
+> ModelUpdates tags the second chain, and `iconRaceStatusChains.test.ts` pins both.
+>
+> **Open, in order:** place the Zonda `.nc` and confirm `z_mc` (§6 phase 4 — the grids are ready);
+> Pacific SST product (§5b, and the premise is now measured — see the note there); first run on a
+> past cycle with `REGATTA_ROOT` redirected; `.env` + a second cron entry at ~14:41 UTC; then
+> validate against HRRR (§6 phase 7). Tidal currents remain a separate piece of work (§5).
 **Brief:** clone the Cowes/Solent pair onto 48.5627 N, 122.8946 W; same initialisation, physics,
 resolution and size; same integration into SSA.
 
@@ -269,7 +291,8 @@ no box work at all. The only thing our own nest adds is 1 km island-scale resolu
 that is needed is an empirical question that C answers for free. Build the chain once HRRR has been
 shown to miss the island-scale breeze, not before.
 
-**So I have not shipped a `fetch_icon_global.sh`.** Writing a production fetcher that cannot run
+**So I have not shipped a `fetch_icon_global.sh`.** *(State on 21 Oct. Superseded: option A was
+chosen and §5g has the written, dry-run fetcher.)* Writing a production fetcher that cannot run
 here would be worse than saying so. The realistic options, in the order I would consider them:
 
 1. **ECMWF open data IFS 0.25°** — global, regular lat-lon, EU-sourced (so the sovereignty policy
@@ -443,6 +466,38 @@ is a *sharp coastal SST front*. The Salish Sea is strongly tidally mixed and clo
 year-round — the sea-breeze forcing is the large, stable land-sea contrast, not a gradient within
 the water. If that holds, 5.5 km is ample and the whole question evaporates. That is a cheap thing
 to check against buoy data and worth doing first.
+
+**MEASURED 27 Oct 2026, and the premise is half wrong — but the conclusion holds.** NDBC water
+temperature, every station within 60 nm of the pin that reports it, 1,078 hours they share over the
+45-day realtime window:
+
+```
+  46088  New Dungeness      17.9 nm   mean 11.18 °C   10.20-13.00
+  ptww1  Port Townsend      27.6 nm   mean 12.22      11.60-13.40
+  ptaw1  Port Angeles       34.1 nm   mean 10.95       9.90-12.70
+  46267  Angeles Point      36.6 nm   mean 10.26       8.80-12.30
+
+  across-station spread at the same hour:  median 2.00 K   p90 2.50 K   max 3.40 K
+  station means span 1.96 K over 37 nm
+```
+
+So it is **not** isothermal: there is a persistent ~2 K gradient, cold at the western end of the
+Strait of Juan de Fuca and warming eastward — upwelled, tidally mixed water against Puget Sound
+water, which is physically what you would expect and is a real sea-breeze lever.
+
+**But it is a BROAD gradient, not a front: 2 K over 37 nm is 0.05 K per nautical mile.** Across a
+2-5 km San Juan channel that is about 0.1 K. A 0.05° product puts roughly twelve cells across the
+whole gradient, so it resolves everything that is there; MUR's 1 km would be resolving noise, and
+(above) its IR detail is least available under exactly the cloud this coast has. **So the product
+decision is: ~5.5 km or better is ample, pick on sovereignty rather than on resolution** — which
+per the README means a Mercator/IFREMER global L4 rather than OSTIA. Confirm the dataset id with
+`copernicusmarine describe` before wiring, as §5b already demands.
+
+Two caveats on the measurement, both worth stating. Three of the four stations are shore-mounted
+CO-OPS sensors rather than open-water buoys, and a sensor in a bay reads warmer than mid-channel, so
+part of the 2 K is siting rather than water mass. And this is one 45-day window in September-October,
+not the year — Friday Harbor, the one station actually *in* the islands at 4.8 nm, reports no water
+temperature at all, which is why the nearest usable sensor is 18 nm away.
 
 Whichever is chosen, confirm the dataset-id with `copernicusmarine describe` before wiring it — the
 existing script demands exactly that discipline, because a product id and a dataset id are not the
@@ -834,10 +889,14 @@ knowing.
 ## 6b. Checklist
 
 - [x] Domains created, namelists verified byte-identical to Cowes
-- [x] Zonda requests written, CORINE disabled with the ExtPar source checked
+- [x] Zonda requests written and submitted, CORINE disabled with the ExtPar source checked
 - [x] App venues registered on both resolutions, test pinned
-- [ ] **Decide the driving data** (§4) — gates everything below
-- [ ] Submit the two Zonda requests; place `.nc` into `grid/` and `extpar/`
+- [x] **Driving data decided** (§6 phase 0): ICON global, streamed, levels 45-120, 12z
+- [x] `fetch_icon_global.sh` written and dry-run (§5g); preprocessing source-aware (§5h);
+      both roads serialised on one box (§5j); icosahedral chain proved (§5k)
+- [x] App reads both status chains (`status.json` + `status_usa.json`), test pinned
+- [x] SST resolution question answered by measurement (§5b): ~5.5 km is ample, choose on sovereignty
+- [ ] Place the Zonda `.nc` into `grid/` and `extpar/` — **the grids are ready, this is next**
 - [ ] Pacific SST product chosen and wired into `fetch_cmems_sst.sh`
 - [ ] `NESTS` / `DOMAINS` / `EVENT_VENUE` set in `.env` when the event approaches
 - [ ] Confirm `z_mc` after grid generation (the project's standing post-grid check)
