@@ -179,6 +179,71 @@ This is exactly the trade asked for — "happy to trim some of the bottom of the
 domain to keep the total size the same" — and it lands 25 % *under* the old size
 rather than level with it.
 
+### Measured after install: 10 km of buffer is SEVEN rows, not ten
+
+The grid was installed on 27 Oct and audited against what ICON actually does
+with it, and the headline number above — "+10 km buffer" — does not mean what it
+was written to mean. **Kilometres of clearance are not rows of grid.** On an
+R19B08 grid the row-to-row spacing measured along the row normal is ~1.2–1.4 km,
+not 1.0 km, and a box *corner* is the worst case on two axes at once. So the
+10 km buffer buys **seven rows**, and the pins sit at `refin_c_ctrl` 7–9.
+
+That matters because the relaxation zone is counted in rows. Read off
+`/opt/icon/src` rather than remembered:
+
+- `mo_impl_constants_grf.f90` — `grf_bdywidth_c = 4`, so `grf_nudge_start_c = 5`
+- `mo_intp_coeffs.f90`, `init_nudgecoeffs` —
+  `nudgecoeff_c = nudge_max_coeff · exp(−(refin_c_ctrl − 5) / nudge_efold_width)`
+  for `0 < refin_c_ctrl ≤ nudge_zone_width + 4`
+- `mo_interpol_nml.f90:274` — `config_nudge_max_coeff = 5 × (namelist value)`, so
+  the box's `nudge_max_coeff = 0.075` is **0.375** inside the model
+
+With `nudge_zone_width = 8` the nudged band is rows **1–12**, and rows 1–4 are
+the boundary-interpolation zone: not nudged but *prescribed*, the parent
+verbatim. So the real question for any published box is which row its corners
+land on. `scripts/nudge_audit.py` on the box answers it for every domain at once:
+
+```bash
+docker run --rm -v /opt/regatta-nwp:/work -w /work icon-nwp:riviera-opt \
+    python3 -I scripts/nudge_audit.py
+```
+
+| domain | worst corner | coeff | % of boundary strength | % of box nudged |
+|---|---|---|---|---|
+| **san_juan_islands_1km** (new) | 7 | 0.138 | 37 % | 48 % |
+| san_juan_islands_1km (**old round**) | **4** | 0.375 | **100 %, prescribed** | 52 % |
+| solent_1km | 8 | 0.084 | 22 % | 36 % |
+| porto_cervo_1km | 8 | 0.084 | 22 % | 23 % |
+| porto_cervo_2km | 10 | 0.031 | 8 % | 9 % |
+| la_spezia_1km | 11 | 0.019 | 5 % | 6 % |
+| la_ciotat_1km, st_tropez_1km | 12 | 0.011 | 3 % | 0–2 % |
+| every other 2 km | 0 / 14 | 0 | 0 % | 0 % |
+
+Two things follow, and they point the same way.
+
+**The regrid is a large improvement, not a marginal one.** The round box's
+corners were at row 4 — *inside the prescribed zone*, meaning those cells were
+the 2 km parent's answer copied in and published as 1 km output. The pinned box
+moves them to rows 7–9. That is the headline benefit, and it was invisible until
+the grid existed to measure.
+
+**It is still the most exposed of the seven 1 km nests**, one row worse than the
+Solent and Porto Cervo, which have been shipping for months. Closing it fully
+would need `hwidth_lon ≈ 0.587` and `hwidth_lat ≈ 0.346` — about **6,500 cells**,
+*more* than the 6,168 of the round grid it replaced, so the whole ~12 min
+runtime gain and the 09:13 publish go back. That trade is available but has not
+been taken: the exposure is a property of the entire 1 km fleet, and buying it
+back for one venue at the cost of the schedule is the wrong way round.
+
+**Do not re-derive the buffer in kilometres.** If a future venue needs its box
+genuinely clear of the nudged band, the rule is **~1.3 km of `hwidth` padding
+per cell row**, so clearing all 12 rows wants ~16 km per side at 1 km
+resolution, not 10. An earlier version of `sanJuanVenue.test.ts` asserted the
+10 km in degrees under the name "clear of the relaxation zone"; it passed
+throughout, including while the old grid's corners sat at full nudging strength.
+That test is renamed and now says in its own comment that it measures nominal
+kilometres and that `nudge_audit.py` is the authority.
+
 ### The 2 km parent needs no change
 
 Measured, rather than assumed. The 2 km grid spans
@@ -205,6 +270,24 @@ What *did* change on the 2 km is only the published box: re-centred from the
 venue centre onto the nest's centre so the two are concentric. Clearances to the
 grid edge stay 42–52 km.
 
+**Re-measured properly after install.** The table above compares against the
+parent's *grid extents*, which is the wrong reference for the same reason the
+1 km buffer was: what the nest is fed from is the part of the parent that is
+free-running, outside the parent's own nudged rows 1–12. Against that, from
+`nudge_audit.py`:
+
+| | 2 km FREE interior | 1 km grid (incl. its own boundary rows) | inside by |
+|---|---|---|---|
+| south | 47.9441 | 48.2599 | 35.2 km |
+| north | 49.1820 | 48.8929 | 32.2 km |
+| west | −123.5915 | −123.4664 | **9.2 km** |
+| east | −122.1928 | −122.4339 | 17.7 km |
+
+The west is the tight side, at 9.2 km, and it still holds. The 2 km's own
+published box is entirely free (worst corner `refin_c_ctrl` 14, coefficient 0),
+which is the normal state for every 2 km parent here. So the conclusion stands —
+no 2 km regrid — but it now rests on the right measurement.
+
 ### The published boxes
 
 Both are in `src/components/weather/openMeteo.js`. The 1 km box is now
@@ -215,8 +298,17 @@ grid, and at 0.2044 it would cut Haro Strait off the west end. `venueHalf(ven)`
 and `inVenueBox(ven, lat, lon)` read `halfLat`/`halfLon` with a fallback to
 `half`, so every other venue is untouched.
 
-Every cell the 1 km box publishes is 10 km clear of the grid edge, by
-construction — the box *is* the interior.
+Every cell the 1 km box publishes is ~11.8 km clear of the grid edge, by
+construction — the box *is* the pinned interior. That is **not** the same as
+being clear of ICON's relaxation zone; see "10 km of buffer is SEVEN rows"
+above for what the audit actually measured.
+
+**As built** (the installed grid, not the request): 4,660 cells, extent
+`-123.4664..-122.4339 / 48.2599..48.8929`, `uuidOfHGrid`
+`6a6a14b4-1f6f-5e06-fdd6-f596de2828c0` matching the ExtPar beside it,
+`max(refin_c_ctrl) = 14` — which clears the `grf_bdywidth_c(4) +
+nudge_zone_width(8) = 12` that `init_nudgecoeffs` aborts below. The predicted
+~4,607 was 1 % light; the icosahedral cut rounds outward.
 
 ### The BOX also had to be rectangular — and that is on the box, not just in the app
 

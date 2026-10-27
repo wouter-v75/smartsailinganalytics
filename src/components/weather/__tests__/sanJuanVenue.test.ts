@@ -39,11 +39,27 @@ describe('the San Juan Islands venue', () => {
     expect(h.lat).not.toBe(h.lon)
   })
 
-  it('keeps every published 1 km cell clear of the relaxation zone', () => {
-    // The grid is the pins + 10 km, so the box's clearance to the grid edge is
-    // 10 km on all four sides BY CONSTRUCTION. If this drifts, the box has
-    // started publishing cells that are being blended back to the parent.
-    const GRID = { south: 48.2822, north: 48.8707, west: -123.4418, east: -122.4594 }
+  it('keeps the published 1 km box inside the generated grid, with the design buffer', () => {
+    // NOMINAL KILOMETRES, NOT CELL ROWS -- and the difference is the whole
+    // lesson here. This asserts only that the box sits inside the grid Zonda
+    // actually produced with the ~10 km buffer it was asked for. It does NOT
+    // assert the box is clear of ICON's lateral relaxation zone, which is
+    // counted in refin_c_ctrl ROWS: on an R19B08 grid the row-to-row spacing in
+    // the row-normal direction is ~1.2-1.4 km, and a corner is the worst case
+    // on two axes at once, so this 11.8 km buys only SEVEN rows. An earlier
+    // version of this test asserted the same kilometres under the name
+    // "clear of the relaxation zone" and would have passed with the corners at
+    // full nudging strength -- which is exactly what the OLD round grid had.
+    // The authoritative check reads the grid file and cannot run here:
+    //   docker run --rm -v /opt/regatta-nwp:/work -w /work icon-nwp:riviera-opt \
+    //       python3 -I scripts/nudge_audit.py
+    // Measured 27 Oct 2026 on the installed grid: worst corner refin_c_ctrl = 7,
+    // nudging coefficient 0.138 of 0.375 (37% of boundary strength), 48% of the
+    // published box inside rows 1..12. For comparison solent_1km and
+    // porto_cervo_1km sit at refin_c_ctrl 8 (22%), and the superseded round San
+    // Juan grid sat at 4 -- inside the PRESCRIBED zone, i.e. the 2 km parent
+    // verbatim, published as 1 km output.
+    const GRID = { south: 48.2599, north: 48.8929, west: -123.4664, east: -122.4339 }
     const KM_LAT = 111.32
     const KM_LON = 111.32 * Math.cos((48.58 * Math.PI) / 180)
     const v = venueAt('ICONRACE_1KM', PIN.lat, PIN.lon)
@@ -52,6 +68,29 @@ describe('the San Juan Islands venue', () => {
     expect((GRID.north - (v.clat + h.lat)) * KM_LAT).toBeGreaterThanOrEqual(9.9)
     expect((v.clon - h.lon - GRID.west) * KM_LON).toBeGreaterThanOrEqual(9.9)
     expect((GRID.east - (v.clon + h.lon)) * KM_LON).toBeGreaterThanOrEqual(9.9)
+  })
+
+  it('stays inside the 2 km parent\'s own free-running interior', () => {
+    // The nest is fed from the parent's solution, so what the 1 km grid needs is
+    // not room inside the parent's GRID but room inside the part of the parent
+    // that is actually free-running -- outside its own nudged rows 1..12.
+    // Measured on the box 27 Oct 2026 (scripts/nudge_audit.py): the 2 km free
+    // interior is lon -123.5915..-122.1928, lat 47.9441..49.1820, and the 1 km
+    // grid including its OWN boundary rows is lon -123.4664..-122.4339,
+    // lat 48.2599..48.8929 -- inside it by 9.2 km in the west, its tightest
+    // side. That measurement, not the grid extents, is why the 2 km parent
+    // needed no regrid when the nest moved.
+    const FREE_2KM = { south: 47.9441, north: 49.182, west: -123.5915, east: -122.1928 }
+    const GRID_1KM = { south: 48.2599, north: 48.8929, west: -123.4664, east: -122.4339 }
+    expect(GRID_1KM.south).toBeGreaterThan(FREE_2KM.south)
+    expect(GRID_1KM.north).toBeLessThan(FREE_2KM.north)
+    expect(GRID_1KM.west).toBeGreaterThan(FREE_2KM.west)
+    expect(GRID_1KM.east).toBeLessThan(FREE_2KM.east)
+    // and the published box is inside the 1 km grid it is cut from
+    const v = venueAt('ICONRACE_1KM', PIN.lat, PIN.lon)
+    const h = venueHalf(v)
+    expect(v.clon - h.lon).toBeGreaterThan(GRID_1KM.west)
+    expect(v.clon + h.lon).toBeLessThan(GRID_1KM.east)
   })
 
   it('2 km stays square, and concentric with the nest', () => {
