@@ -22,7 +22,7 @@ import {
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
   interpolateSpeedAtHeight,
-  labelWithCycle, withCycleLabel, localRacingWindow,
+  labelWithCycle, withCycleLabel, localRacingWindow, venueHalf,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import { resolveVenueTz, deviceTz, wallHour, formatWall } from './venueTz'
@@ -668,7 +668,8 @@ export default function ForecastView({
     if (!canIconRace) return
     const venues = (MODELS.ICONRACE && MODELS.ICONRACE.venues) || []
     venues.forEach((v) => {
-      const bounds = [[v.clat - v.half, v.clon - v.half], [v.clat + v.half, v.clon + v.half]]
+      const h = venueHalf(v)
+      const bounds = [[v.clat - h.lat, v.clon - h.lon], [v.clat + h.lat, v.clon + h.lon]]
       const r = L.rectangle(bounds, { color: '#e36209', weight: 1.5, fillColor: '#e36209', fillOpacity: 0.06, dashArray: '5 4', interactive: false })
         .addTo(map).bindTooltip(`Icon-Race: ${v.name}`, { sticky: true, direction: 'top' })
       venueBoxesRef.current.push(r)

@@ -119,7 +119,11 @@ Each goes into a new issue at `github.com/C2SM/zonda-request` (template `data_re
 }
 ```
 
-The 1 km request is the same with `grid_level: 8`, `hwidth_lat: 0.45`, `hwidth_lon: 0.43`.
+The 1 km request is the same with `grid_level: 8` — but **not** the old
+`hwidth_lat: 0.45` / `hwidth_lon: 0.43`. See §2b: the 1 km domain was re-specified
+on 27 Oct 2026 from four pinned edges, which makes it
+`center_lat 48.5765`, `center_lon -122.9506`, `hwidth_lat 0.295`, `hwidth_lon 0.492`.
+The request to file is `grid/zonda_san_juan_islands_1km_PINNED.json` on the box.
 
 **One deliberate change from the Cowes recipe: `l_use_corine` and `infill_corine` are `false`.**
 CORINE is European and has no data over Washington State. ExtPar's own consistency check
@@ -129,6 +133,91 @@ be ignored and at worst produce empty land use — which sets **roughness**, and
 surface layer.
 
 ---
+
+## 2b. The 1 km domain, re-specified from the pinned edges (27 Oct 2026)
+
+The original 1 km box was the Solent nest's footprint moved west — a round
+`±0.45 / ±0.43` about the venue centre. It is now the racing area Wouter pinned,
+with the relaxation zone added **outside** it, which is the right way round: the
+pins are the interior that must be clean, and the buffer is the model's own
+working margin, not part of the usable field.
+
+| | interior edge (pinned) | + 10 km buffer = domain |
+|---|---|---|
+| south | 48.3721 | 48.2822 |
+| north | 48.7809 | 48.8707 |
+| west  | -123.3060 | -123.4418 |
+| east  | -122.5952 | -122.4594 |
+
+→ `center 48.5765 / -122.9506`, `hwidth_lat 0.295`, `hwidth_lon 0.492`.
+Interior 45.5 × 52.3 km; domain ~65 × 73 km.
+
+**Why the grid had to be rebuilt and not just the box widened.** Three of the
+four pins were already inside the old 1 km grid (`-123.3499..-122.4400 /
+48.0908..49.0336`) with room to spare: south +21.3 km, north +18.1 km, east
++1.4 km. The **west** pin was not. It sat 3.2 km inside the grid edge — i.e.
+*in the relaxation zone*, where the solution is being blended back to the
+parent and is not a 1 km answer at all. Giving it its 10 km needs the grid 6.8 km
+further west, and no box setting can produce a cell that was never computed.
+
+**It is smaller, not bigger.** The pins span much less latitude than the old
+round box did, so trading that for the extra width in the west comes out ahead:
+
+| | old | pinned |
+|---|---|---|
+| lat span | 0.943° | 0.589° |
+| lon span | 0.910° | 0.983° |
+| cells | 6,168 | **~4,607** (×0.75) |
+| nest runtime, +18 h | ~47 min | **~35 min** |
+| publish ETA | 16:25 UTC = 09:25 PDT | **~16:13 UTC = 09:13 PDT** |
+
+(Runtime scaled off `solent_1km`: 5,960 cells = 45 min 13 s at +18 h. ETA is
+measured from today's live 12z chain — ICON global complete to +24 h at 15:14:56,
+2 km phase A published 15:38.)
+
+This is exactly the trade asked for — "happy to trim some of the bottom of the
+domain to keep the total size the same" — and it lands 25 % *under* the old size
+rather than level with it.
+
+### The 2 km parent needs no change
+
+Measured, rather than assumed. The 2 km grid spans
+`-124.0936..-121.6941 / 47.6200..49.5060`. Against the new nest plus the ~21 km
+(10 parent cells) a 2 km parent wants between its own relaxation zone and a
+nest boundary:
+
+| | required | actual | spare |
+|---|---|---|---|
+| south | 48.0936 | 47.6200 | +52.7 km |
+| north | 49.0593 | 49.5060 | +49.7 km |
+| west | -123.7269 | -124.0936 | +27.0 km |
+| east | -122.1743 | -121.6941 | +35.4 km |
+
+So the parent already contains the new nest comfortably, and its surplus width
+in the west is not waste — it is upstream fetch for the prevailing westerly down
+the Strait of Juan de Fuca, which is precisely the inflow the nest depends on.
+Trimming the 2 km to the minimum that still holds its own published box
+(`47.823..49.303 / -123.730..-122.060`) would save ~9 min of phase A, and is
+**not** recommended: it buys 9 min by removing the fetch the nest is fed from,
+and it costs a second Zonda request plus a fresh ExtPar.
+
+What *did* change on the 2 km is only the published box: re-centred from the
+venue centre onto the nest's centre so the two are concentric. Clearances to the
+grid edge stay 42–52 km.
+
+### The published boxes
+
+Both are in `src/components/weather/openMeteo.js`. The 1 km box is now
+**rectangular** — `halfLat 0.2044 / halfLon 0.3554`, i.e. exactly the four pins —
+because the domain is 45 km by 52 km and a single square `half` cannot express
+that: at 0.3554 it would push the north and south edges outside the computed
+grid, and at 0.2044 it would cut Haro Strait off the west end. `venueHalf(ven)`
+and `inVenueBox(ven, lat, lon)` read `halfLat`/`halfLon` with a fallback to
+`half`, so every other venue is untouched.
+
+Every cell the 1 km box publishes is 10 km clear of the grid edge, by
+construction — the box *is* the interior.
+
 
 ## 3. Terrain — the research, and why the answer is still MERIT
 

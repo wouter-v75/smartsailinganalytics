@@ -292,11 +292,15 @@ export const MODELS = {
       // smaller than what the model already computes: its western edge sat in
       // Haro Strait, cutting off Victoria (-123.37) and the Strait of Juan de
       // Fuca entrance — which is upstream fetch for the prevailing westerly and
-      // the first thing you want to see. 0.55 reaches -123.445, with ~0.65 deg
+      // the first thing you want to see. 0.55 reaches -123.50, with ~0.59 deg
       // still between the box and the grid edge, i.e. far outside the
       // relaxation zone. Payload goes 900 -> 3,025 points, about 8 MB, which is
       // the size solent_1km already ships.
-      { name: 'san_juan_islands', domain: 'san_juan_islands_2km', clon: -122.8946, clat: 48.5627, half: 0.55 },
+      // Re-centred 2026-10-27 onto the 1 km nest's own centre so the two boxes
+      // are concentric: the 2 km GRID itself is unchanged and needs no change —
+      // it clears the new nest by 27 km west, 35 km east and ~50 km N/S, well
+      // past the ~21 km its own relaxation zone wants.
+      { name: 'san_juan_islands', domain: 'san_juan_islands_2km', clon: -122.9506, clat: 48.5765, half: 0.55 },
       // La Spezia STOPPED 2026-06-27 (domain box removed; training window closed).
       // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
       { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.40 },
@@ -324,15 +328,23 @@ export const MODELS = {
       { name: 'st_tropez', domain: 'st_tropez_1km', clon: 6.678, clat: 43.275, half: 0.23 },
       // Solent / Cowes 1 km nest off solent_2km (full-Solent race box, half 0.30):
       { name: 'solent', domain: 'solent_1km', clon: -1.30, clat: 50.76, half: 0.30 },
-      // San Juan Islands 1 km nest off san_juan_islands_2km (solent_1km footprint):
-      // half 0.35, widened 2026-10-27 from 0.30 — and this one is GRID-LIMITED,
-      // which is the whole point. The 1 km grid spans only -123.350..-122.440,
-      // so even at its maximum the box stops at -123.26 once ~10 cells of
-      // relaxation zone are kept clear. Victoria sits at -123.37: OUTSIDE the
-      // computed grid, not merely outside the box. Reaching it needs a new
-      // Zonda grid — see grid/zonda_san_juan_islands_1km_WEST.json on the box,
-      // which moves the centre to -123.125 and widens to +-0.625 lon.
-      { name: 'san_juan_islands', domain: 'san_juan_islands_1km', clon: -122.8946, clat: 48.5627, half: 0.35 },
+      // San Juan Islands 1 km nest off san_juan_islands_2km. The box is NOT a
+      // footprint copied from elsewhere any more: it is the four edges Wouter
+      // pinned on 2026-10-27, to the metre —
+      //   S 48.3721  W -123.3060  E -122.5952  N 48.7809
+      // — and the GRID is those four edges plus 10 km of relaxation zone on
+      // each side, so the published box is exactly the usable interior and
+      // every cell in it is clear of the buffer. 45.5 km of latitude by 52.3 km
+      // of longitude is not square, hence halfLat/halfLon: one scalar would
+      // either cut Haro Strait off the west end or push the north and south
+      // edges out of the computed grid. Replaces half 0.35 centred on the venue
+      // (-122.8946/48.5627), whose western edge at -123.245 stopped 4.5 km
+      // short of the western pin — and the OLD grid stopped 6.8 km short of
+      // giving that pin its buffer, which is why the grid was rebuilt rather
+      // than the box merely widened. The new grid is 4,607 cells against the
+      // old 6,168, so the nest also runs ~12 min faster.
+      { name: 'san_juan_islands', domain: 'san_juan_islands_1km',
+        clon: -122.9506, clat: 48.5765, halfLon: 0.3554, halfLat: 0.2044 },
       // Porto Cervo 1 km nest off porto_cervo_2km (Costa Smeralda / Bonifacio gap jet):
       { name: 'porto_cervo', domain: 'porto_cervo_1km', clon: 9.45, clat: 41.22, half: 0.31 },
     ],
@@ -569,14 +581,25 @@ function getIconRaceGrid(url) {
   return p
 }
 
+// A venue's racing box is square (`half`) unless it declares `halfLat`/`halfLon`.
+// It is rectangular wherever the GRID is: San Juan's 1 km domain is 45 km of
+// latitude by 52 km of longitude, so one scalar either cuts the west end off
+// the box or pushes its north and south edges outside the computed grid.
+export function inVenueBox(ven, lat, lon) {
+  const hLat = ven.halfLat ?? ven.half
+  const hLon = ven.halfLon ?? ven.half
+  return Math.abs(lat - ven.clat) <= hLat && Math.abs(lon - ven.clon) <= hLon
+}
+export function venueHalf(ven) {
+  return { lat: ven.halfLat ?? ven.half, lon: ven.halfLon ?? ven.half }
+}
+
 // Self-hosted Icon-Race fetch. Finds the venue whose racing box contains the
 // clicked point, fetches that venue's ~2 km grid (cached), snaps to the nearest
 // cell, and returns it as an Open-Meteo-shaped envelope. Null when the click is
 // outside every venue box (model greys out, like an OM model with no coverage).
 async function fetchBunnyModel(m, latitude, longitude) {
-  const v = (m.venues || []).find(
-    (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
-  )
+  const v = (m.venues || []).find((ven) => inVenueBox(ven, latitude, longitude))
   if (!v) return null
   const gf = m.gridFile || 'grid.json'                    // per-model grid file (default grid.json)
   const path = `icon-race/${v.domain}/${v.name}/${gf}`
@@ -616,9 +639,7 @@ async function fetchBunnyModel(m, latitude, longitude) {
 // Returns { grid:{time,heights,cells:[{lat,lon,spd,dir}]}, venue } or null.
 export async function iconRaceGridForPoint(latitude, longitude, modelKey = 'ICONRACE') {
   const m = MODELS[modelKey] || MODELS.ICONRACE
-  const v = (m.venues || []).find(
-    (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
-  )
+  const v = (m.venues || []).find((ven) => inVenueBox(ven, latitude, longitude))
   if (!v) return null
   const gf = m.gridFile || 'grid.json'
   const path = `icon-race/${v.domain}/${v.name}/${gf}`
@@ -771,7 +792,7 @@ export function windweightVenues(lat, lon) {
     const vens = MODELS[modelKey]?.venues || []
     let best = null, bestD = Infinity
     for (const v of vens) {
-      if (Math.abs(lat - v.clat) > v.half || Math.abs(lon - v.clon) > v.half) continue
+      if (!inVenueBox(v, lat, lon)) continue
       const d = (lat - v.clat) ** 2 + (lon - v.clon) ** 2
       if (d < bestD) { bestD = d; best = v }
     }
@@ -1270,9 +1291,7 @@ function getIconRaceSounding(url) {
 }
 export async function fetchIconRaceSounding({ latitude, longitude, modelKey = 'ICONRACE' }) {
   const m = MODELS[modelKey] || MODELS.ICONRACE
-  const v = (m.venues || []).find(
-    (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
-  )
+  const v = (m.venues || []).find((ven) => inVenueBox(ven, latitude, longitude))
   if (!v) return null
   const path = `icon-race/${v.domain}/${v.name}/sounding.json`
   const url = m.bunnyBase
