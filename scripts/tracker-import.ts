@@ -41,8 +41,12 @@ import { DEFAULT_SETTINGS } from '../src/lib/phaseSettings'
 import { estimateTwd } from '../src/lib/wind/estimate'
 import { solveCompassOffset } from '../src/lib/wind/compassCalibration'
 import {
-  fetchOceanCurrent, medianPosition, currentAt, crossWindKn, describeCurrentBias,
+  medianPosition, currentAt, crossWindKn, describeCurrentBias,
 } from '../src/lib/oceanCurrent'
+// Routed, not fetched directly: in the Salish Sea the global marine model
+// reports under 0.6 kn where the channels run 3-6, so the source is chosen by
+// position. See lib/currentSource.ts.
+import { fetchCurrentForPoint, sourceFor } from '../src/lib/currentSource'
 // @ts-ignore — JS module
 import { reduceLogForCloud } from '../src/lib/cloudLogReduce'
 
@@ -168,8 +172,9 @@ async function main() {
     twd: wx.hourly.wind_direction_10m,
     tws: wx.hourly.wind_speed_10m,
   } : null
-  const current = await fetchOceanCurrent({ lat: pos.lat, lon: pos.lon, startDate: date })
-  console.log(`model wind: ${model ? `${model.twd.length} hours` : 'unavailable'} · current: ${current ? `cell ${current.cellOffsetKm.toFixed(1)} km away` : 'unavailable'}`)
+  const current = await fetchCurrentForPoint({ lat: pos.lat, lon: pos.lon, startDate: date })
+  console.log(`model wind: ${model ? `${model.twd.length} hours` : 'unavailable'}`
+    + ` · current[${sourceFor(pos.lat, pos.lon)}]: ${current ? `cell ${current.cellOffsetKm.toFixed(1)} km away` : 'unavailable'}`)
 
   // ── 3. pool the squad, then synthesise per boat ───────────────────────────
   const pooled = loaded.flatMap((l) => findSegments(l.rows))

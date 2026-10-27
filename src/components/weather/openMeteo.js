@@ -183,6 +183,36 @@ export const MODELS = {
     tableCols: [10, 80],
     upperHeight: 80,
   },
+  // CANADIAN HRDPS, 2.5 km — and at the San Juan Islands it is the best-fitting
+  // model available, for a reason worth stating: its level ladder is
+  // 10/40/80/120 m. Every other model here jumps 10 -> 80, so a 30 m masthead is
+  // EXTRAPOLATED from a two-point fit that does not bracket it; HRDPS brackets it
+  // between 10 and 40, which turns wind30()'s power law into an interpolation.
+  //
+  // Corroboration from the people who model this water: SalishSeaCast (UBC) forces
+  // its own NEMO ocean model with HRDPS — see lib/salishSeaCurrents.ts.
+  //
+  // COVERAGE, probed by bisection 2026-10-27 (the domain is a rotated grid, so its
+  // true edge is ragged and this is the outer envelope): IN at 42N, 70N, and at
+  // lon -134, -126, -122, -110, -95, -60, -52 on lat 49; OUT at 41N, 71N, -138
+  // and -142. So Canada plus the northern US: San Juan and Seattle are in, Long
+  // Beach (33.7N) and every European venue are out, and the western edge is some
+  // 700 nm clear of the San Juans.
+  //
+  // NO metaModel: api.open-meteo.com/data/gem_hrdps_continental/static/meta.json
+  // is 404, so there is no freshness feed to read. fetchModelMeta() returns null
+  // for an absent key, which is the honest outcome — a wrong key would too, but
+  // silently.
+  HRDPS: {
+    key: 'HRDPS', label: 'HRDPS', subtitle: 'ECCC 2.5 km', color: '#4527a0',
+    endpoint: 'https://api.open-meteo.com/v1/gem',
+    modelParam: 'gem_hrdps_continental',
+    coverage: { latMin: 42, latMax: 70, lonMin: -138, lonMax: -52 },
+    fieldGrid: 16,                 // high-res wind-field sampling (2.5 km)
+    heights: [10, 40, 80, 120],
+    tableCols: [10, 40, 80],
+    upperHeight: 120,
+  },
   NAM: {
     key: 'NAM', label: 'NAM', subtitle: 'NOAA NAM 12 km', color: '#f9a825',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
