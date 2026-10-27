@@ -19,10 +19,25 @@
 > `ICONRACE_STATUS_FILES = ['status.json', 'status_usa.json']`, `fetchIconRaceStatus(name)`,
 > ModelUpdates tags the second chain, and `iconRaceStatusChains.test.ts` pins both.
 >
-> **Open, in order:** place the Zonda `.nc` and confirm `z_mc` (§6 phase 4 — the grids are ready);
-> Pacific SST product (§5b, and the premise is now measured — see the note there); first run on a
-> past cycle with `REGATTA_ROOT` redirected; `.env` + a second cron entry at ~14:41 UTC; then
-> validate against HRRR (§6 phase 7). Tidal currents remain a separate piece of work (§5).
+> **Grids installed 27 Oct 2026.** Both Zonda outputs placed and verified: 2 km R19B07 **8,172
+> cells**, 1 km R19B08 **6,168 cells**, centre 215, extpar variable set **identical to solent_2km's
+> 45** with nothing missing either way, md5 matched against the Zonda zips. The standalone-parent
+> uuid pattern matches the working solent pair, so ICON will not refuse the linkage. Zonda's own
+> `nml_gridgen` is kept beside each grid as provenance; the full output stays at
+> `/data/zonda-staging/` (65 MB).
+>
+> **SST done 27 Oct 2026** — OSTIA, measured, see §5b. `pacific` region in
+> `fetch_cmems_sst.sh`, the domain mapping in `daily_pipeline.sh`, the region trigger in
+> `cron_daily.sh`; fetch and `prep_sst_lam`'s own remap both exercised on the real grid.
+>
+> **Open, in order:** first run on a past cycle with `REGATTA_ROOT` redirected (and `z_mc`
+> confirmed from THAT run — see below); `.env` + a second cron entry at ~14:41 UTC; then validate
+> against HRRR (§6 phase 7). Tidal currents remain a separate piece of work (§5).
+>
+> **Correction to phase 4 step 13:** `z_mc` is *not* in the Zonda output — checked, in neither
+> resolution's grid, parent, latbc or extpar file. ICON builds it at runtime from the vgrid
+> namelist and the topography, so the standing "dump `z_mc` and confirm" check belongs after the
+> first run, not after the grids arrive.
 **Brief:** clone the Cowes/Solent pair onto 48.5627 N, 122.8946 W; same initialisation, physics,
 resolution and size; same integration into SSA.
 
@@ -503,6 +518,46 @@ Whichever is chosen, confirm the dataset-id with `copernicusmarine describe` bef
 existing script demands exactly that discipline, because a product id and a dataset id are not the
 same string.
 
+### Decided 27 Oct 2026: OSTIA — because the sovereignty-preferred product has no data here
+
+`copernicusmarine describe` gives three candidate global L4 NRT families, and the dataset ids the
+subset call actually needs (which are not the product ids):
+
+| product | dataset id | source |
+|---|---|---|
+| `SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001` | `METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2` | OSTIA, UKMO, 0.05° |
+| `SST_GLO_PHY_L4_NRT_010_005` | `cmems_obs-sst_glo_phy-temp_nrt_P1D-m` | GMPE ensemble, UKMO |
+| `GLOBAL_ANALYSISFORECAST_PHY_001_024` | `cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m` | Mercator, FR, 1/12° |
+
+The README prefers Mercator/IFREMER over OSTIA. **Here that preference cannot be honoured, and the
+reason is not a judgement call.** Same day, same box, nearest-neighbour at four points in the race
+area:
+
+```
+                  Haro Str    Rosario Str   Friday Hbr   San Juan Ch
+  OSTIA           284.50 K      284.09        283.98       283.73      (11.4 .. 10.6 °C)
+  Mercator 1/12°   MISSING      MISSING       MISSING        11.82 °C
+```
+
+A global ocean *model* does not resolve a 2-5 km inland channel; a satellite L4 gridded at 5.5 km
+does, because its land mask keeps the channels open. 762 of OSTIA's 2,184 cells in this box carry
+data — the rest is land, which is correct for this coastline — and its values sit right on top of
+the NDBC buoys (New Dungeness 11.18 °C mean, Angeles Point 10.26, Port Townsend 12.22). The only
+remaining European option is the ODYSSEA **global L3**, which is not gap-free and so cannot feed
+`prep_sst_lam`. So: OSTIA, with the deviation from the sovereignty note recorded in the script
+itself rather than left to be rediscovered.
+
+**And the `setmisstonn` warning above was right, with a number.** Remapping the OSTIA field onto the
+real 2 km grid leaves **5,689 of 8,172 LAM cells missing — 70 %** — against the Med's handful.
+`setmisstonn` takes that to 0 missing, 282.71-285.69 K, mean 284.19 K. Without it `swap_sst` would
+write NaN into `t_g` across most of the domain and RRTM would abort on the first radiation step.
+
+Wired 27 Oct 2026 in three places, each backed up `.bak-20261027-1315`:
+`fetch_cmems_sst.sh` (the `pacific` region), `daily_pipeline.sh` (the per-domain SST file, which the
+1 km nest inherits from its parent), and `cron_daily.sh` (fetch `pacific` when the domain or
+`EVENT_VENUE` is San Juan). The Med path was re-run into a temp directory afterwards and is
+unchanged.
+
 ## 5c. The icosahedral grid — four concrete hazards
 
 The good news first: **the codebase already knows how to do this.** `preprocess_nest.sh` remaps ICON
@@ -896,7 +951,8 @@ knowing.
       both roads serialised on one box (§5j); icosahedral chain proved (§5k)
 - [x] App reads both status chains (`status.json` + `status_usa.json`), test pinned
 - [x] SST resolution question answered by measurement (§5b): ~5.5 km is ample, choose on sovereignty
-- [ ] Place the Zonda `.nc` into `grid/` and `extpar/` — **the grids are ready, this is next**
-- [ ] Pacific SST product chosen and wired into `fetch_cmems_sst.sh`
+- [x] Zonda `.nc` placed into `grid/` and `extpar/`, verified against the working domain (27 Oct)
+- [x] Pacific SST product chosen, measured and wired into `fetch_cmems_sst.sh` (27 Oct)
 - [ ] `NESTS` / `DOMAINS` / `EVENT_VENUE` set in `.env` when the event approaches
-- [ ] Confirm `z_mc` after grid generation (the project's standing post-grid check)
+- [ ] Confirm `z_mc` after the FIRST RUN (not after grid generation — it is not in the Zonda output)
+- [ ] Dry run on a past cycle with `REGATTA_ROOT` redirected
