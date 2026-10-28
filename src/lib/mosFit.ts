@@ -714,3 +714,199 @@ export function gainHoldsEveryBlock(r: FormResult): boolean {
   if (r.type === 'raw' || r.refused) return false
   return r.perBlock.length > 1 && r.perBlock.every((b) => b.piRmse > 0)
 }
+
+// ── the tail: what an rmse-optimal slope does to the strong wind ────────────
+//
+// WHY THIS IS HERE AND NOT IN ONE VENUE'S SCRIPT. Found 28 Oct 2026 fitting
+// Long Beach, then run against the three Mediterranean specs that had shipped
+// seven months earlier. An rmse-optimal slope is a SHRINKAGE: ordinary least
+// squares sets a = cov(x,y)/var(x), so a model poorly correlated with the
+// truth is pulled toward the climatological mean, and rmse is minimised by
+// exactly that. It reads as a large gain — 13 to 30 % at Long Beach — and what
+// it buys that gain with is the venue's strong wind. ECMWF's corrected
+// forecast there warned on ZERO of the 130 hours Angels Gate really had
+// 18 kn or more; the raw forecast warned on 86.
+//
+// None of rmse, the per-block stationarity bar or the parameter ceiling can
+// see it, because all three are averages over a distribution whose mass is in
+// the middle. So it needs its own measurement, and every venue's fit needs the
+// same one or the next spec ships with the same hole.
+//
+// THE SLOPE ALONE IS NOT THE DIAGNOSTIC, which is the part worth not
+// re-deriving. a < 1 rotates the forecast about its FIXED POINT
+// x* = b/(1 - a), and the sign of the change at a strong-wind threshold T is
+// the sign of T - x*. Sorrento's icon_eu has a = 0.76 and x* = 20.6 kn, above
+// almost everything that venue blows, so its correction LIFTS the whole
+// observed range. Porto Cervo's ecmwf has a = 0.70 and x* = 9.2 kn, so at
+// 20 kn it takes 3.2 kn off. Same slope to one decimal place, opposite
+// behaviour where it matters. Report `shrinkageAt`, not `a`.
+
+/** The strong-wind levels a tail check is measured at, in knots. */
+export interface TailBars {
+  /** "it will blow this hard" — the level the warning rate is counted at. */
+  threshold: number
+  /** The strong end, whose mean error must not collapse. */
+  topBin: number
+  label?: string
+}
+
+export interface TailStat {
+  /** Cases the truth was at or above `threshold`. */
+  nAbove: number
+  /** Of those, how many the RAW forecast also put at or above it. */
+  warnRaw: number
+  /** Of those, how many the CORRECTED forecast did. */
+  warnCor: number
+  /** Cases the truth was at or above `topBin`. */
+  topN: number
+  /** Mean signed error (forecast - truth) over those, raw and corrected. */
+  topRaw: number
+  topCor: number
+}
+
+/** How many cases a warning rate needs before it is worth reading. */
+export const TAIL_MIN_ABOVE = 20
+/** How many a top-bin mean error needs. */
+export const TAIL_MIN_TOP = 10
+/** Keep at least this fraction of raw's strong-wind hits. */
+export const TAIL_WARN_KEEP = 0.9
+/** Knots of allowed degradation in the top bin's mean error. */
+export const TAIL_TOP_SLACK = 2
+
+export interface TailOpts {
+  warnKeep?: number
+  topSlack?: number
+  minAbove?: number
+  minTop?: number
+}
+
+/**
+ * Tail statistics, on predictions that must be OUT OF SAMPLE for the numbers
+ * to mean anything.
+ *
+ * `warn` is a hit COUNT, not a skill score, on purpose: the operational
+ * question is how many of the windy hours you were told about, and rmse is
+ * blind to it. The three arrays are parallel — truth, raw forecast, corrected
+ * forecast, one entry per case.
+ */
+export function tailStats(
+  obs: readonly number[], raw: readonly number[], cor: readonly number[], bars: TailBars,
+): TailStat {
+  let nAbove = 0; let warnRaw = 0; let warnCor = 0
+  let topN = 0; let topRaw = 0; let topCor = 0
+  for (let i = 0; i < obs.length; i++) {
+    if (obs[i] >= bars.threshold) {
+      nAbove++
+      if (raw[i] >= bars.threshold) warnRaw++
+      if (cor[i] >= bars.threshold) warnCor++
+    }
+    if (obs[i] >= bars.topBin) { topN++; topRaw += raw[i] - obs[i]; topCor += cor[i] - obs[i] }
+  }
+  return {
+    nAbove, warnRaw, warnCor, topN,
+    topRaw: topN ? topRaw / topN : NaN,
+    topCor: topN ? topCor / topN : NaN,
+  }
+}
+
+/** Fraction of raw's strong-wind hits the correction keeps, NaN if raw had none. */
+export function tailKeep(t: TailStat): number {
+  return t.warnRaw ? t.warnCor / t.warnRaw : NaN
+}
+
+/** Is there enough strong wind in the record to judge the tail at all? */
+export function tailJudgeable(t: TailStat, o: TailOpts = {}): boolean {
+  return t.nAbove >= (o.minAbove ?? TAIL_MIN_ABOVE) && t.warnRaw > 0
+}
+
+/**
+ * The tail bar. A form passes when it keeps enough of raw's strong-wind hits
+ * and does not wreck the top bin's mean error.
+ *
+ * An unjudgeable tail passes — a venue whose record holds nine cases above the
+ * threshold cannot refuse a form on them, and saying so is more honest than a
+ * bar measured on nine cases. `tailVerdict` prints which of the two happened.
+ */
+export function tailPasses(t: TailStat, _bars: TailBars, o: TailOpts = {}): boolean {
+  const warnKeep = o.warnKeep ?? TAIL_WARN_KEEP
+  const topSlack = o.topSlack ?? TAIL_TOP_SLACK
+  if (tailJudgeable(t, o) && tailKeep(t) < warnKeep) return false
+  if (t.topN >= (o.minTop ?? TAIL_MIN_TOP) && Number.isFinite(t.topCor)
+    && t.topCor < t.topRaw - topSlack) return false
+  return true
+}
+
+/** The verdict in one line, in the same vocabulary as the bar. */
+export function tailVerdict(t: TailStat, bars: TailBars, o: TailOpts = {}): string {
+  const topPart = t.topN >= (o.minTop ?? TAIL_MIN_TOP)
+    ? `, ${bars.topBin}+ err ${t.topCor.toFixed(1)} vs raw ${t.topRaw.toFixed(1)} kn (n ${t.topN})`
+    : ''
+  if (!tailJudgeable(t, o)) {
+    return `too few cases >= ${bars.threshold} kn (${t.nAbove}`
+      + `${t.warnRaw === 0 && t.nAbove > 0 ? ', none of which raw caught' : ''})`
+      + ` to judge the warning rate${topPart}`
+  }
+  return `${tailPasses(t, bars, o) ? 'PASSES' : 'FAILS'} the tail bar — keeps`
+    + ` ${(100 * tailKeep(t)).toFixed(0)}% of raw's >=${bars.threshold} kn hits`
+    + ` (${t.warnCor}/${t.warnRaw})${topPart}`
+}
+
+/**
+ * Read the bars off the observed distribution rather than choosing them.
+ *
+ * The levels have to come from the record or they are tuned to the result:
+ * Long Beach's racing season never reaches 20 kn in five years, so an 18 kn
+ * warning bar inside it is measured on one hour, and the first run of that arm
+ * printed "1 hrs only" and could not judge the thing the bar exists for.
+ *
+ * `threshold` is the highest step with at least `minAbove` cases and `topBin`
+ * the highest with at least `minTop`; a venue with a thin tail comes back with
+ * the two equal, which is two statements about the same cases and is still
+ * worth having. Null when even the lowest step is too thin.
+ */
+export function pickTailBars(
+  obs: readonly number[],
+  o: { steps?: readonly number[]; minAbove?: number; minTop?: number; label?: string } = {},
+): TailBars | null {
+  const steps = o.steps ?? [10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30]
+  const minAbove = o.minAbove ?? 25
+  const minTop = o.minTop ?? TAIL_MIN_TOP
+  const count = (t: number) => obs.reduce((n, x) => n + (x >= t ? 1 : 0), 0)
+  let threshold = NaN; let topBin = NaN
+  for (const s of steps) {
+    if (count(s) >= minAbove) threshold = s
+    if (count(s) >= minTop) topBin = s
+  }
+  if (!Number.isFinite(threshold)) return null
+  return {
+    threshold,
+    topBin: Number.isFinite(topBin) ? Math.max(topBin, threshold) : threshold,
+    ...(o.label ? { label: o.label } : {}),
+  }
+}
+
+/**
+ * The fixed point of a linear correction, b/(1 - a): the wind speed it leaves
+ * alone. Below it the correction lifts and above it the correction cuts, or
+ * the other way round for a slope above 1. Null for a slope of exactly 1 (a
+ * pure offset moves everything equally) or a form with no slope.
+ */
+export function shrinkageFixedPoint(m: MosModelSpec): number | null {
+  if (!m || (m.type ?? 'raw') === 'raw') return null
+  const a = m.a ?? 1
+  if (Math.abs(1 - a) < 1e-9) return null
+  return (m.b ?? 0) / (1 - a)
+}
+
+/**
+ * What the correction's SLOPE AND BIAS do to a forecast of `ws`, in knots,
+ * ignoring the sector and diurnal offsets — which are bounded, while this term
+ * grows without limit as the wind does.
+ *
+ * This is the number to report beside a slope. A 3 kn cut at the venue's
+ * 20 kn is a different object from the same slope lifting the whole range.
+ */
+export function shrinkageAt(m: MosModelSpec, ws: number): number {
+  if (!m || (m.type ?? 'raw') === 'raw') return 0
+  return (m.a ?? 1) * ws + (m.b ?? 0) - ws
+}

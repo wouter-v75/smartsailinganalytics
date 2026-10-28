@@ -45,13 +45,17 @@
 // `gfs_seamless` is skipped: no MODELS entry claims it, so the app never asks
 // applyMOS for it, and its coefficients in the old specs are dead weight.
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MODELS } from '../src/components/weather/openMeteo'
 import { interpToMast, bilinearUV, fromUV, type GridPoint } from '../src/lib/mastWind'
-import { solveOls, score, type Band } from '../src/lib/mosFit'
+import {
+  solveOls, score, tailStats, tailVerdict, tailPasses, pickTailBars,
+  shrinkageFixedPoint, shrinkageAt, TAIL_WARN_KEEP, TAIL_TOP_SLACK,
+  type Band, type TailBars, type TailStat, type MosModelSpec,
+} from '../src/lib/mosFit'
 
 const argv = process.argv.slice(2)
 const WRITE = argv.includes('--write')
@@ -62,9 +66,43 @@ const flag = (n: string, d?: string) => {
 
 const OBS_DIR = flag('obs-dir',
   '/Users/wouterverbraak/Documents/Claude/Projects/Smart Sailing Analytics/wind-verification')!
+/**
+ * THIS SEASON'S BINS, built by scripts/med-obs-phases.ts from Northstar 76's
+ * own logfiles and her event files' SELECTED PHASES.
+ *
+ * Why they are a separate directory rather than appended to the files above:
+ * that extraction belongs to another project and is reused read-only. And why
+ * they matter — Porto Cervo cross-validated on TWO regattas, so "the gain
+ * holds in every held-out regatta" rested on a single held-out block, and
+ * 2026 is the breeziest of the three (14 of 76 bins over 20 kn, up to 26.3).
+ * Missing means missing: without the directory the refit runs on 2024-2025 as
+ * before and says so.
+ */
+const OBS_2026_DIR = flag('obs-2026-dir',
+  '/Users/wouterverbraak/Documents/Claude/Projects/Smart Sailing Analytics/wind-verification-2026')!
+const SKIP_2026 = argv.includes('--no-2026')
 const CELL = flag('cell', 'sea')!
 const ONLY = flag('venue')
 const TARGET_Z = 30
+/**
+ * WHERE THE MODEL IS EVALUATED, and it is a real choice.
+ *
+ * `instrument` is the original pipeline's: the model is interpolated to the
+ * masthead's own heel-reduced height, `mast * cos(heel)`, on the view that the
+ * MOS is then a pure bias correction between two values of the same quantity
+ * at the same height.
+ *
+ * `target` is the APP's: `correctedWind30()` hands the spec its 30 m value and
+ * nothing else, so that is the input the coefficients will actually meet. The
+ * predicted quantity is then the masthead wind, whatever height the masthead
+ * is at — which is what a sailor wants anyway.
+ *
+ * The two coincided while every bin claimed a 30 m masthead. They stop
+ * coinciding once the heights are the real 32 m and 35 m, so it was measured:
+ * run with each and compare. See `--eval-at`.
+ */
+const EVAL_AT = flag('eval-at', 'instrument')!
+if (!['instrument', 'target'].includes(EVAL_AT)) { console.error("--eval-at must be instrument|target"); process.exit(1) }
 const SHRINK_K = 8          // mos.py's sector shrinkage toward the global bias
 const AGREE_MIN = 0.70      // below this a sector correction is not trusted
 // THE SAME TWO BARS mos-fit.ts enforces for the Oslofjord, because it would be
@@ -144,15 +182,32 @@ interface Obs {
   tws: number
   twd: number
   zEff: number
+  /** The masthead height itself, before the heel reduction. */
+  mast: number
   localHour: number
   /** Venue-local, because a regime window is a statement about the weather. */
   localMonth: number
   localDay: string
 }
 
-function readObs(venue: string): Obs[] {
-  const f = join(OBS_DIR, `obs_${venue}.csv`)
-  if (!existsSync(f)) throw new Error(`no obs file at ${f}`)
+/**
+ * THE MASTHEAD HEIGHT THE OLD BINS CLAIM IS NOT A MEASUREMENT. Every row of
+ * obs_<venue>.csv says `mast_height_m: 30.0`, which is extract_obs.py's
+ * `--mast-height` DEFAULT, left in place for every regatta. Those regattas
+ * were all sailed by Northstar 72, whose masthead is 32 m (Wouter, 28 Oct
+ * 2026); Northstar 76's, which this season's bins carry themselves, is 35 m.
+ *
+ * It is the height the forecast is interpolated TO — `zEff = mast * cos(heel)`
+ * — so a 30 m label on a 32 m instrument asks the model for less wind than the
+ * instrument saw and books the difference as a model deficit. Over water that
+ * is 0.55 % of wind, about 0.07 kn at 12 kn: small, and free to get right.
+ * Narrow on purpose — ONLY the known default is replaced, and any other value
+ * in a file is taken as given, so this cannot quietly override a real figure.
+ */
+const DEFAULT_MAST_M = 30.0
+const N72_MAST_M = 32.0
+
+function readObsFile(f: string): Obs[] {
   const lines = readFileSync(f, 'utf8').trim().split('\n')
   const head = lines[0].split(',')
   const col = (n: string) => head.indexOf(n)
@@ -163,7 +218,8 @@ function readObs(venue: string): Obs[] {
     const t1 = Date.parse(c[col('t_end_utc')])
     const tws = Number(c[col('tws_kn')])
     const twd = Number(c[col('twd_deg')])
-    const mast = Number(c[col('mast_height_m')]) || TARGET_Z
+    const declared = Number(c[col('mast_height_m')]) || TARGET_Z
+    const mast = declared === DEFAULT_MAST_M ? N72_MAST_M : declared
     const heel = Number(c[col('mean_heel_deg')]) || 0
     if (!Number.isFinite(t0) || !Number.isFinite(t1) || !(tws > 0) || !Number.isFinite(twd)) continue
     const tMid = t0 + (t1 - t0) / 2
@@ -179,11 +235,21 @@ function readObs(venue: string): Obs[] {
       tws,
       twd,
       zEff,
+      mast,
       localHour: new Date(tMid + LOCAL_OFFSET_H * 3600_000).getUTCHours(),
       localMonth: new Date(tMid + LOCAL_OFFSET_H * 3600_000).getUTCMonth() + 1,
       localDay: new Date(tMid + LOCAL_OFFSET_H * 3600_000).toISOString().slice(0, 10),
     })
   }
+  return out
+}
+
+function readObs(venue: string): Obs[] {
+  const f = join(OBS_DIR, `obs_${venue}.csv`)
+  if (!existsSync(f)) throw new Error(`no obs file at ${f}`)
+  const out = readObsFile(f)
+  const extra = join(OBS_2026_DIR, `obs_${venue}_2026.csv`)
+  if (!SKIP_2026 && existsSync(extra)) out.push(...readObsFile(extra))
   return out.sort((a, b) => a.tMid - b.tMid)
 }
 
@@ -209,12 +275,29 @@ const CACHE = !argv.includes('--no-cache')
 function cacheGet(url: string) {
   if (!CACHE) return null
   const f = join(CACHE_DIR, `${createHash('sha1').update(url).digest('hex')}.json`)
-  return existsSync(f) ? readFileSync(f, 'utf8') : null
+  if (!existsSync(f)) return null
+  const body = readFileSync(f, 'utf8')
+  // A TRUNCATED CACHE ENTRY IS WORSE THAN A MISS. One of these cost AROME at
+  // Porto Cervo: the entry stopped mid-array, JSON.parse threw, and the only
+  // symptom was `could not load` on one line of a 230-line report — a model
+  // silently absent from the refit, with its old coefficients left standing.
+  // So the entry is parsed here and a bad one is dropped and re-fetched.
+  try { JSON.parse(body); return body } catch {
+    console.log(`      (cached response was truncated — re-fetching)`)
+    rmSync(f, { force: true })
+    return null
+  }
 }
 function cachePut(url: string, body: string) {
   if (!CACHE) return
+  try { JSON.parse(body) } catch { return }   // never cache what will not parse
   mkdirSync(CACHE_DIR, { recursive: true })
-  writeFileSync(join(CACHE_DIR, `${createHash('sha1').update(url).digest('hex')}.json`), body)
+  const f = join(CACHE_DIR, `${createHash('sha1').update(url).digest('hex')}.json`)
+  // Written beside and renamed, so an interrupted write cannot leave half a
+  // response behind under the real name.
+  const tmp = `${f}.${process.pid}.part`
+  writeFileSync(tmp, body)
+  renameSync(tmp, f)
 }
 
 /** hour (epoch ms) -> the nine points' wind at each requested level. */
@@ -235,9 +318,14 @@ async function fetchField(
       + `&wind_speed_unit=kn&timezone=UTC&cell_selection=${CELL}`
     let body = cacheGet(url)
     if (body == null) {
-      const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(180_000) })
-      body = await r.text()
-      if (!r.ok) throw new Error(`${model} ${from}: HTTP ${r.status}: ${body.slice(0, 160)}`)
+      for (let attempt = 1; ; attempt++) {
+        const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(180_000) })
+        body = await r.text()
+        if (!r.ok) throw new Error(`${model} ${from}: HTTP ${r.status}: ${body.slice(0, 160)}`)
+        try { JSON.parse(body); break } catch (e) {
+          if (attempt >= 3) throw new Error(`${model} ${from}: unparseable after ${attempt} tries: ${(e as Error).message}`)
+        }
+      }
       cachePut(url, body)
     }
     const parsed = JSON.parse(body)
@@ -292,6 +380,20 @@ const SIN = (h: number) => Math.sin((2 * Math.PI * h) / 24)
 const COS = (h: number) => Math.cos((2 * Math.PI * h) / 24)
 
 /**
+ * THE LADDER IS RUN TWICE, and the second half of it is new.
+ *
+ * `bias_scale` / `diurnal` / `sector` are the original pipeline's forms, with
+ * the slope fitted by least squares. `c_bias_scale` / `c_diurnal` /
+ * `c_sector` are the same three with the slope PINNED AT 1 — bias, harmonic
+ * and band offsets only, so the forecast's range is preserved by construction.
+ *
+ * Why there is a second half at all: an rmse-optimal slope is a shrinkage
+ * toward the climatological mean, and at Long Beach it bought a 30 % rmse gain
+ * by making a strong-wind forecast impossible. See the tail section of
+ * src/lib/mosFit. A constrained form is stored as its ORDINARY type with
+ * a = 1, so the app needs no change and a new type string cannot fall through
+ * to raw unnoticed.
+ *
  * Each form shares a bias+scale base; diurnal and sector add a term fitted on
  * the RESIDUAL of that base, which is why the shipped specs carry both `b` and
  * a non-zero `c0` — a joint fit cannot produce that pair, and reading the JSON
@@ -299,12 +401,22 @@ const COS = (h: number) => Math.cos((2 * Math.PI * h) / 24)
  */
 function fit(kind: string, rows: readonly Row[], bands: readonly Band[]): Spec {
   if (kind === 'raw' || !rows.length) return { type: 'raw' }
-  const beta = solveOls(rows.map((r) => [1, r.ws]), rows.map((r) => r.obs))
-  if (!beta) return { type: 'raw' }
-  const [b, a] = beta
+  const constrained = kind.startsWith('c_')
+  const form = constrained ? kind.slice(2) : kind
+  let a: number; let b: number
+  if (constrained) {
+    // The slope is not estimated. b is then just the mean residual of the
+    // forecast itself, which is the least-squares answer with a held at 1.
+    a = 1
+    b = rows.reduce((q, r) => q + (r.obs - r.ws), 0) / rows.length
+  } else {
+    const beta = solveOls(rows.map((r) => [1, r.ws]), rows.map((r) => r.obs))
+    if (!beta) return { type: 'raw' }
+    ;[b, a] = beta
+  }
   const resid = rows.map((r) => r.obs - (a * r.ws + b))
-  if (kind === 'bias_scale') return { type: 'bias_scale', a, b }
-  if (kind === 'diurnal') {
+  if (form === 'bias_scale') return { type: 'bias_scale', a, b }
+  if (form === 'diurnal') {
     const c = solveOls(rows.map((r) => [1, SIN(r.hour), COS(r.hour)]), resid)
     if (!c) return { type: 'bias_scale', a, b }
     return { type: 'diurnal', a, b, c0: c[0], c1: c[1], c2: c[2] }
@@ -354,6 +466,9 @@ function cvOn(
 ) {
   const blocks = Array.from(new Set(testRows.map(blockOf))).sort()
   const rawE: number[] = []; const adjE: number[] = []
+  // The held-out predictions themselves, not just their errors, because the
+  // tail check counts how many strong-wind cases each side CALLED.
+  const obsP: number[] = []; const rawP: number[] = []; const corP: number[] = []
   const perFold: Array<{ g: string; n: number; raw: number; adj: number }> = []
   const rms = (e: number[]) => Math.sqrt(e.reduce((q, x) => q + x * x, 0) / e.length)
   for (const b of blocks) {
@@ -362,12 +477,19 @@ function cvOn(
     if (!te.length || tr.length < 6) continue
     const m = fit(kind, tr, bands)
     const a: number[] = []; const z: number[] = []
-    for (const r of te) { a.push(predict(m, r, bands) - r.obs); z.push(r.ws - r.obs) }
+    for (const r of te) {
+      const c = predict(m, r, bands)
+      a.push(c - r.obs); z.push(r.ws - r.obs)
+      obsP.push(r.obs); rawP.push(r.ws); corP.push(c)
+    }
     adjE.push(...a); rawE.push(...z)
     perFold.push({ g: b, n: te.length, raw: rms(z), adj: rms(a) })
   }
   if (!adjE.length) return null
-  return { raw: rms(rawE), adj: rms(adjE), n: adjE.length, perFold, folds: blocks.length }
+  return {
+    raw: rms(rawE), adj: rms(adjE), n: adjE.length, perFold, folds: blocks.length,
+    obs: obsP, rawP, corP,
+  }
 }
 
 /** Leave-one-regatta-out, with the per-fold figures kept. */
@@ -406,6 +528,11 @@ interface Decision {
   table: string
   agree: number
   n: number
+  /** Measured on the held-out predictions of the chosen form. */
+  tail: TailStat
+  tailOk: boolean
+  /** True when the chosen form's slope was pinned at 1. */
+  constrained: boolean
 }
 
 /**
@@ -417,15 +544,19 @@ interface Decision {
  * `trainPool` and `testRows` are separate so the same held-out blocks can score
  * a pooled fit and a regime-only fit against each other.
  */
+const OLS_LADDER = ['bias_scale', 'diurnal', 'sector']
+const CONSTRAINED_LADDER = ['c_bias_scale', 'c_diurnal', 'c_sector']
+
 function chooseForm(
   trainPool: readonly Row[], testRows: readonly Row[],
-  blockOf: (r: Row) => string, bands: readonly Band[],
+  blockOf: (r: Row) => string, bands: readonly Band[], bars: TailBars,
+  ladder: readonly string[] = OLS_LADDER,
 ): Decision | null {
   if (!testRows.length) return null
   const agree = testRows.filter((r) => assignSector(r.wd, bands) === assignSector(r.obsTwd, bands)).length / testRows.length
   const results: Record<string, ReturnType<typeof cvOn>> = {}
   let rawRmse = NaN
-  for (const kind of ['bias_scale', 'diurnal', 'sector']) {
+  for (const kind of ladder) {
     const r = cvOn(trainPool, testRows, blockOf, kind, bands)
     if (r) { results[kind] = r; rawRmse = r.raw }
   }
@@ -436,8 +567,8 @@ function chooseForm(
     if (r && r.adj < cvRmse - 1e-9) { best = k; cvRmse = r.adj }
   }
   let guarded = ''
-  if (best === 'sector' && agree < AGREE_MIN) {
-    const alt = Object.entries(results).filter(([k]) => k !== 'sector')
+  if (best.endsWith('sector') && agree < AGREE_MIN) {
+    const alt = Object.entries(results).filter(([k]) => !k.endsWith('sector'))
       .sort((p, q) => (p[1]!.adj - q[1]!.adj))[0]
     if (alt && alt[1]!.adj < rawRmse) {
       guarded = ` (sector best but agreement ${(100 * agree).toFixed(0)}% < 70% -> ${alt[0]})`
@@ -447,33 +578,65 @@ function chooseForm(
   const chosen = results[best]
   const pi = 100 * (1 - cvRmse / rawRmse)
   const holds = chosen ? chosen.perFold.every((f) => f.adj < f.raw) : false
+  const tail = chosen
+    ? tailStats(chosen.obs, chosen.rawP, chosen.corP, bars)
+    : tailStats([], [], [], bars)
+  // THE THIRD BAR. An unjudgeable tail passes — a record with nine cases above
+  // the threshold cannot refuse a form on them — and the printed verdict says
+  // which of the two happened, so a pass on thin evidence is never silent.
+  const tailOk = best === 'raw' || tailPasses(tail, bars)
   const cell = (k: string) => (results[k] ? f2(results[k]!.adj).padStart(8) : '       -')
+  const pref = ladder[0].startsWith('c_') ? 'c_' : ''
   return {
     best, rawRmse, cvRmse, pi, holds,
-    ship: best !== 'raw' && holds && pi >= MIN_PI,
+    ship: best !== 'raw' && holds && pi >= MIN_PI && tailOk,
     folds: chosen?.folds ?? 0,
     perFold: chosen?.perFold ?? [],
     guarded,
-    table: `${f2(rawRmse).padStart(5)}  ${cell('bias_scale')}  ${cell('diurnal')}  ${cell('sector')}`,
+    table: `${f2(rawRmse).padStart(5)}  ${cell(`${pref}bias_scale`)}  ${cell(`${pref}diurnal`)}  ${cell(`${pref}sector`)}`,
     agree,
     n: testRows.length,
+    tail,
+    tailOk,
+    constrained: pref === 'c_',
   }
 }
 
 /** The spec entry a decision produces, shipped or honestly not. */
-function entryFor(d: Decision, trainPool: readonly Row[], bands: readonly Band[], blockName: string): Spec {
+function entryFor(
+  d: Decision, trainPool: readonly Row[], bands: readonly Band[], blockName: string, bars: TailBars,
+): Spec {
   const m = d.ship ? fit(d.best, trainPool, bands) : { type: 'raw' }
+  const plain = d.best.replace(/^c_/, '')
   return {
     ...m,
-    best: d.ship ? d.best : 'raw',
+    best: d.ship ? plain : 'raw',
+    ...(d.ship && d.constrained ? {
+      slope_constrained: true,
+      form: `a = 1 pinned; ${plain === 'bias_scale' ? 'bias only'
+        : plain === 'diurnal' ? 'bias + 24 h harmonic' : 'bias + band offsets'}`,
+    } : {}),
     ...(d.ship || d.best === 'raw' ? {} : {
-      not_shipped: d.best,
-      why: d.holds ? `cross-validated gain ${d.pi.toFixed(1)} % is below the ${MIN_PI} % bar`
-        : `the gain did not hold in every held-out ${blockName}`,
+      not_shipped: plain,
+      why: !d.tailOk ? `it ${tailVerdict(d.tail, bars)}`
+        : d.holds ? `cross-validated gain ${d.pi.toFixed(1)} % is below the ${MIN_PI} % bar`
+          : `the gain did not hold in every held-out ${blockName}`,
     }),
     cv_rmse: Number(d.cvRmse.toFixed(3)),
     raw_rmse: Number(d.rawRmse.toFixed(3)),
     reduction_pct: Number(d.pi.toFixed(1)),
+    tail: {
+      threshold_kn: bars.threshold,
+      n_above: d.tail.nAbove,
+      warn_raw: d.tail.warnRaw,
+      warn_cor: d.tail.warnCor,
+      top_bin_kn: bars.topBin,
+      top_n: d.tail.topN,
+      ...(d.tail.topN ? {
+        top_err_raw_kn: Number(d.tail.topRaw.toFixed(2)),
+        top_err_cor_kn: Number(d.tail.topCor.toFixed(2)),
+      } : {}),
+    },
     sector_agreement: Number(d.agree.toFixed(2)),
     n: d.n,
     folds: d.folds,
@@ -491,7 +654,11 @@ async function main() {
   const venues = Object.keys(VENUES).filter((v) => !ONLY || v === ONLY)
   if (!venues.length) { console.error(`No venue ${ONLY}. One of: ${Object.keys(VENUES).join(', ')}`); process.exit(1) }
   console.log('\nMediterranean MOS refit')
-  console.log(`  truth        ${OBS_DIR}/obs_<venue>.csv — 10-minute bins of calibrated 30 m logfile wind`)
+  console.log(`  truth        ${OBS_DIR}/obs_<venue>.csv — 10-minute bins of calibrated masthead wind`)
+  console.log(`  this season  ${SKIP_2026 ? '(--no-2026: excluded)' : `${OBS_2026_DIR}/obs_<venue>_2026.csv`}`)
+  console.log(`               Northstar 76, SELECTED PHASES only (scripts/med-obs-phases.ts)`)
+  console.log(`  masthead     32 m for the Northstar 72 regattas, 35 m for 2026's — the files' 30.0 is a default`)
+  console.log(`  model read   at the ${EVAL_AT === 'target' ? `app's ${TARGET_Z} m target` : "instrument's own heel-reduced height"}`)
   console.log(`  grid cell    cell_selection=${CELL}  (the shipped specs were fitted on 'nearest';`)
   console.log("               the app was sending the default, 'land', and now sends 'sea')")
   console.log('  levels       the APP\'s ladder per model, and the app\'s single-level lift')
@@ -505,18 +672,56 @@ async function main() {
     const points = forecastPoints(cfg.bbox)
     const regattas = Array.from(new Set(obs.map((o) => o.regatta))).sort()
     console.log(`\n${'─'.repeat(78)}\n${venue}`)
-    console.log(`  ${obs.length} bins, ${regattas.length} regattas (${regattas.join(', ')})`)
+    const perReg = regattas.map((r) => {
+      const rows = obs.filter((o) => o.regatta === r)
+      // The masthead height, not zEff — zEff is that height reduced by heel
+      // and so differs on every bin. Printed because the regattas are no
+      // longer all one boat.
+      const mast = Math.round(Math.max(...rows.map((o) => o.mast)))
+      return `${r.replace(`${venue}_`, '')} ${rows.length}@${mast}m`
+    })
+    console.log(`  ${obs.length} bins, ${regattas.length} regattas (${perReg.join(', ')})`)
     console.log(`  ${ranges.length} date ranges: ${ranges.map(([a, b]) => (a === b ? a : `${a}..${b}`)).join('  ')}`)
     console.log(`  ${points.length}-point lattice over ${cfg.bbox.join(', ')}`)
     console.log(`  bands ${cfg.bands.map(([n]) => n).join(', ')}`)
+
+    // THE TAIL BARS, read off this venue's own truth rather than chosen. The
+    // three venues are different animals — Porto Cervo's median is 12.3 kn and
+    // 10 % of its bins are over 20, Sorrento reaches 18 kn nine times in three
+    // regattas — so a level that measures something at one is vacuous at the
+    // other, and a hand-picked pair would be tuned to the answer.
+    const bars = pickTailBars(obs.map((o) => o.tws), { label: venue })
+      ?? { threshold: Infinity, topBin: Infinity }
+    const above = (t: number) => obs.filter((o) => o.tws >= t).length
+    console.log(`  tail bars: warning rate at ${bars.threshold} kn (${above(bars.threshold)} bins)`
+      + `, mean error at ${bars.topBin}+ kn (${above(bars.topBin)} bins)`)
 
     const old: Spec = JSON.parse(readFileSync(`src/components/weather/mos/mos_${venue}.json`, 'utf8'))
     const spec: Spec = {
       venue,
       target_height_m: TARGET_Z,
       cell_selection: CELL,
-      truth: `${obs.length} ten-minute bins of calibrated 30 m logfile wind, ${regattas.length} regattas`,
+      truth: `${obs.length} ten-minute bins of masthead wind, ${regattas.length} regattas`,
+      truth_detail: perReg.join(', '),
+      // The height is on the spec because it is the one number a reader would
+      // otherwise take from `target_height_m` and get wrong: the predicted
+      // quantity is the BOAT'S MASTHEAD wind, 32 m on the Northstar 72
+      // regattas and 35 m on 2026's, not a 30 m wind. The files' own 30.0 is
+      // extract_obs.py's default and was never a measurement.
+      truth_masthead_m: Array.from(new Set(obs.map((o) => o.mast))).sort((x, y) => x - y),
+      model_read_at: EVAL_AT === 'target' ? TARGET_Z : 'instrument height, heel-reduced',
       refitted_on: new Date().toISOString().slice(0, 10),
+      // The bar that is new as of this refit, and the reason three shipped
+      // corrections are now raw. See the tail section of src/lib/mosFit.
+      tail_bars: {
+        threshold_kn: bars.threshold,
+        top_bin_kn: bars.topBin,
+        warn_keep: TAIL_WARN_KEEP,
+        top_slack_kn: TAIL_TOP_SLACK,
+        note: 'a form must keep this fraction of raw\'s strong-wind hits and not worsen the '
+          + 'top bin\'s mean error by more than the slack; an rmse-optimal slope is a shrinkage '
+          + 'toward the mean and rmse cannot see what it does to the tail',
+      },
       bands: cfg.bands,
       models: {},
     }
@@ -532,7 +737,15 @@ async function main() {
       try {
         field = await fetchField(mosId, heights, points, ranges)
       } catch (e) {
+        // A MODEL THAT FAILS TO LOAD MUST NOT BE WRITTEN OUT MISSING. The spec
+        // is rebuilt from scratch each run, so a transient `fetch failed`
+        // would drop that model's entry entirely — and applyMOS falls back to
+        // raw for a model it cannot find, silently removing a correction that
+        // was fine the run before. AROME at St Tropez did exactly this once.
+        // Reporting it is enough for a dry run; writing on it is not allowed.
         console.log(`  ${mosId.padEnd(28)} could not load: ${(e as Error).message}`)
+        if (WRITE) throw new Error(`${venue}: ${mosId} could not load, so the spec would be written`
+          + ' without it and that model would fall back to raw. Re-run.')
         continue
       }
       const hours = Array.from(field.keys()).sort((a, b) => a - b)
@@ -554,7 +767,7 @@ async function main() {
           const { speed, dir } = fromUV(uv.u, uv.v)
           if (speed > 0) levels.set(h, { speed, dir })
         }
-        const m = interpToMast(levels, o.zEff)
+        const m = interpToMast(levels, EVAL_AT === 'target' ? TARGET_Z : o.zEff)
         if (!m) continue
         rows.push({
           ws: m.speed, wd: m.dir, obs: o.tws, obsTwd: o.twd,
@@ -569,7 +782,7 @@ async function main() {
       // an earlier version looked it up by matching tws values, which pairs
       // the wrong bin whenever two bins recorded the same speed.
       const byRegatta = (r: Row) => r.regatta
-      const d = chooseForm(rows, rows, byRegatta, cfg.bands)
+      let d = chooseForm(rows, rows, byRegatta, cfg.bands, bars)
       if (!d) {
         // One regatta only: nothing to hold out, so ship raw rather than an
         // in-sample fit. The old spec said the same for ICON-2I.
@@ -595,11 +808,44 @@ async function main() {
           + `${oldM.reduction_pct != null ? ` (${oldM.reduction_pct}%)` : ''}`
           + `${oldM.not_shipped ? ` [voided: ${oldM.not_shipped}]` : ''}`)
       }
-      if (d.best !== 'raw' && !d.ship) {
-        console.log(`      NOT SHIPPED: written as raw. ${d.holds ? `${f2(d.pi)} % is below the ${MIN_PI} % bar`
-          : 'the gain does not hold in every held-out regatta'}.`)
+      if (d.best !== 'raw') {
+        const m = fit(d.best, rows, cfg.bands) as MosModelSpec
+        const x = shrinkageFixedPoint(m)
+        console.log(`      slope a ${f3(m.a ?? 1)}, fixed point ${x == null ? 'none' : `${f2(x)} kn`}`
+          + ` -> at ${bars.topBin} kn the slope and bias move the forecast`
+          + ` ${shrinkageAt(m, bars.topBin) >= 0 ? '+' : ''}${f2(shrinkageAt(m, bars.topBin))} kn`)
+        console.log(`      ${tailVerdict(d.tail, bars)}`)
       }
-      spec.models[mosId] = entryFor(d, rows, cfg.bands, 'regatta')
+
+      // ── THE CONSTRAINED LADDER ─────────────────────────────────────────
+      // Only reached when the least-squares ladder's own pick fails the tail
+      // bar. Pinning the slope costs rmse by construction, so it is the
+      // fallback and not the default: where the fitted slope keeps the strong
+      // wind, it is the better correction and stays.
+      if (d.best !== 'raw' && !d.tailOk) {
+        const c = chooseForm(rows, rows, byRegatta, cfg.bands, bars, CONSTRAINED_LADDER)
+        if (c) {
+          // Printed even when it picks raw. Pinning the slope costs rmse by
+          // construction, so "no constrained form beat raw either" is the
+          // answer in some cases and has to be visible, not inferred from a
+          // missing line.
+          console.log(`      CONSTRAINED (a = 1): ${c.table}  ->  ${c.best.replace('c_', '')}`
+            + `${c.best === 'raw' ? ' — no constrained form beat raw' : ` (${f2(c.cvRmse)}, ${f2(c.pi)} %)`
+              + `  holds ${c.holds ? 'yes' : 'NO'}${c.guarded}`}`)
+          if (c.best !== 'raw') console.log(`      ${tailVerdict(c.tail, bars)}`)
+        }
+        if (c?.ship) {
+          console.log('      -> shipping the constrained form: it keeps the tail and still beats raw')
+          d = c
+        }
+      }
+
+      if (d.best !== 'raw' && !d.ship) {
+        console.log(`      NOT SHIPPED: written as raw. ${!d.tailOk ? 'it fails the tail bar'
+          : d.holds ? `${f2(d.pi)} % is below the ${MIN_PI} % bar`
+            : 'the gain does not hold in every held-out regatta'}.`)
+      }
+      spec.models[mosId] = entryFor(d, rows, cfg.bands, 'regatta', bars)
     }
 
 
@@ -628,8 +874,8 @@ async function main() {
           const byDay = regattas.length < 2
           const blockOf = byDay ? (r: Row) => r.day : (r: Row) => r.regatta
           const blockName = byDay ? 'day' : 'regatta'
-          const pooled = chooseForm(rows, armRows, blockOf, cfg.bands)
-          const armOnly = chooseForm(armRows, armRows, blockOf, cfg.bands)
+          const pooled = chooseForm(rows, armRows, blockOf, cfg.bands, bars)
+          let armOnly = chooseForm(armRows, armRows, blockOf, cfg.bands, bars)
           console.log(`\n  ${mosId} / ${armLabel}: ${armRows.length} bins, ${regattas.length} regatta(s)`
             + `, blocked by ${blockName}${byDay ? ' — ONE regatta, so this is a weaker test than the others' : ''}`)
           if (!pooled || !armOnly) { console.log('      not enough blocks to cross-validate — arm skipped'); continue }
@@ -638,6 +884,19 @@ async function main() {
           console.log(`      ${armLabel}-only fit`.padEnd(35) + `${f2(armOnly.rawRmse)} -> ${f2(armOnly.cvRmse)}`
             + `  (${armOnly.best})  holds ${armOnly.holds ? 'yes' : 'NO'}${armOnly.guarded}`)
           console.log(`      per ${blockName} held out: ${armOnly.perFold.map((f) => `${f.g.replace(`${venue}_`, '')} ${f2(f.raw)} -> ${f2(f.adj)}`).join('  ')}`)
+
+          if (armOnly.best !== 'raw') console.log(`      ${tailVerdict(armOnly.tail, bars)}`)
+          // The same fallback as the year-round pass, for the same reason: a
+          // regime arm that wins on rmse by flattening the regime's strong
+          // wind has not earned anything.
+          if (armOnly.best !== 'raw' && !armOnly.tailOk) {
+            const c = chooseForm(armRows, armRows, blockOf, cfg.bands, bars, CONSTRAINED_LADDER)
+            if (c && c.best !== 'raw') {
+              console.log(`      CONSTRAINED (a = 1): ${f2(c.cvRmse)} (${f2(c.pi)} %),`
+                + ` holds ${c.holds ? 'yes' : 'NO'} — ${tailVerdict(c.tail, bars)}`)
+            }
+            if (c?.ship) { console.log('      -> the constrained form is this arm\'s candidate'); armOnly = c }
+          }
 
           const wins = armOnly.cvRmse < pooled.cvRmse
           if (!wins) {
@@ -651,7 +910,7 @@ async function main() {
             console.log(`      VERDICT: fit the ${armLabel} regime separately — ${armOnly.best},`
               + ` ${f2(armOnly.pi)} % against raw, holding in every held-out ${blockName}`)
           }
-          const entry = entryFor(armOnly, armRows, cfg.bands, blockName)
+          const entry = entryFor(armOnly, armRows, cfg.bands, blockName, bars)
           entry.regime = armLabel
           if (isSeasonal) { if (armOnly.ship) seasonalModels[mosId] = entry }
           else { spec.models[mosId] = entry; fromOtherArm.add(mosId) }

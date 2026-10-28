@@ -75,33 +75,54 @@ describe('seasonMonths and hasSeasonal', () => {
     expect(hasSeasonal({ seasonal: { months: [], models: {} } })).toBe(false)
   })
 
-  it('is set only where a REGIME split earned it', () => {
-    // St Tropez has one. Its archive holds a June sea-breeze regatta and two
-    // October gradient ones, raw rmse 3.0-3.6 kn against 1.9-2.9, and one
-    // correction across both helps one and hurts the other. So AROME's
-    // coefficients are fitted on the gradient regatta pair and the May-July
-    // window is set to raw explicitly, because those coefficients were never
-    // asked to work in June.
+  it('is set only where a window earned it, and no Mediterranean venue does', () => {
+    // THIS TEST USED TO ASSERT THE OPPOSITE FOR ST TROPEZ, and the change is
+    // the point. Its window existed to carry one statement: AROME's
+    // coefficients came from the October gradient regatta pair alone, held in
+    // both, and were never asked to work in the June sea breeze — so May-July
+    // was set to raw explicitly.
     //
-    // Sorrento and Porto Cervo have no split: their archives are one season
-    // each (May and September), so there is no second regime to separate and
-    // the specs must stay year-round exactly as they were.
-    expect(hasSeasonal(specFor('st-tropez'))).toBe(true)
-    expect(seasonMonths(specFor('st-tropez'))).toEqual([5, 6, 7])
-    expect(hasSeasonal(specFor('sorrento'))).toBe(false)
-    expect(hasSeasonal(specFor('porto-cervo'))).toBe(false)
+    // Adding this season (Northstar 76, 28 Sept - 2 Oct 2026, 40 bins from the
+    // selected phases) gives the gradient arm a THIRD regatta, and the fit
+    // that held in two does not hold in three: 2023_oct 2.10 -> 1.90,
+    // 2025_oct 2.21 -> 1.99, 2026_oct 2.31 -> 2.34. So AROME is raw
+    // everywhere, the window's only member is gone, and an empty `seasonal`
+    // would read as a window that exists. Two held-out blocks were not enough
+    // to tell a correction from a coincidence.
+    //
+    // Sorrento and Porto Cervo never had one: their archives are one season
+    // each (May and September), so there is no second regime to separate.
+    for (const key of ['st-tropez', 'sorrento', 'porto-cervo']) {
+      expect(hasSeasonal(specFor(key)), key).toBe(false)
+      expect(seasonMonths(specFor(key)), key).toBeNull()
+    }
   })
 
-  it('St Tropez suppresses in June only what was fitted outside it', () => {
-    // The distinction the window exists to carry. AROME's default comes from
-    // the gradient arm alone -> raw in June. icon_eu's comes from the pooled
-    // fit, which had to hold in EVERY regatta including the June one (3.56 ->
-    // 3.09), so it is absent from the window and keeps applying there.
+  it('but a shipped spec DOES still carry one, so the window is live code', () => {
+    // Long Beach's racing season, June-September, which is a season rather
+    // than a regime: the venue's summer is a sea-breeze climate of its own
+    // (median 6.0 kn, p99 14.6, never 20 in five years) and four of five
+    // models earned their own arm on it. Asserted here because with the
+    // Mediterranean windows gone this file would otherwise only exercise the
+    // mechanism against a synthetic spec.
+    expect(hasSeasonal(specFor('long-beach'))).toBe(true)
+    expect(seasonMonths(specFor('long-beach'))).toEqual([6, 7, 8, 9])
+    const lb = specFor('long-beach')
+    expect(modelSpecFor(lb, 'gfs_hrrr', 7).season).toBe('racing-season')
+    expect(modelSpecFor(lb, 'gfs_hrrr', 1).season).toBeNull()
+  })
+
+  it('leaves a model absent from a window on its year-round coefficients', () => {
+    // The fallback direction, which St Tropez's AROME used to pin on a real
+    // spec and which getting backwards would apply one regime's coefficients
+    // to the other. icon_eu at St Tropez is now the plain case: one set, used
+    // in June and in October alike, because the fit had to hold in every
+    // regatta including the June one.
     const st = specFor('st-tropez')
-    expect(modelSpecFor(st, 'meteofrance_arome_france_hd', 6).m.type).toBe('raw')
-    expect(modelSpecFor(st, 'meteofrance_arome_france_hd', 10).m.type).toBe('sector')
     expect(modelSpecFor(st, 'icon_eu', 6).m.type).toBe('bias_scale')
     expect(modelSpecFor(st, 'icon_eu', 10).m.type).toBe('bias_scale')
+    expect(modelSpecFor(st, 'icon_eu', 6).m.a).toBe(modelSpecFor(st, 'icon_eu', 10).m.a)
+    expect(modelSpecFor(st, 'icon_eu', 6).season).toBeNull()
   })
 
   it('and a seasonal window never changes whether a spec needs a pre-lift', () => {

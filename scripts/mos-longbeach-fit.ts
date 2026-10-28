@@ -147,7 +147,9 @@ import {
   crossValidateForms, selectForm, score, lag1, effectiveN, assignSector,
   piRmse, persistenceRmse, gainHoldsEveryBlock, predictSpecModel,
   yearBlocks, withBuffer, solveOls,
+  tailStats, tailVerdict, tailPasses,
   type Pair, type Band, type FormResult, type MosType, type MosModelSpec,
+  type TailStat, type TailBars,
 } from '../src/lib/mosFit'
 
 const argv = process.argv.slice(2)
@@ -199,10 +201,8 @@ const MIN_GAIN_PCT = Number(flag('min-gain', '2'))
  * season's range). Both are well populated, and neither is tuned: they are
  * read off the distribution, not off the results.
  */
-interface Bars {
+interface Bars extends TailBars {
   label: string
-  threshold: number    // "it will blow this hard" — the warning rate
-  topBin: number       // the strong end, whose mean error must not collapse
   minPerBand: number   // hours a sector needs before it earns an offset
 }
 const YEAR_BARS: Bars = {
@@ -659,38 +659,12 @@ function fitConstrained(f: ConstrainedType, rows: readonly Pair[], bars: Bars): 
   return coef ? buildConstrainedSpec(f, coef) : null
 }
 
-interface TailStat {
-  nAbove: number; warnRaw: number; warnCor: number
-  topN: number; topRaw: number; topCor: number
-}
-
-/**
- * Tail statistics on OUT-OF-SAMPLE predictions.
- *
- * `warn` counts the hours the station really had >= bars.threshold where the
- * forecast also said so. A hit count, not a skill score, on purpose:
- * the operational question is how many of the windy hours you were told about,
- * and rmse is blind to it.
- */
-function tailStats(
-  obs: readonly number[], raw: readonly number[], cor: readonly number[], bars: Bars,
-): TailStat {
-  let nAbove = 0; let warnRaw = 0; let warnCor = 0
-  let topN = 0; let topRaw = 0; let topCor = 0
-  for (let i = 0; i < obs.length; i++) {
-    if (obs[i] >= bars.threshold) {
-      nAbove++
-      if (raw[i] >= bars.threshold) warnRaw++
-      if (cor[i] >= bars.threshold) warnCor++
-    }
-    if (obs[i] >= bars.topBin) { topN++; topRaw += raw[i] - obs[i]; topCor += cor[i] - obs[i] }
-  }
-  return {
-    nAbove, warnRaw, warnCor, topN,
-    topRaw: topN ? topRaw / topN : NaN,
-    topCor: topN ? topCor / topN : NaN,
-  }
-}
+// tailStats, tailVerdict and the tail bar itself now live in src/lib/mosFit,
+// because every venue's fit needs the same measurement — the Mediterranean
+// specs shipped seven months before anyone looked at their tail. The bar's two
+// constants stay here as flags so this venue's shipped numbers are reproducible
+// from the command line.
+const TAIL_OPTS = { warnKeep: WARN_KEEP, topSlack: TOP_SLACK }
 
 /** Pooled out-of-sample predictions, kept so an arm can be re-scored on a subset. */
 interface Pooled { t: number[]; month: number[]; obs: number[]; raw: number[]; cor: number[] }
@@ -789,16 +763,14 @@ function cvConstrained(
  *    separates them with nothing close to the line.
  */
 function applyBars(
-  results: readonly ConstrainedResult[], rawRmse: number,
+  results: readonly ConstrainedResult[], rawRmse: number, bars: Bars,
 ): ConstrainedResult | null {
   const usable = results.filter((r) => !r.refused && Number.isFinite(r.cv.rmse))
   const passing = usable.filter((r) => {
     if (piRmse(r.cv.rmse, rawRmse) < MIN_GAIN_PCT) return false
     if (!r.perBlock.length || r.perBlock.some((b) => b.piRmse <= 0)) return false
     if (r.params > 0 && r.cv.nEff / r.params < 20) return false
-    const t = r.tail
-    if (t.nAbove >= 20 && t.warnCor < WARN_KEEP * t.warnRaw) return false
-    if (t.topN >= 10 && Number.isFinite(t.topCor) && t.topCor < t.topRaw - TOP_SLACK) return false
+    if (!tailPasses(r.tail, bars, TAIL_OPTS)) return false
     return true
   })
   if (!passing.length) return null
@@ -806,16 +778,6 @@ function applyBars(
   const se = best.cv.rmse / Math.sqrt(2 * Math.max(2, best.cv.nEff))
   const within = passing.filter((r) => r.cv.rmse <= best.cv.rmse + se)
   return within.reduce((p, q) => (q.params < p.params ? q : p))
-}
-
-/** Why a slope-fitting form was refused, in the same vocabulary as the bars. */
-function tailVerdict(t: TailStat, bars: Bars): string {
-  if (t.nAbove < 20) return `too few hours >= ${bars.threshold} kn (${t.nAbove}) to judge the tail`
-  const keep = t.warnRaw ? t.warnCor / t.warnRaw : NaN
-  const ok = keep >= WARN_KEEP && (t.topN < 10 || t.topCor >= t.topRaw - TOP_SLACK)
-  return `${ok ? 'PASSES' : 'FAILS'} the tail bar — keeps ${(100 * keep).toFixed(0)}% of raw's`
-    + ` >=${bars.threshold} kn hits (${t.warnCor}/${t.warnRaw})`
-    + (t.topN >= 10 ? `, ${bars.topBin}+ err ${t.topCor.toFixed(1)} vs raw ${t.topRaw.toFixed(1)} kn` : '')
 }
 
 function printConstrained(
@@ -1222,7 +1184,7 @@ async function main() {
           const q = predictSpecModel(pick.spec, r.model, r.twd, r.hour, BANDS)
           obsA.push(r.obs); rawA.push(r.model); corA.push(Number.isFinite(q) ? q : r.model)
         }
-        return tailVerdict(tailStats(obsA, rawA, corA, YEAR_BARS), YEAR_BARS)
+        return tailVerdict(tailStats(obsA, rawA, corA, YEAR_BARS), YEAR_BARS, TAIL_OPTS)
       })()
       console.log(`    ${olsPooledTail}`)
 
@@ -1232,7 +1194,7 @@ async function main() {
       let conGain = NaN
       if (cBlocks >= 2 && cLadder.length) {
         printConstrained(cLadder, rawCv.cv.rmse, YEAR_BARS)
-        con = applyBars(cLadder, rawCv.cv.rmse)
+        con = applyBars(cLadder, rawCv.cv.rmse, YEAR_BARS)
         conGain = con ? piRmse(con.cv.rmse, rawCv.cv.rmse) : NaN
         console.log(`    => SHIPS: ${con ? `${con.type} (stored as ${con.storedType}, a=1)`
           + `  ${conGain.toFixed(1)}%` : 'raw — no constrained form cleared the bars'}`)
@@ -1259,7 +1221,7 @@ async function main() {
             + ` ${yrOnSeason.n.toLocaleString('en-GB')} held-out season hours:`
             + ` rmse ${f2(yrOnSeason.rmse)} vs raw ${f2(yrOnSeason.rawRmse)}`
             + ` = ${piRmse(yrOnSeason.rmse, yrOnSeason.rawRmse).toFixed(1)}%`)
-          console.log(`      ${tailVerdict(yrOnSeason.tail, SEASON_BARS)}`)
+          console.log(`      ${tailVerdict(yrOnSeason.tail, SEASON_BARS, TAIL_OPTS)}`)
         }
       }
       if (seasonRows.length >= 2000) {
@@ -1269,8 +1231,8 @@ async function main() {
           console.log(`    SEASON-ONLY fit — ${seasonRows.length.toLocaleString('en-GB')} hours,`
             + ` ${sBlocks} blocks, raw rmse ${f2(sRawRmse)}`)
           printConstrained(sLadder, sRawRmse, SEASON_BARS, '      ')
-          const sPick = applyBars(sLadder, sRawRmse)
-          if (sPick) console.log(`      ${tailVerdict(sPick.tail, SEASON_BARS)}`)
+          const sPick = applyBars(sLadder, sRawRmse, SEASON_BARS)
+          if (sPick) console.log(`      ${tailVerdict(sPick.tail, SEASON_BARS, TAIL_OPTS)}`)
           if (sPick && seasonOfYearRound) {
             // One standard error of the YEAR-ROUND arm's season rmse is the bar,
             // exactly as mos-fit.ts does it for its --months window.

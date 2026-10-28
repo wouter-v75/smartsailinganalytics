@@ -2,8 +2,21 @@
   "venue": "st_tropez",
   "target_height_m": 30,
   "cell_selection": "sea",
-  "truth": "417 ten-minute bins of calibrated 30 m logfile wind, 3 regattas",
-  "refitted_on": "2026-10-27",
+  "truth": "457 ten-minute bins of masthead wind, 4 regattas",
+  "truth_detail": "2023_oct 150@32m, 2025_jun 159@32m, 2025_oct 108@32m, 2026_oct 40@35m",
+  "truth_masthead_m": [
+    32,
+    35
+  ],
+  "model_read_at": "instrument height, heel-reduced",
+  "refitted_on": "2026-10-28",
+  "tail_bars": {
+    "threshold_kn": 18,
+    "top_bin_kn": 20,
+    "warn_keep": 0.9,
+    "top_slack_kn": 2,
+    "note": "a form must keep this fraction of raw's strong-wind hits and not worsen the top bin's mean error by more than the slack; an rmse-optimal slope is a shrinkage toward the mean and rmse cannot see what it does to the tail"
+  },
   "bands": [
     [
       "NW",
@@ -23,84 +36,101 @@
   ],
   "models": {
     "meteofrance_arome_france_hd": {
-      "type": "sector",
-      "a": 0.8017780768260352,
-      "b": 2.180008793611618,
-      "delta": {
-        "E-SE": -0.42820765595183824,
-        "S-W": 0.37307591391411243,
-        "other": -0.15912495750690422
+      "type": "raw",
+      "best": "raw",
+      "not_shipped": "bias_scale",
+      "why": "the gain did not hold in every held-out regatta",
+      "cv_rmse": 1.997,
+      "raw_rmse": 2.167,
+      "reduction_pct": 7.9,
+      "tail": {
+        "threshold_kn": 18,
+        "n_above": 14,
+        "warn_raw": 13,
+        "warn_cor": 10,
+        "top_bin_kn": 20,
+        "top_n": 4,
+        "top_err_raw_kn": -0.99,
+        "top_err_cor_kn": -2.9
       },
-      "global": 8.491467649615205e-13,
-      "best": "sector",
-      "cv_rmse": 2.042,
-      "raw_rmse": 2.151,
-      "reduction_pct": 5.1,
-      "sector_agreement": 0.83,
-      "n": 258,
-      "folds": 2,
+      "sector_agreement": 0.85,
+      "n": 298,
+      "folds": 3,
       "blocked_by": "regatta",
-      "holds_every_regatta": true,
+      "holds_every_regatta": false,
       "regime": "gradient"
     },
     "meteofrance_arpege_europe": {
       "type": "raw",
       "best": "raw",
-      "not_shipped": "diurnal",
-      "why": "the gain did not hold in every held-out regatta",
-      "cv_rmse": 2.558,
-      "raw_rmse": 2.713,
-      "reduction_pct": 5.7,
-      "sector_agreement": 0.76,
-      "n": 417,
-      "folds": 3,
+      "not_shipped": "bias_scale",
+      "why": "it FAILS the tail bar — keeps 81% of raw's >=18 kn hits (22/27), 20+ err -1.6 vs raw 0.1 kn (n 15)",
+      "cv_rmse": 2.69,
+      "raw_rmse": 2.823,
+      "reduction_pct": 4.7,
+      "tail": {
+        "threshold_kn": 18,
+        "n_above": 35,
+        "warn_raw": 27,
+        "warn_cor": 22,
+        "top_bin_kn": 20,
+        "top_n": 15,
+        "top_err_raw_kn": 0.07,
+        "top_err_cor_kn": -1.61
+      },
+      "sector_agreement": 0.79,
+      "n": 457,
+      "folds": 4,
       "blocked_by": "regatta",
       "holds_every_regatta": false
     },
     "icon_eu": {
       "type": "bias_scale",
-      "a": 0.8702379435767821,
-      "b": 2.941093483715987,
+      "a": 0.8676201224386575,
+      "b": 2.9211552304552164,
       "best": "bias_scale",
-      "cv_rmse": 2.497,
-      "raw_rmse": 3.045,
+      "cv_rmse": 2.461,
+      "raw_rmse": 3.003,
       "reduction_pct": 18,
-      "sector_agreement": 0.82,
-      "n": 417,
-      "folds": 3,
+      "tail": {
+        "threshold_kn": 18,
+        "n_above": 35,
+        "warn_raw": 15,
+        "warn_cor": 15,
+        "top_bin_kn": 20,
+        "top_n": 15,
+        "top_err_raw_kn": -3.76,
+        "top_err_cor_kn": -2.46
+      },
+      "sector_agreement": 0.84,
+      "n": 457,
+      "folds": 4,
       "blocked_by": "regatta",
       "holds_every_regatta": true
     },
     "ecmwf_ifs025": {
-      "type": "raw",
-      "best": "raw",
-      "not_shipped": "bias_scale",
-      "why": "the gain did not hold in every held-out regatta",
-      "cv_rmse": 2.791,
-      "raw_rmse": 2.972,
-      "reduction_pct": 6.1,
-      "sector_agreement": 0.72,
-      "n": 267,
-      "folds": 2,
+      "type": "bias_scale",
+      "a": 0.861244130071619,
+      "b": 2.932459654300766,
+      "best": "bias_scale",
+      "cv_rmse": 2.333,
+      "raw_rmse": 2.868,
+      "reduction_pct": 18.6,
+      "tail": {
+        "threshold_kn": 18,
+        "n_above": 22,
+        "warn_raw": 12,
+        "warn_cor": 11,
+        "top_bin_kn": 20,
+        "top_n": 11,
+        "top_err_raw_kn": -3.31,
+        "top_err_cor_kn": -3.8
+      },
+      "sector_agreement": 0.76,
+      "n": 307,
+      "folds": 3,
       "blocked_by": "regatta",
-      "holds_every_regatta": false
-    }
-  },
-  "seasonal": {
-    "months": [
-      5,
-      6,
-      7
-    ],
-    "label": "seabreeze",
-    "note": "seabreeze regime. applyMOS uses these inside the window and spec.models outside it; a model absent here keeps the default, which is only safe when the default was validated across every regatta including this regime's",
-    "models": {
-      "meteofrance_arome_france_hd": {
-        "type": "raw",
-        "best": "raw",
-        "regime": "seabreeze",
-        "why": "the default coefficients were fitted on the gradient regime alone and are not validated here; the seabreeze-only fit did not earn its own"
-      }
+      "holds_every_regatta": true
     }
   }
 }
