@@ -887,6 +887,62 @@ domain that is not in that basin, and it fails silently because a remap with no
 source data is not an error. Anything defaulted per-region should either be
 derived from the domain or refused when it does not cover it.
 
+## 5c-ter. Cowes, checked against the same failure (28 Oct 2026)
+
+**The answer to the question asked: no, Cowes does not have the San Juan bug.**
+`channel_sst_latest.nc` covers **43–47 %** of both Solent grids, `daily_pipeline.sh`
+has named it per domain for a long time, and the new per-basin default resolves
+`solent_* → channel` identically. The default Cowes path produces `t_g`
+18.2–21.7 °C for an August cycle — correct, and unchanged by any of this.
+
+Looking for it did turn up three other things in the same machinery.
+
+**1. The documented AMM15 A/B switch has never worked.** `daily_pipeline.sh`
+offers `SOLENT_SST=amm15_sst_latest.nc` against the default ODYSSEA L4. AMM15 is
+a different animal: **`thetao`, in degC, with a depth axis**, against the L4s'
+**`analysed_sst`, Kelvin, 2D**. Two independent faults:
+
+- `preprocess_nest.sh` hard-coded `-selname,analysed_sst`. Measured:
+  `cdo selname (Warning): Variable name analysed_sst not found!` So the 2 km got
+  AMM15 and the **1 km nest got nothing** — an A/B comparing two different
+  things. `preprocess_cdo.sh` detects the name, and says why in its own comment:
+  *"Units + variable name were the two things that bit us on the Med, so both
+  are now DETECTED, not assumed."* The nest path never got that treatment.
+- **Both** paths then did `cdo -addc,273.15` on a **packed int16** field.
+  `thetao` + 273.15 overflows the packed range — *"values (min=262922
+  max=270590) are outside the valid range (-32768 - 32767)"* — the write fails
+  and the field is left truncated. Measured max **33.4 K instead of 295.6**.
+  Fixed with `-b F32`, which touches only the degC branch, so the Kelvin L4s
+  are untouched.
+
+**AMM15 still should not be used.** With both fixed it now runs, but against the
+L4 on the same cycle and parent it is **mean −7.43 K**, differs by >5 K on
+**57 %** of cells, and puts **19 %** of the domain below 10 °C in August where
+the L4 has none. Its `thetao` carries `_FillValue = -32768` and the remap drags
+fill across the coast. Leave `SOLENT_SST` unset; the default L4 is the sound
+path. Fixing the AMM15 land mask is a separate job and is not done.
+
+**2. Staleness is handled on switch-on, but silent on failure.** `cron_daily.sh`
+fetches a basin only while its venue is active —
+`solent_2km ∈ DOMAINS || EVENT_VENUE=solent → channel` — so a venue switched
+back on refreshes that morning, before the run. But if the fetch *fails* the
+pipeline reuses whatever was last downloaded and says nothing. Cowes' channel
+file sat at **2026-08-06 through late October**: an August Channel SST is
+several degrees warm for the season, biasing exactly the stability/sea-breeze
+signal the swap exists to sharpen. There is now a warning, measured **against
+the cycle, not against now** — so a backfill of an October cycle with October
+data stays quiet, while the 8 Aug Solent cycle on a June AMM15 file correctly
+reports 39 days.
+
+**3. The San Juan guard earned its keep immediately.** The first AMM15 test run
+hit the int16 overflow above; the coverage check saw `0.0000` and refused the
+swap rather than writing the broken field into `t_g`. That is the San Juan
+failure caught one layer earlier, by the thing added for San Juan, on a
+different domain and a different root cause.
+
+Verified no regression on every path that matters: San Juan `t_g` 10.1–11.6 °C
+and St Tropez 296.80–298.05 K, both **byte-identical** to what shipped.
+
 ## 5d. The repeat issues — things this project has already paid for
 
 Every one of these was a day lost somewhere. A new domain re-trips them for free unless they are
