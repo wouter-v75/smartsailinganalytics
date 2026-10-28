@@ -9,6 +9,10 @@
     35
   ],
   "model_read_at": "instrument height, heel-reduced",
+  "fitted_hours_local": [
+    8,
+    18
+  ],
   "refitted_on": "2026-10-28",
   "tail_bars": {
     "threshold_kn": 20,

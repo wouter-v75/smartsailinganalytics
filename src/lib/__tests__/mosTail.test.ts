@@ -243,6 +243,34 @@ describe('what the shipped specs now do at their venues', () => {
     }
   })
 
+  it('offers BOTH a sector and a diurnal term, and says which hours it saw', () => {
+    // Every MOS must fit both axes as candidates — the original Mediterranean
+    // ladder offered one or the other and never `sector_diurnal`, so a venue
+    // whose error depends on direction AND time of day could only be given
+    // half a correction. Having tried both, these venues' CV picks the simpler
+    // forms, which is an answer and not an omission.
+    //
+    // `fitted_hours_local` is on the spec because a regatta is sailed in the
+    // middle of the day: a 24 h harmonic is constrained over seven or eight
+    // hours and extrapolated across the other sixteen, including the morning
+    // people plan on. Bounded by sqrt(c1^2 + c2^2), but an extrapolation.
+    for (const venue of ['sorrento', 'porto-cervo', 'st-tropez']) {
+      const spec = specFor(venue)
+      const [lo, hi] = spec.fitted_hours_local
+      expect(lo, venue).toBeGreaterThanOrEqual(0)
+      expect(hi, venue).toBeLessThanOrEqual(23)
+      expect(hi - lo, `${venue} spans the whole day?`).toBeLessThan(20)
+      for (const [name, m] of Object.entries<Record<string, any>>(spec.models)) {
+        // A harmonic may only be present on a form that declares one.
+        const harmonic = m.c1 != null || m.c2 != null
+        expect(harmonic && !['diurnal', 'sector_diurnal'].includes(m.type), `${venue}/${name}`).toBe(false)
+        // And band offsets only on a form that declares those.
+        const banded = m.delta != null
+        expect(banded && !['sector', 'sector_diurnal'].includes(m.type), `${venue}/${name}`).toBe(false)
+      }
+    }
+  })
+
   it('and names the masthead the truth was really measured at', () => {
     // The files say 30.0, which is extract_obs.py's default and was never a
     // measurement: Northstar 72's masthead is 32 m and Northstar 76's 35 m.

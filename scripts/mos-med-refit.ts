@@ -414,28 +414,42 @@ function fit(kind: string, rows: readonly Row[], bands: readonly Band[]): Spec {
     if (!beta) return { type: 'raw' }
     ;[b, a] = beta
   }
-  const resid = rows.map((r) => r.obs - (a * r.ws + b))
+  let resid = rows.map((r) => r.obs - (a * r.ws + b))
   if (form === 'bias_scale') return { type: 'bias_scale', a, b }
-  if (form === 'diurnal') {
-    const c = solveOls(rows.map((r) => [1, SIN(r.hour), COS(r.hour)]), resid)
+
+  // THE DIURNAL TERM, on the residual of the base.
+  let c: number[] | null = null
+  if (form === 'diurnal' || form === 'sector_diurnal') {
+    c = solveOls(rows.map((r) => [1, SIN(r.hour), COS(r.hour)]), resid)
     if (!c) return { type: 'bias_scale', a, b }
-    return { type: 'diurnal', a, b, c0: c[0], c1: c[1], c2: c[2] }
+    if (form === 'diurnal') return { type: 'diurnal', a, b, c0: c[0], c1: c[1], c2: c[2] }
+    // SEQUENTIALLY, not jointly, and that is deliberate: the band offsets are
+    // then fitted on what the harmonic leaves behind, so a sector that happens
+    // to blow at one time of day does not absorb the time-of-day signal and
+    // claim it as its own. applyMOS sums the two terms, which is exactly what
+    // this produces.
+    resid = rows.map((r, i) => resid[i] - (c![0] + c![1] * SIN(r.hour) + c![2] * COS(r.hour)))
   }
-  // sector: per-band mean residual, shrunk toward the global mean residual so
-  // a band with four cases cannot carry its own offset at full weight.
-  const glob = resid.reduce((s, x) => s + x, 0) / resid.length
+
+  // The band offsets: each band's mean residual, shrunk toward the global mean
+  // residual so a band with four cases cannot carry its own offset at full
+  // weight. That shrinkage is what lets a venue whose newest regatta sat in one
+  // sector all week keep the other bands' offsets from the years that have
+  // them, rather than refusing a band or trusting a handful of bins.
+  const glob = resid.reduce((q, x) => q + x, 0) / resid.length
   const delta: Record<string, number> = {}
   const seen = new Map<string, number[]>()
   rows.forEach((r, i) => {
-    const s = assignSector(r.wd, bands)
-    const a2 = seen.get(s) ?? []
-    a2.push(resid[i])
-    seen.set(s, a2)
+    const sec = assignSector(r.wd, bands)
+    const acc = seen.get(sec) ?? []
+    acc.push(resid[i])
+    seen.set(sec, acc)
   })
-  for (const [s, rs] of Array.from(seen.entries())) {
-    delta[s] = (rs.reduce((q, x) => q + x, 0) + SHRINK_K * glob) / (rs.length + SHRINK_K)
+  for (const [sec, rs] of Array.from(seen.entries())) {
+    delta[sec] = (rs.reduce((q, x) => q + x, 0) + SHRINK_K * glob) / (rs.length + SHRINK_K)
   }
-  return { type: 'sector', a, b, delta, global: glob }
+  if (form === 'sector') return { type: 'sector', a, b, delta, global: glob }
+  return { type: 'sector_diurnal', a, b, c0: c![0], c1: c![1], c2: c![2], delta, global: glob }
 }
 
 function predict(m: Spec, r: Row, bands: readonly Band[]): number {
@@ -447,6 +461,11 @@ function predict(m: Spec, r: Row, bands: readonly Band[]): number {
   if (t === 'sector') {
     const s = assignSector(r.wd, bands)
     return base + (s in m.delta ? m.delta[s] : m.global)
+  }
+  if (t === 'sector_diurnal') {
+    const s = assignSector(r.wd, bands)
+    return base + (s in m.delta ? m.delta[s] : m.global)
+      + m.c0 + m.c1 * SIN(r.hour) + m.c2 * COS(r.hour)
   }
   return r.ws
 }
@@ -533,6 +552,8 @@ interface Decision {
   tailOk: boolean
   /** True when the chosen form's slope was pinned at 1. */
   constrained: boolean
+  /** Every ladder rung's held-out rmse, for "what did this form buy?". */
+  rmseByForm: Record<string, number>
 }
 
 /**
@@ -544,8 +565,15 @@ interface Decision {
  * `trainPool` and `testRows` are separate so the same held-out blocks can score
  * a pooled fit and a regime-only fit against each other.
  */
-const OLS_LADDER = ['bias_scale', 'diurnal', 'sector']
-const CONSTRAINED_LADDER = ['c_bias_scale', 'c_diurnal', 'c_sector']
+// EVERY MOS CARRIES BOTH A SECTOR AND A DIURNAL TERM as a candidate. The
+// original pipeline's ladder offered one or the other and never both, so a
+// venue whose error depends on direction AND on time of day could only ever be
+// given half a correction — and the two are not alternatives, they are
+// different axes. `sector_diurnal` is the form mos.js has always been able to
+// apply; it simply was never fitted here.
+const OLS_LADDER = ['bias_scale', 'diurnal', 'sector', 'sector_diurnal']
+const CONSTRAINED_LADDER = ['c_bias_scale', 'c_diurnal', 'c_sector', 'c_sector_diurnal']
+const hasSectorTerm = (kind: string) => kind.endsWith('sector') || kind.endsWith('sector_diurnal')
 
 function chooseForm(
   trainPool: readonly Row[], testRows: readonly Row[],
@@ -567,8 +595,8 @@ function chooseForm(
     if (r && r.adj < cvRmse - 1e-9) { best = k; cvRmse = r.adj }
   }
   let guarded = ''
-  if (best.endsWith('sector') && agree < AGREE_MIN) {
-    const alt = Object.entries(results).filter(([k]) => !k.endsWith('sector'))
+  if (hasSectorTerm(best) && agree < AGREE_MIN) {
+    const alt = Object.entries(results).filter(([k]) => !hasSectorTerm(k))
       .sort((p, q) => (p[1]!.adj - q[1]!.adj))[0]
     if (alt && alt[1]!.adj < rawRmse) {
       guarded = ` (sector best but agreement ${(100 * agree).toFixed(0)}% < 70% -> ${alt[0]})`
@@ -593,12 +621,14 @@ function chooseForm(
     folds: chosen?.folds ?? 0,
     perFold: chosen?.perFold ?? [],
     guarded,
-    table: `${f2(rawRmse).padStart(5)}  ${cell(`${pref}bias_scale`)}  ${cell(`${pref}diurnal`)}  ${cell(`${pref}sector`)}`,
+    table: `${f2(rawRmse).padStart(5)}  ${cell(`${pref}bias_scale`)}  ${cell(`${pref}diurnal`)}`
+      + `  ${cell(`${pref}sector`)}  ${cell(`${pref}sector_diurnal`)}`,
     agree,
     n: testRows.length,
     tail,
     tailOk,
     constrained: pref === 'c_',
+    rmseByForm: Object.fromEntries(Object.entries(results).map(([k, r]) => [k, r!.adj])),
   }
 }
 
@@ -710,6 +740,16 @@ async function main() {
       // extract_obs.py's default and was never a measurement.
       truth_masthead_m: Array.from(new Set(obs.map((o) => o.mast))).sort((x, y) => x - y),
       model_read_at: EVAL_AT === 'target' ? TARGET_Z : 'instrument height, heel-reduced',
+      // WHICH HOURS THE DIURNAL TERM WAS FITTED ON, and it is not all of them:
+      // a regatta is sailed in the middle of the day, so the 24 h harmonic is
+      // constrained over this window and extrapolated outside it. It cannot
+      // run away — a harmonic is bounded by sqrt(c1^2 + c2^2), 2.3 kn at the
+      // largest here — but the phase outside the window is an extrapolation
+      // and a reader should know it.
+      fitted_hours_local: [
+        Math.min(...obs.map((o) => o.localHour)),
+        Math.max(...obs.map((o) => o.localHour)),
+      ],
       refitted_on: new Date().toISOString().slice(0, 10),
       // The bar that is new as of this refit, and the reason three shipped
       // corrections are now raw. See the tail section of src/lib/mosFit.
@@ -729,7 +769,8 @@ async function main() {
     // Kept so the regime pass below can re-use the pairing rather than fetch
     // and interpolate it a second time.
     const rowsByModel: Record<string, Row[]> = {}
-    console.log('\n  model                        n  agree    raw   bias_scale  diurnal  sector  ->  chosen')
+
+    console.log('\n  model                        n  agree    raw   bias_scale  diurnal   sector  sec+diur  ->  chosen')
     for (const mosId of cfg.models) {
       const heights = heightsFor(mosId)
       if (!heights) { console.log(`  ${mosId.padEnd(28)} no MODELS entry — skipped`); continue }
@@ -815,6 +856,24 @@ async function main() {
           + ` -> at ${bars.topBin} kn the slope and bias move the forecast`
           + ` ${shrinkageAt(m, bars.topBin) >= 0 ? '+' : ''}${f2(shrinkageAt(m, bars.topBin))} kn`)
         console.log(`      ${tailVerdict(d.tail, bars)}`)
+        // A HARMONIC FITTED ON A RACING DAY IS EXTRAPOLATED TO THE REST OF IT.
+        // Regattas are sailed in the middle of the day, so a 24 h harmonic is
+        // constrained over seven or eight hours and guesses the other sixteen.
+        // It cannot run away — the swing is bounded by sqrt(c1^2 + c2^2) — but
+        // the morning forecast people actually plan on is outside the window,
+        // so the size of the swing and what the form bought over the plain
+        // bias are both printed. Shipped, not refused: the bars pass it, and
+        // refusing a measured gain on a stated caveat is the user's call.
+        if (m.c1 != null || m.c2 != null) {
+          const amp = Math.hypot(m.c1 ?? 0, m.c2 ?? 0)
+          const plain = d.rmseByForm[`${d.constrained ? 'c_' : ''}bias_scale`]
+          const bought = plain ? 100 * (1 - d.cvRmse / plain) : NaN
+          const lo = Math.min(...obs.map((o) => o.localHour))
+          const hi = Math.max(...obs.map((o) => o.localHour))
+          console.log(`      diurnal swing +/-${f2(amp)} kn, fitted on ${lo}-${hi} h local only`
+            + ` and extrapolated outside it${Number.isFinite(bought)
+              ? `; worth ${f2(bought)} % over the plain bias form` : ''}`)
+        }
       }
 
       // ── THE CONSTRAINED LADDER ─────────────────────────────────────────
@@ -848,6 +907,55 @@ async function main() {
       spec.models[mosId] = entryFor(d, rows, cfg.bands, 'regatta', bars)
     }
 
+
+    // ── WHICH SECTOR CAME FROM WHICH YEAR ─────────────────────────────────
+    //
+    // A regatta is a week, and a week of Mediterranean weather is often ONE
+    // sector: St Tropez's 2026 regatta ran E-SE almost throughout. So a band's
+    // offset is not evenly supported across the archive, and this says plainly
+    // where each one's evidence comes from — the newest regatta cannot supply
+    // the bands it never saw, and the band offsets for those come from the
+    // earlier years, shrunk toward the global residual by their own sample
+    // count. Printed rather than enforced: a thin band is visible here, and
+    // the shrinkage is what keeps it from doing damage.
+    // The table is per MODEL, because a band is assigned from the MODEL's own
+    // direction and the models disagree about it — and because their archives
+    // differ, so ICON-2I's two regattas would misrepresent a venue with three.
+    // So it is built on the best-covered model and says which.
+    const bandModel = Object.entries(rowsByModel)
+      .sort((x, y) => y[1].length - x[1].length)[0]
+    const bandSupport: Row[] | null = bandModel?.[1] ?? null
+    if (bandSupport) {
+      const bandNames = [...cfg.bands.map(([n]) => n), 'other']
+      const regs = Array.from(new Set(bandSupport.map((r) => r.regatta))).sort()
+      console.log(`\n  BAND SUPPORT — paired bins by direction and regatta, as ${bandModel[0]} sees it`)
+      console.log(`  ${'regatta'.padEnd(14)}${bandNames.map((n) => n.padStart(9)).join('')}     total`)
+      for (const g of regs) {
+        const rs = bandSupport.filter((r) => r.regatta === g)
+        const counts = bandNames.map((n) => rs.filter((r) => assignSector(r.wd, cfg.bands) === n).length)
+        console.log(`  ${g.replace(`${venue}_`, '').padEnd(14)}`
+          + `${counts.map((c) => String(c).padStart(9)).join('')}${String(rs.length).padStart(10)}`)
+      }
+      const totals = bandNames.map((n) => bandSupport!.filter((r) => assignSector(r.wd, cfg.bands) === n).length)
+      console.log(`  ${'ALL'.padEnd(14)}${totals.map((c) => String(c).padStart(9)).join('')}`
+        + `${String(bandSupport.length).padStart(10)}`)
+      // Three times k: at n = k the offset is half the global residual, at 3k
+      // it is three quarters its own. Below that a band is a handful of
+      // independent cases — these are 10-minute bins off one boat, so 24 of
+      // them is a few hours of one afternoon, not 24 observations.
+      const THIN = 3 * SHRINK_K
+      const thin = bandNames.filter((n, i) => totals[i] > 0 && totals[i] < THIN)
+      for (const n of thin) {
+        const i = bandNames.indexOf(n)
+        const from = regs.filter((g) => bandSupport!.some((r) => r.regatta === g
+          && assignSector(r.wd, cfg.bands) === n)).map((g) => g.replace(`${venue}_`, ''))
+        console.log(`  ${n} has ${totals[i]} bins (< ${THIN}), all from ${from.join(' + ')}`
+          + ` — that offset is shrunk ${(100 * SHRINK_K / (totals[i] + SHRINK_K)).toFixed(0)} %`
+          + ' of the way to the global residual')
+      }
+      const absent = bandNames.filter((n, i) => totals[i] === 0)
+      if (absent.length) console.log(`  ${absent.join(', ')} never occurred — no offset is fitted for ${absent.length > 1 ? 'them' : 'it'}`)
+    }
 
     // ── THE REGIME SPLIT ───────────────────────────────────────────────────
     if (cfg.regime) {
