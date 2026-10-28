@@ -2,11 +2,19 @@
   "venue": "san-juan",
   "fit_height_m": 10,
   "target_height_m": 30,
-  "truth_station": "iem:CWZO",
-  "truth_station_name": "Kelp Reefs",
-  "truth_anemometer_m": 10,
-  "truth_exposure": "marine — a rock in Haro Strait, open on every side",
-  "truth_nm_from_venue": 13.62,
+  "truth_station": "ndbc:SISW1",
+  "truth_station_name": "Smith Island, WA",
+  "truth_anemometer_m": 17.4,
+  "obs_height_adjustment": {
+    "from_m": 17.4,
+    "to_m": 10,
+    "z0_m": 0.0002,
+    "factor": 0.9513,
+    "method": "neutral log profile over open water",
+    "checked_against": "SISW1/CWZO median ratio 1.089 over 21,818 matched hours vs 1.051 predicted"
+  },
+  "truth_exposure": "marine — low island in the eastern Strait of Juan de Fuca",
+  "truth_nm_from_venue": 14.81,
   "fitted_from": "2022-01-01",
   "fitted_to": "2026-10-28",
   "cell_selection": "sea",
@@ -35,13 +43,13 @@
   ],
   "corroborating_stations": [
     {
-      "id": "ORS",
+      "id": "CWZO",
       "anemometer_m": 10,
       "shipped": false
     },
     {
-      "id": "SISW1",
-      "anemometer_m": 17.4,
+      "id": "ORS",
+      "anemometer_m": 10,
       "shipped": false
     },
     {
@@ -52,72 +60,52 @@
   ],
   "models": {
     "ecmwf_ifs025": {
-      "type": "sector",
-      "a": 0.8533307442702164,
-      "b": 3.4518000244315195,
-      "delta": {
-        "N": -2.862890240308335,
-        "E": -0.94094569094653,
-        "S": 0,
-        "W": -3.155615923933939
-      },
-      "global": 0,
-      "measured_gain_pct": 7.5,
-      "holds_every_block": true
+      "type": "raw",
+      "not_shipped": "best ladder gain 0.0% did not clear the bars"
     },
     "icon_global": {
-      "type": "sector",
-      "a": 1.2784149701115284,
-      "b": 3.2982745207468365,
+      "type": "sector_diurnal",
+      "a": 0.934236746611434,
+      "b": 3.7167493275105077,
       "delta": {
-        "N": -0.26540564937698957,
-        "E": 0.4731192959796755,
-        "S": 0,
-        "W": -2.3319668454250473
+        "N": -1.1929912676794898,
+        "E": -1.0219823244458526,
+        "S": 1.3155028810127674,
+        "W": 0
       },
       "global": 0,
-      "measured_gain_pct": 33.9,
+      "c0": 0,
+      "c1": -0.17908724680034754,
+      "c2": 0.8509785641555346,
+      "measured_gain_pct": 25.4,
       "holds_every_block": true
     },
     "gfs_global": {
       "type": "sector",
-      "a": 1.052641298560812,
-      "b": 1.907634532277166,
+      "a": 0.8525887937722669,
+      "b": 0.5583046616960621,
       "delta": {
-        "N": 0,
-        "E": 2.1019400683645926,
-        "S": 2.577662357329467,
-        "W": 0.1258244046124314
+        "N": 0.7899698271765597,
+        "E": 1.086777834055907,
+        "S": 2.1739317810994554,
+        "W": 0
       },
       "global": 0,
-      "measured_gain_pct": 23,
+      "measured_gain_pct": 6,
       "holds_every_block": true
     },
     "gfs_hrrr": {
-      "type": "diurnal",
-      "a": 0.998724305379437,
-      "b": 1.770106263789728,
-      "c0": 0,
-      "c1": -0.20729805831253093,
-      "c2": 0.0339718987176942,
-      "measured_gain_pct": 9.5,
+      "type": "bias_scale",
+      "a": 0.9231127557112556,
+      "b": 0.7234690440198129,
+      "measured_gain_pct": 1.6,
       "holds_every_block": true
     },
     "gem_hrdps_continental": {
-      "type": "sector_diurnal",
-      "a": 0.8847619302137851,
-      "b": 3.299816676951783,
-      "delta": {
-        "N": -1.4569141012746252,
-        "E": -0.24023341010592758,
-        "S": 0,
-        "W": -1.3531459483016548
-      },
-      "global": 0,
-      "c0": 0,
-      "c1": -0.7293364881265182,
-      "c2": -0.3415789830625665,
-      "measured_gain_pct": 13.4,
+      "type": "bias_scale",
+      "a": 0.9025258060916366,
+      "b": 1.321931501310619,
+      "measured_gain_pct": 2.7,
       "holds_every_block": true
     }
   }

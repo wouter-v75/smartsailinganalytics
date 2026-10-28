@@ -945,98 +945,128 @@ and St Tropez 296.80–298.05 K, both **byte-identical** to what shipped.
 
 ## 5c-quater. MOS for the San Juan Islands, fitted (28 Oct 2026)
 
-`scripts/mos-sanjuan-fit.ts`, dry-run by default, `--write` to emit the spec.
-It exists separately from `mos-fit.ts` only because the OBSERVATIONS differ:
-mos-fit reads MET Norway Frost rows out of `wind_observations`, there is no San
-Juan history in that table, and these four stations are American and Canadian.
-The statistics are not re-implemented — it calls the same `src/lib/mosFit`
-routines, so leave-one-year-out with a 48 h buffer, the nested ladder, the
+`scripts/mos-sanjuan-fit.ts`, dry-run by default, `--write` to emit the spec,
+`--compare` for the station-against-station measurement below. It is separate
+from `mos-fit.ts` only because the OBSERVATIONS differ: mos-fit reads MET
+Norway Frost rows out of `wind_observations`, there is no San Juan history in
+that table, and these four stations are American and Canadian. The statistics
+are not re-implemented — it calls the same `src/lib/mosFit` routines, so
+leave-one-year-out with a 48 h buffer, the nested ladder, the
 one-standard-error rule on nEff and the twenty-effective-samples-per-parameter
 gate are identical by construction.
 
-### The four stations, and the height problem that shapes everything
-
-Heights read off the operators' own metadata pages, and they are the
-load-bearing column:
+### The four stations
 
 | station | id | anemometer | nm from centre | exposure |
 |---|---|---|---|---|
-| Kelp Reefs | `CWZO` | **10.0 m** | 13.6 | marine — a rock in Haro Strait, open on every side |
-| Eastsound / Orcas Island | `ORS` | **10.0 m** | 8.9 | **land** — airport in a valley |
-| Smith Island | `SISW1` | 17.4 m | 14.8 | marine — low island in the eastern Strait |
+| **Smith Island** | `SISW1` | 17.4 m | 14.8 | marine — low island in the open eastern Strait of Juan de Fuca |
+| Kelp Reefs | `CWZO` | 10.0 m | 13.6 | marine — a rock in **Haro Strait**, a 3–5 km channel |
+| Eastsound / Orcas Island | `ORS` | 10.0 m | 8.9 | **land** — airport in a valley |
 | Se'lhaem, Bellingham Bay | `46118` | 2.97 m | 15.9 | marine — moored buoy |
 
-Only the two at 10 m can be a regression target for the model's native 10 m
-field without inventing a profile, which is mos-fit's first principle: fitting
-in manufactured space makes the correction absorb a one-signed profile error
-and report a small residual. At 2.97 m the buoy reads perhaps 15–20 % under a
-10 m wind in neutral air, and a spec fitted there would push the model's 10 m
-field down by that for ever. So `--write` refuses a non-10 m station unless
-`--allow-nonstandard-height` is passed, and records it in the spec if it is.
+**`46118` contributes nothing and cannot.** 619 usable hours in 2022–2026:
+NDBC's yearly files for it stop at 2020 and `realtime2` holds about 45 days.
+It is in the script, it is reported, and it is empty — a fact about the
+archive, not a bug.
 
-**`46118` contributes nothing and cannot.** It returned **619 usable hours** in
-the whole 2022–2026 window: NDBC's yearly historical files for it stop at 2020
-and `realtime2` carries about 45 days. It is in the script, it is reported, and
-it is empty. That is a fact about the archive, not a bug.
+### The truth station is SMITH ISLAND, and that was a correction
 
-### The result
+The first cut used Kelp Reefs, on the reasoning that it is the only
+well-exposed marine station at exactly 10 m and so needs no manufactured
+profile. That reasoning was right about the height and **wrong about the
+site**, and the measurement that settles it is the raw bias — before any
+correction — of five independent models:
 
-Gain over raw, cross-validated, per cent:
-
-| station | ecmwf_ifs025 | icon_global | gfs_global | gfs_hrrr | gem_hrdps |
+| raw bias, kn | ecmwf | icon_global | gfs_global | gfs_hrrr | gem_hrdps |
 |---|---|---|---|---|---|
-| **CWZO** (marine, 10 m) | 7.5 | 33.9 | 23.0 | 9.5 | 13.4 |
-| ORS (land, 10 m) | 43.3 | 17.0 | 49.9 | 22.4 | 41.0 |
-| SISW1 (17.4 m) | raw | 28.2 | 5.0 | 1.5 | 4.0 |
-| 46118 | — | — | — | — | — |
+| **Smith Island** (reduced to 10 m) | **−0.08** | −3.17 | **−0.02** | **+0.02** | **−0.43** |
+| Kelp Reefs | −0.45 | −4.34 | −3.35 | −1.76 | −1.82 |
+| Orcas Island (airport) | +3.78 | +0.54 | +4.32 | +1.18 | +2.97 |
 
-Every CWZO gain holds in **every** held-out year block.
+**Four of five models are essentially unbiased at Smith Island** — ECMWF, GFS,
+HRRR and GEM agree with it to within half a knot. At Kelp Reefs the same five
+all read low, and four of them need a *sector* correction rather than a plain
+offset. Five forecasting centres with different physics do not conspire to
+under-forecast one rock by 1.8–4.3 kn while agreeing to within half a knot ten
+miles away: **the site is the odd one out.** Kelp Reefs is a small rock in a
+3–5 km channel and it accelerates. A MOS fitted there would encode that
+acceleration as "the model is too slow" and apply it across the whole
+archipelago — the representativeness trap, again.
 
-### The finding that matters more than the gains
+`gfs_hrrr` at Smith Island is also the only model/station pair in the study
+that **beats 1 h persistence**: rmse 2.79 kn against 3.00.
 
-Raw bias, same height, 9 nm apart:
+### The height adjustment, measured rather than assumed
 
-| | ecmwf | icon_global | gfs_global | gfs_hrrr | gem_hrdps |
-|---|---|---|---|---|---|
-| CWZO, marine | −0.45 | **−4.34** | −3.35 | −1.76 | −1.82 |
-| ORS, airport | **+3.78** | +0.54 | **+4.32** | +1.18 | +2.97 |
+Smith Island's anemometer is at 17.4 m, so its observations are reduced to 10 m
+by a neutral log profile over open water (z0 = 0.0002 m), factor **0.9513**.
+This *manufactures an observation*, which mos-fit's header refuses to do — and
+the reason it is defensible here is that it was checked:
 
-**Every model under-forecasts the marine station and over-forecasts the airport**,
-at the same 10 m, nine miles apart. That is exposure, not forecast error: ORS
-sits in a valley on Orcas Island and the models' smoothed terrain cannot see the
-shelter. So ORS's 43–50 % "gains" are a correction learning that one airport is
-sheltered — a genuine improvement at that runway and completely wrong to ship
-for a venue whose racing happens on the water. It is in the script precisely
-because the contrast is the diagnostic.
+> Smith Island against Kelp Reefs, **21,818 matched hours**: median ratio
+> **1.089** against the **1.051** the log law predicts for 17.4 m over 10 m.
 
-`SISW1` is the useful corroboration: independent, marine, and it shows the same
-shape — small bias for the high-resolution models, a large negative one for
-`icon_global` (−3.68 kn). Two marine stations agreeing is what makes the
-`icon_global` correction believable.
+So the height term is real, small, and the log law gets it right to about four
+per cent — and that four per cent is site difference, not profile error. The
+adjustment is recorded in the spec under `obs_height_adjustment`, never applied
+silently, and `--no-reduce-to-10m` turns it off. It does **not** rescue the
+buoy: 2.97 m needs a 12 % correction on 619 hours, which is a large adjustment
+on nothing.
 
-### What is shipped, and the caveats that go with it
+### Exposure is directional, and that is why `--compare` exists
 
-`src/components/weather/mos/mos_san_juan.json` is fitted against **CWZO**. It
-is **not live**: `SPECS` in `mos.js` registers only sorrento, porto-cervo and
-st-tropez, so this needs one line there — and note the Oslofjord and Viksfjord
-specs were fitted months ago and never registered either.
+Median ratio of observed speeds on matched hours, by model-derived sector. A
+pure height difference is a constant ratio; an exposure difference is
+directional, and the **spread** is the diagnostic:
 
-- **No model beats 1-hour persistence at CWZO.** Persistence rmse is 3.06–3.14
-  kn; the best corrected model is `gem_hrdps` at 3.58. Persistence is not
-  available at forecast lead, so this is not an argument against the models —
-  but it is the honest yardstick and it is not flattering.
-- **The coarse models' big gains are mostly representativeness.** `icon_global`
-  at ~11 km has no cell here that is not substantially land; its −4.34 kn is
-  largely a land-fraction effect, and the correction removes it as if it were
-  bias. Real at that point, but it should be called what it is. Its fitted
-  slope is **1.278** with a +3.30 intercept, which at 20 kn raw reads 28.9 kn —
-  aggressive enough to look at before trusting.
-- **`ncep_nam_conus` has no historical-forecast archive here** (0 of 72 values),
-  so it is not fittable whatever the app's model list says.
-- **`icon_eu` does not reach the Pacific.** `MODELS.ICON` in `openMeteo.js`
-  maps to `mosModel: 'icon_eu'`, right in Europe and wrong here.
-- The `*_seamless` models and `best_match` are refused for the reason mos-fit
-  gives for `metno_seamless`: a splice is not a fittable target.
+| pair | overall | N | E | S | W | spread |
+|---|---|---|---|---|---|---|
+| SISW1 / CWZO | 1.089 | 0.952 | 1.166 | 1.046 | **1.446** | **0.493** |
+| ORS / CWZO | 0.667 | 0.667 | 0.577 | 0.667 | 0.600 | 0.090 |
+
+Smith Island is **45 % windier than Kelp Reefs in westerlies** and slightly
+lighter in northerlies. That is not noise: the two sit in channels at right
+angles — Haro Strait runs N–S, the Strait of Juan de Fuca E–W — so each
+accelerates along its own axis. The models being unbiased at Smith Island in
+all sectors says they resolve the Juan de Fuca funnel and that Kelp Reefs'
+along-channel speed-up is the sub-grid feature.
+
+Orcas Island is a different story: a near-constant 0.667, i.e. uniformly
+sheltered. Its 43–50 % "gains" are a correction learning that one airport sits
+in a valley — real at that runway, wrong for a venue raced on water. It stays
+in the script because the contrast is the diagnostic.
+
+### What is shipped
+
+`src/components/weather/mos/mos_san_juan.json`, fitted on Smith Island:
+
+| model | form | gain |
+|---|---|---|
+| `ecmwf_ifs025` | **raw** | no correction wins — it is already unbiased |
+| `icon_global` | sector_diurnal | 25.4 % |
+| `gfs_global` | sector | 6.0 % |
+| `gfs_hrrr` | bias_scale | 1.6 % |
+| `gem_hrdps_continental` | bias_scale | 2.7 % |
+
+At 12 kn raw that reads 12.0 / 13.6–16.1 / 10.8–13.0 / 11.8 / 12.2 kn — modest,
+which is what a correction against a station the models already fit should look
+like. The Kelp Reefs version put `icon_global` at 18.4 kn for the same input.
+
+**It is not live.** `SPECS` in `mos.js` registers only sorrento, porto-cervo and
+st-tropez, so this needs one line there — and the Oslofjord and Viksfjord specs
+were fitted months ago and never registered either.
+
+Remaining caveats, recorded rather than buried:
+
+- **Smith Island is not in the racing water.** It is 14.8 nm SW, in a different
+  body of water from the archipelago. A model unbiased there may still be
+  biased inside the islands; there is no station inside to say.
+- `icon_global` still carries much the largest correction, and its −3.17 kn is
+  largely land-fraction at ~11 km where no cell here is free of island.
+- **`ncep_nam_conus` has no historical-forecast archive here** (0 of 72 values)
+  and is not fittable, whatever the app's model list says.
+- **`icon_eu` does not reach the Pacific**, though `MODELS.ICON` maps to it.
+- `*_seamless` and `best_match` are refused as splices, per mos-fit's rule.
 - Not lead-time stratified, and the spec says so.
 
 ## 5d. The repeat issues — things this project has already paid for
