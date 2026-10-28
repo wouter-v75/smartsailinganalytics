@@ -56,7 +56,7 @@ describe('MOS is keyed by the venue list', () => {
   })
 
   it('registers the station-fitted venues too, each under its venue key', () => {
-    for (const key of ['oslofjord', 'viksfjord', 'san-juan']) {
+    for (const key of ['oslofjord', 'viksfjord', 'san-juan', 'long-beach']) {
       expect(calibratedVenues(), key).toContain(key)
       expect(specFor(key).venue, key).toBe(key)
     }

@@ -38,7 +38,7 @@ describe('a correction exists only where the venue was actually fitted', () => {
   // correction appears exactly where there are coefficients, and nowhere else.
   it('corrects metno_nordic at the Norwegian venues and at no Mediterranean one', () => {
     expect(correctionInfo('oslofjord', 'metno_nordic')).not.toBeNull()
-    for (const v of ['sorrento', 'porto-cervo', 'st-tropez', 'san-juan']) {
+    for (const v of ['sorrento', 'porto-cervo', 'st-tropez', 'san-juan', 'long-beach']) {
       expect(correctionInfo(v, 'metno_nordic'), v).toBeNull()
     }
   })

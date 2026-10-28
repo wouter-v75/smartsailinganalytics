@@ -195,7 +195,7 @@ describe('needsPreLift', () => {
   })
 
   it('is true for every station-fitted spec, so the correction precedes the lift', () => {
-    for (const key of ['oslofjord', 'viksfjord', 'san-juan']) {
+    for (const key of ['oslofjord', 'viksfjord', 'san-juan', 'long-beach']) {
       expect(needsPreLift(specFor(key)), key).toBe(true)
     }
   })

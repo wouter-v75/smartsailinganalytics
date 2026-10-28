@@ -282,6 +282,13 @@ export const MODELS = {
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'ncep_nam_conus',
     metaModel: 'ncep_nam_conus',
+    // Added 28 Oct 2026 with the Long Beach spec. Without it NAM's fitted
+    // coefficients are INERT: applyMOS looks up spec.models[MODELS.NAM.mosModel]
+    // and undefined matches nothing, which looks exactly like a correction
+    // that is working and finding nothing to correct. NAM has no archive at
+    // San Juan but a full one at Long Beach, where it is the largest gain of
+    // any model (23.2 %).
+    mosModel: 'ncep_nam_conus',
     coverage: NORTH_AMERICA,
     heights: [10, 80],
     tableCols: [10, 80],

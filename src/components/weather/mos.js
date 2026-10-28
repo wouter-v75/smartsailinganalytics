@@ -15,6 +15,7 @@ import st_tropez from './mos/mos_st_tropez.json'
 import oslofjord from './mos/mos_oslofjord.json'
 import viksfjord from './mos/mos_viksfjord.json'
 import san_juan from './mos/mos_san_juan.json'
+import long_beach from './mos/mos_long_beach.json'
 import { wallHour, wallMonth } from './venueTz'
 import { venueAt, venueByKey, VENUE_MATCH_NM } from '../../lib/venues'
 import { solveSurfaceLayer, profileRatio, transferWind } from '../../lib/windProfile'
@@ -39,6 +40,13 @@ const SPECS = {
   oslofjord,                 // Horten / Moss, truth frost:SN17280 Gullholmen
   viksfjord,                 // Larvik, truth frost:SN29950
   'san-juan': san_juan,      // truth ndbc:SISW1 Smith Island
+  // Long Beach / San Pedro, truth coops:9410647 Angels Gate. The first spec
+  // whose slope is PINNED at 1 (`slope_policy.constrained`): the rmse-optimal
+  // slope here is 0.40-0.77 and shrinks the strong-wind tail away, so only the
+  // bias, sector and diurnal offsets are fitted. It is also the first with a
+  // seasonal window earned on its own — June-September, the Olympic and
+  // Transpac racing season.
+  'long-beach': long_beach,
 }
 
 /**

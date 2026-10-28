@@ -1,0 +1,332 @@
+{
+  "venue": "long-beach",
+  "fit_height_m": 10,
+  "target_height_m": 30,
+  "truth_station": "coops:9410647",
+  "truth_station_name": "Angels Gate",
+  "truth_anemometer_m": 20,
+  "obs_height_adjustment": {
+    "from_m": 20,
+    "to_m": 10,
+    "z0_m": 0.0002,
+    "factor": 0.9398,
+    "method": "neutral log profile over open water",
+    "z0_sensitivity": "z0 1.0 m would give 0.769; the open-water value is used because this station's upwind fetch is water through the sectors that matter"
+  },
+  "truth_exposure": "marine — San Pedro breakwater light at the harbour entrance, open ocean through the southern half of the compass",
+  "truth_nm_from_venue": 1.22,
+  "fitted_from": "2022-01-01",
+  "fitted_to": "2026-10-28",
+  "obs_source": "NOAA CO-OPS hourly wind (interval=h — the on-the-hour 6-minute sample)",
+  "cell_selection": "sea",
+  "lead_time": "short-lead stitched archive; NOT lead-time stratified",
+  "bands": [
+    [
+      "N",
+      315,
+      45
+    ],
+    [
+      "E",
+      45,
+      135
+    ],
+    [
+      "S",
+      135,
+      225
+    ],
+    [
+      "W",
+      225,
+      315
+    ]
+  ],
+  "models_not_applied": {
+    "icon_global": "MODELS.ICON.mosModel is `icon_eu`, which does not reach the Pacific. The app fetches icon_seamless here, which resolves to icon_global, so the coefficients describe the right forecast — but the lookup key does not match and the correction is NOT applied. Same situation as at san-juan."
+  },
+  "corroborating_stations": [
+    {
+      "id": "9410665",
+      "name": "Long Beach Pier J",
+      "anemometer_m": 30.5,
+      "site_z0_m": 0.0002,
+      "shipped": false
+    },
+    {
+      "id": "LGB",
+      "name": "Long Beach Airport",
+      "anemometer_m": 10,
+      "site_z0_m": 0.03,
+      "shipped": false
+    }
+  ],
+  "slope_policy": {
+    "constrained": true,
+    "threshold_kn": 18,
+    "warn_keep": 0.9,
+    "top_bin_kn": 24,
+    "top_slack_kn": 2,
+    "season_threshold_kn": 12,
+    "season_top_bin_kn": 14,
+    "why": "The rmse-optimal slope at this venue is 0.40-0.77, which corrects a raw 30 kn forecast to 18-27 kn and drops the share of observed >=18 kn hours the forecast warns about from 50-75 % to 0-29 %. ecmwf_ifs025 warned on 0 of 130. A forecast that cannot produce a strong wind is worse than an uncorrected one however good its rmse, so the slope is pinned and only the offsets are fitted."
+  },
+  "models": {
+    "gfs_hrrr": {
+      "type": "sector_diurnal",
+      "a": 1,
+      "b": 1.4194819905046434,
+      "c0": 0,
+      "c1": -0.5355569041712155,
+      "c2": 0.13565811979679057,
+      "delta": {
+        "N": -0.9279086066938098,
+        "E": -1.1888590914151511,
+        "S": -1.1244791250697055,
+        "W": 0
+      },
+      "global": 0,
+      "slope_constrained": true,
+      "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
+      "form": "offset_sector_diurnal",
+      "measured_gain_pct": 9.4,
+      "holds_every_block": true,
+      "warn_kept_pct": 117,
+      "warn_threshold_kn": 18,
+      "top_bin_err_kn": -0.9,
+      "top_bin_err_raw_kn": -1.5,
+      "season_gain_pct": 17.8,
+      "fitted_span": "2022-01-01..2026-10-28",
+      "blocks": 5,
+      "paired_hours": 33247,
+      "fitted_cell": [
+        33.7277,
+        -118.2422
+      ],
+      "fitted_cell_nm_from_truth": 0.74,
+      "ols_ladder_best": "sector_diurnal",
+      "ols_ladder_gain_pct": 13.4,
+      "ols_ladder_slope": 0.769,
+      "ols_rejected_because": "FAILS the tail bar — keeps 58% of raw's >=18 kn hits (71/122), 24+ err -5.4 vs raw -1.5 kn"
+    },
+    "ncep_nam_conus": {
+      "type": "sector_diurnal",
+      "a": 1,
+      "b": 2.6229592453758226,
+      "c0": 0,
+      "c1": -0.8880271986369187,
+      "c2": -0.5885573139827894,
+      "delta": {
+        "N": -0.34236274059647,
+        "E": -0.8485809271159573,
+        "S": -1.2017376357027003,
+        "W": 0
+      },
+      "global": 0,
+      "slope_constrained": true,
+      "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
+      "form": "offset_sector_diurnal",
+      "measured_gain_pct": 23.2,
+      "holds_every_block": true,
+      "warn_kept_pct": 124,
+      "warn_threshold_kn": 18,
+      "top_bin_err_kn": -4.7,
+      "top_bin_err_raw_kn": -5.8,
+      "season_gain_pct": 31.4,
+      "fitted_span": "2025-08-28..2026-10-28",
+      "blocks": 2,
+      "paired_hours": 10082,
+      "fitted_cell": [
+        33.7277,
+        -118.2422
+      ],
+      "fitted_cell_nm_from_truth": 0.74,
+      "ols_ladder_best": "sector_diurnal",
+      "ols_ladder_gain_pct": 24,
+      "ols_ladder_slope": 0.755,
+      "ols_rejected_because": "FAILS the tail bar — keeps 41% of raw's >=18 kn hits (7/17), 24+ err -8.9 vs raw -5.8 kn"
+    },
+    "gfs_global": {
+      "type": "diurnal",
+      "a": 1,
+      "b": -0.5585793103479021,
+      "c0": 0,
+      "c1": -0.6608224442152055,
+      "c2": -0.9240543096172454,
+      "slope_constrained": true,
+      "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
+      "form": "offset_diurnal",
+      "measured_gain_pct": 4.9,
+      "holds_every_block": true,
+      "warn_kept_pct": 97,
+      "warn_threshold_kn": 18,
+      "top_bin_err_kn": 1.1,
+      "top_bin_err_raw_kn": 1.7,
+      "season_gain_pct": 5.5,
+      "fitted_span": "2022-01-01..2026-10-28",
+      "blocks": 5,
+      "paired_hours": 33247,
+      "fitted_cell": [
+        33.6804,
+        -118.2422
+      ],
+      "fitted_cell_nm_from_truth": 2.13,
+      "ols_ladder_best": "diurnal",
+      "ols_ladder_gain_pct": 17.8,
+      "ols_ladder_slope": 0.573,
+      "ols_rejected_because": "FAILS the tail bar — keeps 32% of raw's >=18 kn hits (58/182), 24+ err -8.0 vs raw 1.7 kn"
+    },
+    "icon_global": {
+      "type": "sector_diurnal",
+      "a": 1,
+      "b": 0.38360136094342634,
+      "c0": 0,
+      "c1": -0.7675897612229905,
+      "c2": -1.0032482195349288,
+      "delta": {
+        "N": 1.678057337027097,
+        "E": 0.3655460244562858,
+        "S": 1.0447781675068288,
+        "W": 0
+      },
+      "global": 0,
+      "slope_constrained": true,
+      "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
+      "form": "offset_sector_diurnal",
+      "measured_gain_pct": 7.1,
+      "holds_every_block": true,
+      "warn_kept_pct": 105,
+      "warn_threshold_kn": 18,
+      "top_bin_err_kn": 1.6,
+      "top_bin_err_raw_kn": 0.5,
+      "season_gain_pct": 12.5,
+      "fitted_span": "2022-11-16..2026-10-28",
+      "blocks": 4,
+      "paired_hours": 28041,
+      "fitted_cell": [
+        33.625,
+        -118.25
+      ],
+      "fitted_cell_nm_from_truth": 5.45,
+      "ols_ladder_best": "diurnal",
+      "ols_ladder_gain_pct": 22.3,
+      "ols_ladder_slope": 0.529,
+      "ols_rejected_because": "FAILS the tail bar — keeps 22% of raw's >=18 kn hits (34/152), 24+ err -8.8 vs raw 0.5 kn"
+    },
+    "ecmwf_ifs025": {
+      "type": "sector_diurnal",
+      "a": 1,
+      "b": -1.1496929226020192,
+      "c0": 0,
+      "c1": -1.2600512837685918,
+      "c2": -1.5880036337286314,
+      "delta": {
+        "N": 2.6362179414447664,
+        "E": 1.2323817249160771,
+        "S": 1.5796911633487143,
+        "W": 0
+      },
+      "global": 0,
+      "slope_constrained": true,
+      "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
+      "form": "offset_sector_diurnal",
+      "measured_gain_pct": 10,
+      "holds_every_block": true,
+      "warn_kept_pct": 106,
+      "warn_threshold_kn": 18,
+      "top_bin_err_kn": -2,
+      "top_bin_err_raw_kn": -2.2,
+      "season_gain_pct": 9.3,
+      "fitted_span": "2024-02-03..2026-10-28",
+      "blocks": 3,
+      "paired_hours": 20801,
+      "fitted_cell": [
+        33.5,
+        -118.25
+      ],
+      "fitted_cell_nm_from_truth": 12.95,
+      "ols_ladder_best": "diurnal",
+      "ols_ladder_gain_pct": 29.9,
+      "ols_ladder_slope": 0.4,
+      "ols_rejected_because": "FAILS the tail bar — keeps 0% of raw's >=18 kn hits (0/86), 24+ err -12.6 vs raw -2.2 kn"
+    }
+  },
+  "seasonal": {
+    "months": [
+      6,
+      7,
+      8,
+      9
+    ],
+    "label": "racing-season",
+    "note": "Olympic sailing 2028 and the Transpac start fall in June-September. applyMOS uses these coefficients inside the window and spec.models outside it; A MODEL ABSENT HERE KEEPS THE YEAR-ROUND SET INSIDE THE WINDOW TOO, which is only safe because every year-round correction here was validated across all five held-out years including their summers.",
+    "models": {
+      "gfs_hrrr": {
+        "type": "sector_diurnal",
+        "a": 1,
+        "b": 1.8460574230558282,
+        "c0": 0,
+        "c1": -0.8753668237931154,
+        "c2": 0.2827605945695776,
+        "delta": {
+          "N": -0.5747711406224397,
+          "E": -1.4457856042525656,
+          "S": -1.2771149656050367,
+          "W": 0
+        },
+        "global": 0,
+        "slope_constrained": true,
+        "form": "offset_sector_diurnal",
+        "measured_gain_pct": 19.8,
+        "beats_year_round_by_kn": 0.052,
+        "warn_kept_pct": 407
+      },
+      "gfs_global": {
+        "type": "diurnal",
+        "a": 1,
+        "b": -0.10937413537981873,
+        "c0": 0,
+        "c1": -1.3119726260480944,
+        "c2": -0.7884222641610862,
+        "slope_constrained": true,
+        "form": "offset_diurnal",
+        "measured_gain_pct": 8.7,
+        "beats_year_round_by_kn": 0.086,
+        "warn_kept_pct": 260
+      },
+      "icon_global": {
+        "type": "diurnal",
+        "a": 1,
+        "b": 1.4189083941589953,
+        "c0": 0,
+        "c1": -0.7985543466251397,
+        "c2": -0.9474967695725606,
+        "slope_constrained": true,
+        "form": "offset_diurnal",
+        "measured_gain_pct": 15.6,
+        "beats_year_round_by_kn": 0.095,
+        "warn_kept_pct": 219
+      },
+      "ecmwf_ifs025": {
+        "type": "sector_diurnal",
+        "a": 1,
+        "b": -0.17119105530821505,
+        "c0": 0,
+        "c1": -1.3779394796551117,
+        "c2": -1.4359174952115754,
+        "delta": {
+          "N": 3.1543752098288484,
+          "E": 0.8493262068221265,
+          "S": 0.7619034962169857,
+          "W": 0
+        },
+        "global": 0,
+        "slope_constrained": true,
+        "form": "offset_sector_diurnal",
+        "measured_gain_pct": 12,
+        "beats_year_round_by_kn": 0.097,
+        "warn_kept_pct": 151
+      }
+    }
+  }
+}
