@@ -13,8 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyMOS, seasonMonths, hasSeasonal, modelSpecFor, correctedWind30,
-  specFor, calibratedVenues, needsPreLift,
-} from '../mos'
+  specFor, calibratedVenues, needsPreLift, fitHeightM } from '../mos'
 import { wallMonth } from '../venueTz'
 import { applyMosToField } from '../windField'
 
@@ -105,8 +104,18 @@ describe('seasonMonths and hasSeasonal', () => {
     expect(modelSpecFor(st, 'icon_eu', 10).m.type).toBe('bias_scale')
   })
 
-  it('and no shipped spec needs a pre-lift, which the window must not change', () => {
-    for (const key of calibratedVenues()) expect(needsPreLift(specFor(key)), key).toBe(false)
+  it('and a seasonal window never changes whether a spec needs a pre-lift', () => {
+    // This asserted `false` for every calibrated venue, which was true only
+    // while the three Mediterranean 30 m boat fits were the only ones
+    // registered. The station-fitted specs (oslofjord, viksfjord, san-juan)
+    // are fitted at 10 m and MUST pre-lift. What the test is really guarding
+    // is that the SEASON window has no bearing on that ordering, so it now
+    // says that: pre-lift follows the declared heights and nothing else.
+    for (const key of calibratedVenues()) {
+      const spec = specFor(key)
+      const target = spec.target_height_m ?? 30
+      expect(needsPreLift(spec), key).toBe(fitHeightM(spec) < target)
+    }
   })
 })
 

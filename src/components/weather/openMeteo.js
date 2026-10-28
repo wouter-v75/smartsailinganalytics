@@ -205,10 +205,37 @@ export const MODELS = {
   // entirely in Europe (unlike the European regionals, which are global + auto-
   // greyed). ECMWF stays global. Endpoint is the generic /v1/forecast (same as
   // DMI/ITALIA) so the models= id is accepted regardless of family.
+  // NOAA GFS, 0.25 deg global. Added 28 Oct 2026 because the San Juan MOS fit
+  // found it essentially unbiased at Smith Island (raw bias -0.02 kn over
+  // 36,138 hours) and the app had no plain GFS entry at all — HRRR was the only
+  // member of that family it showed, and HRRR is CONUS-only and short-range.
+  //
+  // No coverage box: it is global, like ECMWF and ICON, so it appears at every
+  // venue. That costs ONE more Open-Meteo request per point per fetch, which is
+  // billed per location (see the rate-limit note in CLAUDE.md).
+  //
+  // modelParam and mosModel are the SAME id here, so unlike ECMWF there is no
+  // mosApprox: the correction was fitted on exactly the model the app fetches.
+  // Heights are 10/80/100/120 only — probed on 28 Oct 2026, 180 m returns 24/24
+  // nulls, and listing a height the model does not serve shows an empty column.
+  GFS: {
+    key: 'GFS', label: 'GFS', subtitle: 'NOAA GFS 0.25°', color: '#00897b',
+    endpoint: 'https://api.open-meteo.com/v1/forecast',
+    modelParam: 'gfs_global',
+    metaModel: 'gfs_global',
+    mosModel: 'gfs_global',
+    heights: [10, 80, 100, 120],
+    tableCols: [10, 80, 120],
+    upperHeight: 100,
+  },
   HRRR: {
     key: 'HRRR', label: 'HRRR', subtitle: 'NOAA HRRR 3 km', color: '#d32f2f',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'ncep_hrrr_conus',
+    // The MOS lookup key: applyMOS reads spec.models[MODELS[k].mosModel].
+    // Without it a fitted correction is silently never applied, which is how
+    // the San Juan spec's gfs_hrrr coefficients would have shipped inert.
+    mosModel: 'gfs_hrrr',
     metaModel: 'ncep_hrrr_conus',
     coverage: NORTH_AMERICA,
     fieldGrid: 16,                 // high-res wind-field sampling (3 km rapid-refresh)
@@ -240,6 +267,10 @@ export const MODELS = {
     key: 'HRDPS', label: 'HRDPS', subtitle: 'ECCC 2.5 km', color: '#4527a0',
     endpoint: 'https://api.open-meteo.com/v1/gem',
     modelParam: 'gem_hrdps_continental',
+    // The MOS lookup key: applyMOS reads spec.models[MODELS[k].mosModel].
+    // Without it a fitted correction is silently never applied, which is how
+    // the San Juan spec's gem_hrdps_continental coefficients would have shipped inert.
+    mosModel: 'gem_hrdps_continental',
     coverage: { latMin: 42, latMax: 70, lonMin: -138, lonMax: -52 },
     fieldGrid: 16,                 // high-res wind-field sampling (2.5 km)
     heights: [10, 40, 80, 120],
@@ -404,13 +435,13 @@ export const MODELS = {
 // actually show (MODEL_PICK_ORDER in ForecastView is built from it). HRDPS was
 // added to MODELS, then to MODEL_ORDER, and was STILL not visible, because the
 // viewer never reads MODEL_ORDER. modelCoverage.test.ts now checks both.
-export const MODEL_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRDPS', 'HRRR', 'NAM']
+export const MODEL_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRDPS', 'HRRR', 'GFS', 'NAM']
 
 
 // All models fetched (Phase 2 Compare consumes the extras).
 // THIS is the list the Forecast picker and the Compare view walk. A model
 // missing here is invisible no matter what MODEL_ORDER says.
-export const COMPARE_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRDPS', 'HRRR', 'NAM']
+export const COMPARE_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRDPS', 'HRRR', 'GFS', 'NAM']
 
 /**
  * Is this model served from OUR storage rather than Open-Meteo?

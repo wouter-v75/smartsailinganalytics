@@ -43,8 +43,23 @@ describe('MOS is keyed by the venue list', () => {
     }
   })
 
-  it('still carries all three fitted venues after the rename', () => {
-    expect(calibratedVenues().sort()).toEqual(['porto-cervo', 'sorrento', 'st-tropez'])
+  it('still carries the three Mediterranean venues the rename was about', () => {
+    // The rename that this file guards was hyphenating the Mediterranean keys,
+    // and those three must never silently drop out. It is no longer the WHOLE
+    // list — oslofjord, viksfjord and san-juan were registered on 28 Oct 2026 —
+    // so this asserts containment rather than equality, which is what it was
+    // actually protecting. The test above already checks every registered key
+    // is a real venue, so a typo in a new one still fails there.
+    for (const key of ['porto-cervo', 'sorrento', 'st-tropez']) {
+      expect(calibratedVenues(), key).toContain(key)
+    }
+  })
+
+  it('registers the station-fitted venues too, each under its venue key', () => {
+    for (const key of ['oslofjord', 'viksfjord', 'san-juan']) {
+      expect(calibratedVenues(), key).toContain(key)
+      expect(specFor(key).venue, key).toBe(key)
+    }
   })
 
   it('includes Sorrento in the venue list, which it was missing', () => {

@@ -29,19 +29,31 @@ describe('METNO maps to its own Open-Meteo id, exactly', () => {
   })
 })
 
-describe('naming the id changes nothing until a venue is fitted', () => {
-  it('offers no correction at any currently calibrated venue', () => {
-    // The guard that makes this safe: every MOS path goes through
-    // correctionInfo, which needs coefficients for (venue, mosModel). A badge
-    // driven by the mere presence of mosModel would be a lie today.
-    for (const v of calibratedVenues()) {
+describe('a correction exists only where the venue was actually fitted', () => {
+  // These two used to assert that metno_nordic corrected NOWHERE and that every
+  // calibrated venue was outside the Nordic box — true while only the three
+  // Mediterranean specs were registered, and a statement about the state of the
+  // world rather than about the code. Oslofjord and Viksfjord were registered on
+  // 28 Oct 2026, so the assertions now say the thing they were protecting: a
+  // correction appears exactly where there are coefficients, and nowhere else.
+  it('corrects metno_nordic at the Norwegian venues and at no Mediterranean one', () => {
+    expect(correctionInfo('oslofjord', 'metno_nordic')).not.toBeNull()
+    for (const v of ['sorrento', 'porto-cervo', 'st-tropez', 'san-juan']) {
       expect(correctionInfo(v, 'metno_nordic'), v).toBeNull()
     }
   })
 
-  it('and the calibrated venues are all outside the Nordic domain anyway', () => {
-    // So MET Nordic is never even fetched at them — Open-Meteo answers
-    // `"latitude":nan` outside the box, which is not parseable JSON.
+  it('refuses metno_nordic at Viksfjord, where the gain did not hold every year', () => {
+    // Fitted, measured, and deliberately shipped as `raw` — correctionInfo must
+    // read that as NO correction, not as a correction of type raw.
+    expect(specFor('viksfjord').models.metno_nordic.type).toBe('raw')
+    expect(correctionInfo('viksfjord', 'metno_nordic')).toBeNull()
+  })
+
+  it('only corrects a venue inside the model\'s own coverage box', () => {
+    // MET Nordic is never fetched outside the box — Open-Meteo answers
+    // `"latitude":nan` there, which is not parseable JSON — so a correction
+    // outside it would be for a forecast that does not exist.
     const box = MODELS.METNO.coverage
     expect(box).toBeTruthy()
     for (const key of calibratedVenues()) {
@@ -49,7 +61,7 @@ describe('naming the id changes nothing until a venue is fitted', () => {
       expect(v, key).toBeTruthy()
       const inside = v!.lat >= box.latMin && v!.lat <= box.latMax
         && v!.lon >= box.lonMin && v!.lon <= box.lonMax
-      expect(inside, `${key} should be outside the Nordic box`).toBe(false)
+      if (!inside) expect(correctionInfo(key, 'metno_nordic'), key).toBeNull()
     }
   })
 
@@ -72,9 +84,15 @@ describe('the Norwegian venues are inside the Nordic domain', () => {
     expect(v!.lon).toBeLessThanOrEqual(box.lonMax)
   })
 
-  it('none of them is calibrated yet — the fit is the outstanding work', () => {
-    for (const key of ['viksfjord', 'oslofjord', 'oslo', 'fredrikstad']) {
-      expect(calibratedVenues()).not.toContain(key)
+  it('the two that were fitted are registered; the other two are still outstanding', () => {
+    // Larvik (viksfjord) and Horten/Moss (oslofjord) shipped 28 Oct 2026.
+    // Oslo and Fredrikstad have no fit, so they must stay uncalibrated rather
+    // than inherit a neighbour's coefficients.
+    for (const key of ['viksfjord', 'oslofjord']) {
+      expect(calibratedVenues(), key).toContain(key)
+    }
+    for (const key of ['oslo', 'fredrikstad']) {
+      expect(calibratedVenues(), key).not.toContain(key)
     }
   })
 })

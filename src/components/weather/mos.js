@@ -12,6 +12,9 @@
 import sorrento from './mos/mos_sorrento.json'
 import porto_cervo from './mos/mos_porto_cervo.json'
 import st_tropez from './mos/mos_st_tropez.json'
+import oslofjord from './mos/mos_oslofjord.json'
+import viksfjord from './mos/mos_viksfjord.json'
+import san_juan from './mos/mos_san_juan.json'
 import { wallHour, wallMonth } from './venueTz'
 import { venueAt, venueByKey, VENUE_MATCH_NM } from '../../lib/venues'
 import { solveSurfaceLayer, profileRatio, transferWind } from '../../lib/windProfile'
@@ -29,6 +32,13 @@ const SPECS = {
   sorrento,
   'porto-cervo': porto_cervo,
   'st-tropez': st_tropez,
+  // Fitted at 10 m against a station rather than at 30 m against a boat, so
+  // needsPreLift() is TRUE for these three and the correction is applied
+  // BEFORE the lift to mast height. That ordering is the whole reason
+  // fit_height_m exists; see the block above fitHeightM().
+  oslofjord,                 // Horten / Moss, truth frost:SN17280 Gullholmen
+  viksfjord,                 // Larvik, truth frost:SN29950
+  'san-juan': san_juan,      // truth ndbc:SISW1 Smith Island
 }
 
 /**

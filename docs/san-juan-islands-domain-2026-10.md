@@ -1052,9 +1052,44 @@ At 12 kn raw that reads 12.0 / 13.6–16.1 / 10.8–13.0 / 11.8 / 12.2 kn — mo
 which is what a correction against a station the models already fit should look
 like. The Kelp Reefs version put `icon_global` at 18.4 kn for the same input.
 
-**It is not live.** `SPECS` in `mos.js` registers only sorrento, porto-cervo and
-st-tropez, so this needs one line there — and the Oslofjord and Viksfjord specs
-were fitted months ago and never registered either.
+**Shipped 28 Oct 2026**, along with Oslofjord (Horten/Moss) and Viksfjord
+(Larvik), which had been fitted and left unregistered. Live corrections now:
+
+```
+sorrento     fit 30 m  pre-lift no   ECMWF ICON ICONRACE ICONRACE_1KM
+porto-cervo  fit 30 m  pre-lift no   ECMWF ICON ICONRACE ICONRACE_1KM ARPEGE
+st-tropez    fit 30 m  pre-lift no   AROME ICON ICONRACE ICONRACE_1KM
+oslofjord    fit 10 m  pre-lift YES  METNO ECMWF ICON ICONRACE ICONRACE_1KM
+viksfjord    fit 10 m  pre-lift YES  ECMWF ICON ICONRACE ICONRACE_1KM
+san-juan     fit 10 m  pre-lift YES  HRDPS HRRR GFS
+```
+
+**Registering was not enough, and that is the part worth remembering.**
+`applyMOS` reads `spec.models[MODELS[k].mosModel]`, so three silent misses had
+to be closed first:
+
+- **HRRR and HRDPS carried no `mosModel` at all.** Their San Juan coefficients
+  could never have been looked up. Added.
+- **`gfs_global` had no model to attach to** — the app had no plain GFS entry,
+  only HRRR, which is CONUS-only and short-range. A `GFS` model (0.25°, global,
+  10/80/100/120 m — 180 m returns nulls) was added, so that 6.0 % correction
+  now ships. It appears at every venue, being global, and costs one more
+  Open-Meteo request per point.
+- **`icon_global` is deliberately left unwired.** `MODELS.ICON.mosModel` is
+  `icon_eu`, which does not reach the Pacific; the app fetches `icon_seamless`
+  here, which *is* `icon_global`, so the coefficients describe the right
+  forecast but the key does not match. Not forced, because at ~11 km no cell
+  here is free of island — most of that −3.17 kn is land fraction, and HRRR and
+  HRDPS are far better models at this venue. The spec names it under
+  `models_not_applied` so it cannot be mistaken for shipped.
+
+`mosWiring.test.ts` now asserts all of this: every spec key is either claimed by
+some model's `mosModel` or declared unapplied, nothing is declared unapplied
+that is in fact wired, and the San Juan correction actually moves a 12 kn input
+through the real app path. Four older tests had encoded "the Norwegian venues
+are not calibrated yet" and "every shipped spec is a 30 m boat fit"; both were
+statements about the state of the world rather than about the code, and both
+now say what they were really protecting.
 
 Remaining caveats, recorded rather than buried:
 

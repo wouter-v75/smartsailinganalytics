@@ -634,6 +634,19 @@ async function main() {
     cell_selection: CELL,
     lead_time: 'short-lead stitched archive; NOT lead-time stratified',
     bands: BANDS,
+    // KEYS THE APP CANNOT REACH, named so they are not mistaken for shipped.
+    // applyMOS reads spec.models[MODELS[k].mosModel], so a key no model claims
+    // is silently inert — the failure this project keeps paying for. The test
+    // in mosWiring.test.ts asserts every other key IS reachable.
+    models_not_applied: {
+      icon_global:
+        'MODELS.ICON.mosModel is `icon_eu`, which does not reach the Pacific. The app '
+        + 'fetches icon_seamless here, which resolves to icon_global, so the coefficients '
+        + 'describe the right forecast — but the lookup key does not match and the '
+        + 'correction is NOT applied. Left unwired deliberately as well: at ~11 km no cell '
+        + 'here is free of island, so most of the -3.17 kn is land fraction rather than '
+        + 'forecast error, and HRRR and HRDPS are far better models at this venue.',
+    },
     corroborating_stations: STATIONS.filter((s) => s.id !== prim.id)
       .map((s) => ({ id: s.id, anemometer_m: s.anemM, shipped: false })),
     models,

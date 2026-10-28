@@ -41,6 +41,9 @@
       315
     ]
   ],
+  "models_not_applied": {
+    "icon_global": "MODELS.ICON.mosModel is `icon_eu`, which does not reach the Pacific. The app fetches icon_seamless here, which resolves to icon_global, so the coefficients describe the right forecast — but the lookup key does not match and the correction is NOT applied. Left unwired deliberately as well: at ~11 km no cell here is free of island, so most of the -3.17 kn is land fraction rather than forecast error, and HRRR and HRDPS are far better models at this venue."
+  },
   "corroborating_stations": [
     {
       "id": "CWZO",

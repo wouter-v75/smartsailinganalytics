@@ -182,8 +182,31 @@ describe('needsPreLift', () => {
   it('is false for every shipped Mediterranean spec, which must not change', () => {
     // Those were fitted against a boat's 30 m masthead, so the existing
     // lift-then-correct order is right for them and nothing may shift.
-    for (const key of calibratedVenues()) {
+    //
+    // It is NOT every calibrated venue any more, and that is the point rather
+    // than an exception: the Norwegian and San Juan specs were fitted at 10 m
+    // against a station, so their correction must be applied BEFORE the lift.
+    // This used to loop over calibratedVenues() and assert false for all of
+    // them, which quietly encoded "every spec is a 30 m boat fit" and would
+    // have failed the moment a station-fitted one was registered — as it did.
+    for (const key of ['sorrento', 'porto-cervo', 'st-tropez']) {
       expect(needsPreLift(specFor(key)), key).toBe(false)
+    }
+  })
+
+  it('is true for every station-fitted spec, so the correction precedes the lift', () => {
+    for (const key of ['oslofjord', 'viksfjord', 'san-juan']) {
+      expect(needsPreLift(specFor(key)), key).toBe(true)
+    }
+  })
+
+  it('agrees with the heights the specs declare, for every registered venue', () => {
+    // The general statement, so a venue added later cannot slip past the two
+    // hard-coded lists above.
+    for (const key of calibratedVenues()) {
+      const spec = specFor(key)
+      const target = spec.target_height_m ?? 30
+      expect(needsPreLift(spec), key).toBe(fitHeightM(spec) < target)
     }
   })
 
