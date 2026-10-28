@@ -943,6 +943,102 @@ different domain and a different root cause.
 Verified no regression on every path that matters: San Juan `t_g` 10.1–11.6 °C
 and St Tropez 296.80–298.05 K, both **byte-identical** to what shipped.
 
+## 5c-quater. MOS for the San Juan Islands, fitted (28 Oct 2026)
+
+`scripts/mos-sanjuan-fit.ts`, dry-run by default, `--write` to emit the spec.
+It exists separately from `mos-fit.ts` only because the OBSERVATIONS differ:
+mos-fit reads MET Norway Frost rows out of `wind_observations`, there is no San
+Juan history in that table, and these four stations are American and Canadian.
+The statistics are not re-implemented — it calls the same `src/lib/mosFit`
+routines, so leave-one-year-out with a 48 h buffer, the nested ladder, the
+one-standard-error rule on nEff and the twenty-effective-samples-per-parameter
+gate are identical by construction.
+
+### The four stations, and the height problem that shapes everything
+
+Heights read off the operators' own metadata pages, and they are the
+load-bearing column:
+
+| station | id | anemometer | nm from centre | exposure |
+|---|---|---|---|---|
+| Kelp Reefs | `CWZO` | **10.0 m** | 13.6 | marine — a rock in Haro Strait, open on every side |
+| Eastsound / Orcas Island | `ORS` | **10.0 m** | 8.9 | **land** — airport in a valley |
+| Smith Island | `SISW1` | 17.4 m | 14.8 | marine — low island in the eastern Strait |
+| Se'lhaem, Bellingham Bay | `46118` | 2.97 m | 15.9 | marine — moored buoy |
+
+Only the two at 10 m can be a regression target for the model's native 10 m
+field without inventing a profile, which is mos-fit's first principle: fitting
+in manufactured space makes the correction absorb a one-signed profile error
+and report a small residual. At 2.97 m the buoy reads perhaps 15–20 % under a
+10 m wind in neutral air, and a spec fitted there would push the model's 10 m
+field down by that for ever. So `--write` refuses a non-10 m station unless
+`--allow-nonstandard-height` is passed, and records it in the spec if it is.
+
+**`46118` contributes nothing and cannot.** It returned **619 usable hours** in
+the whole 2022–2026 window: NDBC's yearly historical files for it stop at 2020
+and `realtime2` carries about 45 days. It is in the script, it is reported, and
+it is empty. That is a fact about the archive, not a bug.
+
+### The result
+
+Gain over raw, cross-validated, per cent:
+
+| station | ecmwf_ifs025 | icon_global | gfs_global | gfs_hrrr | gem_hrdps |
+|---|---|---|---|---|---|
+| **CWZO** (marine, 10 m) | 7.5 | 33.9 | 23.0 | 9.5 | 13.4 |
+| ORS (land, 10 m) | 43.3 | 17.0 | 49.9 | 22.4 | 41.0 |
+| SISW1 (17.4 m) | raw | 28.2 | 5.0 | 1.5 | 4.0 |
+| 46118 | — | — | — | — | — |
+
+Every CWZO gain holds in **every** held-out year block.
+
+### The finding that matters more than the gains
+
+Raw bias, same height, 9 nm apart:
+
+| | ecmwf | icon_global | gfs_global | gfs_hrrr | gem_hrdps |
+|---|---|---|---|---|---|
+| CWZO, marine | −0.45 | **−4.34** | −3.35 | −1.76 | −1.82 |
+| ORS, airport | **+3.78** | +0.54 | **+4.32** | +1.18 | +2.97 |
+
+**Every model under-forecasts the marine station and over-forecasts the airport**,
+at the same 10 m, nine miles apart. That is exposure, not forecast error: ORS
+sits in a valley on Orcas Island and the models' smoothed terrain cannot see the
+shelter. So ORS's 43–50 % "gains" are a correction learning that one airport is
+sheltered — a genuine improvement at that runway and completely wrong to ship
+for a venue whose racing happens on the water. It is in the script precisely
+because the contrast is the diagnostic.
+
+`SISW1` is the useful corroboration: independent, marine, and it shows the same
+shape — small bias for the high-resolution models, a large negative one for
+`icon_global` (−3.68 kn). Two marine stations agreeing is what makes the
+`icon_global` correction believable.
+
+### What is shipped, and the caveats that go with it
+
+`src/components/weather/mos/mos_san_juan.json` is fitted against **CWZO**. It
+is **not live**: `SPECS` in `mos.js` registers only sorrento, porto-cervo and
+st-tropez, so this needs one line there — and note the Oslofjord and Viksfjord
+specs were fitted months ago and never registered either.
+
+- **No model beats 1-hour persistence at CWZO.** Persistence rmse is 3.06–3.14
+  kn; the best corrected model is `gem_hrdps` at 3.58. Persistence is not
+  available at forecast lead, so this is not an argument against the models —
+  but it is the honest yardstick and it is not flattering.
+- **The coarse models' big gains are mostly representativeness.** `icon_global`
+  at ~11 km has no cell here that is not substantially land; its −4.34 kn is
+  largely a land-fraction effect, and the correction removes it as if it were
+  bias. Real at that point, but it should be called what it is. Its fitted
+  slope is **1.278** with a +3.30 intercept, which at 20 kn raw reads 28.9 kn —
+  aggressive enough to look at before trusting.
+- **`ncep_nam_conus` has no historical-forecast archive here** (0 of 72 values),
+  so it is not fittable whatever the app's model list says.
+- **`icon_eu` does not reach the Pacific.** `MODELS.ICON` in `openMeteo.js`
+  maps to `mosModel: 'icon_eu'`, right in Europe and wrong here.
+- The `*_seamless` models and `best_match` are refused for the reason mos-fit
+  gives for `metno_seamless`: a splice is not a fittable target.
+- Not lead-time stratified, and the spec says so.
+
 ## 5d. The repeat issues — things this project has already paid for
 
 Every one of these was a day lost somewhere. A new domain re-trips them for free unless they are
