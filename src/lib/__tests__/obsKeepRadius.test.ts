@@ -14,7 +14,8 @@
 // fitted against, so those rows ARE the MOS training set.
 
 import { describe, expect, it } from 'vitest'
-import { nearAnyVenue, VENUE_NM } from '../obsSources'
+import { nearAnyVenue, VENUE_NM, ARCHIVE_PREFIXES, archiveOnly } from '../obsSources'
+import { tierFor } from '../obsTier'
 import { IDLE_NM, type VenueDecision } from '../obsActivation'
 import type { WindObs } from '../windObs'
 
@@ -81,6 +82,53 @@ describe('nearAnyVenue when the venue is IDLE', () => {
       at('metar:EGLL', VENUE_NM + 5),
     ], [venue('idle')])
     expect(ids(kept)).toEqual(['metar:ENGM'])
+  })
+
+  it('keeps an FFVL balise out to VENUE_NM although it may never be FITTED', () => {
+    // The permission to be KEPT and the permission to be FITTED are different
+    // things, and FFVL is the case that forced them apart. Its upstream keeps
+    // NOTHING — the data.gouv.fr files are overwritten every five minutes and
+    // the dataset publishes no archive — so a reading not stored is gone, not
+    // merely thinner. And the nearest balise to St Tropez is 26 nm, well
+    // outside IDLE_NM, so without this clause the archive would have stayed
+    // empty for ever except during a regatta.
+    const kept = nearAnyVenue([
+      at('ffvl:49', 28.7),                // Mont Lachens, 1658 m
+      at('ffvl:155', VENUE_NM + 3),       // and the bound still applies
+    ], [venue('idle')])
+    expect(ids(kept)).toEqual(['ffvl:49'])
+  })
+
+  it('and that balise is still DISPLAY tier, so no fit can take it', () => {
+    // The distinction this must never blur. Promoting ffvl to `mayFit` would
+    // have archived it too — and put a 1658 m ridge top into a MOS training
+    // set, which is the exact error that cost a month of wrong numbers at
+    // Svenner. Archived, drawn, never computed from.
+    const d = tierFor(at('ffvl:49', 28.7))
+    expect(d.tier).toBe('display')
+    expect(d.mayFit).toBe(false)
+    expect(archiveOnly('ffvl:49')).toBe(true)
+  })
+
+  it('does not extend the same courtesy to the other display networks', () => {
+    // The rule is "the upstream keeps nothing", not "display tier deserves
+    // archiving". Pioupiou and the 301 public Davis stations are display too,
+    // and keeping them to 60 nm of fifteen venues is the volume the bound
+    // exists to prevent.
+    expect(ARCHIVE_PREFIXES).toEqual(['ffvl'])
+    const kept = nearAnyVenue([
+      at('piou:123', 20),
+      at('wlmap:abc', 20),
+      at('wl:9', 20),
+    ], [venue('idle')])
+    expect(kept).toEqual([])
+  })
+
+  it('reads the prefix, not a substring of the id', () => {
+    expect(archiveOnly('ffvl:49')).toBe(true)
+    expect(archiveOnly('wlmap:ffvl')).toBe(false)
+    expect(archiveOnly('ffvl')).toBe(false)
+    expect(archiveOnly('xffvl:1')).toBe(false)
   })
 
   it('keeps an inland frost station only inside the idle radius', () => {

@@ -818,6 +818,11 @@ export function nmToNearestVenue(lat: number, lon: number): number {
  * and those are global networks of thousands. Measured, the whole fit set
  * within 60 nm of all 15 venues is about 70 stations a poll against 27 today —
  * some 3.4k rows a day where a dense day is 12.6k.
+ *
+ * A THIRD CLAUSE, for sources whose UPSTREAM KEEPS NOTHING. See
+ * ARCHIVE_PREFIXES below: those are kept to the full VENUE_NM whatever their
+ * tier, because for them a reading not stored is not merely a thinner trace,
+ * it is gone. The tier is untouched — they still may not be fitted against.
  */
 export function nearAnyVenue(obs: WindObs[], decisions: VenueDecision[]): WindObs[] {
   const keep = new Map<string, WindObs>()
@@ -825,10 +830,51 @@ export function nearAnyVenue(obs: WindObs[], decisions: VenueDecision[]): WindOb
     for (const o of withinNm(obs, v.lat, v.lon, keepRadiusNm(v))) keep.set(o.id, o)
     if (keepRadiusNm(v) >= VENUE_NM) continue // dense already keeps the lot
     for (const o of withinNm(obs, v.lat, v.lon, VENUE_NM)) {
-      if (tierFor(o).mayFit) keep.set(o.id, o)
+      if (tierFor(o).mayFit || archiveOnly(o.id)) keep.set(o.id, o)
     }
   }
   return Array.from(keep.values())
+}
+
+/**
+ * Sources whose history EXISTS ONLY IF WE STORE IT, archived to the full
+ * VENUE_NM even when a venue is idle and even though they may never be fitted.
+ *
+ * `ffvl` qualifies on a checked fact, not a hunch: FFVL's data.gouv.fr dataset
+ * declares itself "Temps réel", publishes 0 APIs and lists no archive, and the
+ * two files are OVERWRITTEN — balises.json daily, releves.json every five
+ * minutes. There is nothing to go back for. Every other network here either
+ * keeps its own history (Frost, NDBC, Météo-France, Port-Log) or is one we can
+ * re-derive from.
+ *
+ * WHY THIS IS NOT A TIER CHANGE, which is the distinction worth keeping sharp.
+ * `display` means "draw it, never compute from it", and the balises earn that:
+ * they are paragliding launch sites, median site elevation 845 m, the nearest
+ * five to St Tropez at 440 to 1768 m, and FFVL's own remark on Mont Lachens
+ * says it reads 8-10 km/h low in a westerly. Promoting them to `mayFit` to get
+ * them archived would put a 1658 m ridge top into a future MOS training set —
+ * exactly the error the tier exists to prevent, and exactly the one that cost
+ * this project a month of wrong MOS numbers at Svenner. So the permission to
+ * be KEPT and the permission to be FITTED are now separate, which is what they
+ * always should have been.
+ *
+ * What it costs, measured 2 Nov 2026: 14 balises fall within 60 nm of any
+ * venue, all of them St Tropez's — the only French venue — so about 1.3k rows
+ * a day against the 12.6k of a dense day, and it cannot grow without a new
+ * venue in France.
+ *
+ * What it is FOR: these sit above the boundary layer, so their history is a
+ * record of the GRADIENT wind over past regattas — which is the thing that
+ * says whether a sea breeze will establish. Not a surface truth, and not MOS
+ * truth; `wind_observations.tier` carries 'display' on every one of these rows
+ * so no fit can take them by accident.
+ */
+export const ARCHIVE_PREFIXES: readonly string[] = ['ffvl']
+
+/** Whether this station is kept for its history regardless of its tier. */
+export function archiveOnly(stationId: string): boolean {
+  const i = stationId.indexOf(':')
+  return i > 0 && ARCHIVE_PREFIXES.includes(stationId.slice(0, i))
 }
 
 export interface SourceResult { name: SourceName; total: number; kept: number; ms: number; error?: string }
