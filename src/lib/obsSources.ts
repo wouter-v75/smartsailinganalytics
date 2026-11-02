@@ -292,14 +292,39 @@ const RUNNERS: Record<SourceName, (ctx: PollContext) => Promise<WindObs[]>> = {
 
   pioupiou: async (_ctx) => parsePioupiou(await (await get('https://api.pioupiou.fr/v1/live-with-meta/all')).json()),
 
+  /**
+   * FFVL balises, from data.gouv.fr and NEEDING NO KEY as of 2 Nov 2026.
+   *
+   * It used to call `data.ffvl.fr/api/?...&key=`, which required a key we never
+   * had, so this source returned [] for its whole life. FFVL's answer to the
+   * request (2 Nov 2026) was that the datasets are now published as open data
+   * on data.gouv.fr under the Etalab Open Licence 2.0 with no key, and support
+   * moved to their Discord.
+   *
+   * The old endpoint is worse than gone: `data.ffvl.fr/api/` still answers
+   * **HTTP 200** with the plain text `Invalid request parameter`, so `get()`
+   * sees an ok response and `.json()` throws. A 404 would have been kinder.
+   * Nothing here retains the key path — it cannot work.
+   *
+   * TWO FILES, and the join matters: `releves.json` carries NO POSITION, only
+   * `idbalise`, so without `balises.json` every reading is dropped for want of
+   * a lat/lon. That is why the metadata fetch is NOT `.catch(() => null)` the
+   * way the old one was. Readings refresh every 5 minutes, metadata daily.
+   *
+   * OPENWINDMAP BALISES ARE EXCLUDED from releves.json by FFVL — 406 of the
+   * 646, stated on the dataset page. That is not a gap: OpenWindMap is
+   * Pioupiou, which SSA already polls as its own source, so the two feeds
+   * partition the network rather than overlapping it.
+   */
   ffvl: async (_ctx) => {
-    const key = process.env.FFVL_API_KEY
-    if (!key) return []
-    const q = (r: string) => `https://data.ffvl.fr/api/?base=balises&r=${r}&mode=json&key=${encodeURIComponent(key)}`
-    const [rel, bal] = await Promise.all([get(q('releves')), get(q('list')).catch(() => null)])
-    return parseFfvl(await rel.json(), bal ? await bal.json() : [])
+    const [rel, bal] = await Promise.all([get(FFVL_RELEVES_URL), get(FFVL_BALISES_URL)])
+    return parseFfvl(await rel.json(), await bal.json())
   },
 }
+
+/** data.gouv.fr resource ids for the FFVL beacon dataset. Keyless by design. */
+export const FFVL_BALISES_URL = 'https://www.data.gouv.fr/api/1/datasets/r/8d795154-9145-4ab2-99de-6768a36f31ea'
+export const FFVL_RELEVES_URL = 'https://www.data.gouv.fr/api/1/datasets/r/047b2ab9-627f-4e5f-9d68-5b948433c61d'
 
 
 

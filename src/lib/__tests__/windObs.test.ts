@@ -111,6 +111,48 @@ describe('parseFfvl', () => {
     expect(o[0].name).toBe('FFVL 99')
     expect(o[0].elevM).toBeNull()
   })
+
+  it('reads the data.gouv.fr feed, where a reading carries NO position', () => {
+    // The real shapes, 2 Nov 2026. releves.json has idbalise and nothing
+    // locational, so the balises.json join is what makes a reading usable at
+    // all — a dropped metadata fetch is not a degraded feed here, it is an
+    // empty one. The old endpoint put lat/lon on the reading, which is why
+    // the metadata call used to be optional and now is not.
+    const releve = {
+      idbalise: 49,
+      date: '2026-11-02T11:19:05+01:00',
+      vitesseVentMoy: 9, vitesseVentMax: 20, vitesseVentMin: 0,
+      directVentMoy: 156, directVentInst: 134, temperature: 9,
+    }
+    const balise = {
+      idBalise: 49, nom: 'Mont Lachens',
+      latitude: 43.74489975, longitude: 6.65347004, altitude: 1658,
+      departement: '83', station_type: 'ADISON', en_maintenance: 0,
+    }
+    expect(parseFfvl([releve], [])).toHaveLength(0)
+    const [o] = parseFfvl([releve], [balise])
+    expect(o.name).toBe('Mont Lachens')
+    expect(o.lat).toBeCloseTo(43.7449, 4)
+    expect(o.elevM).toBe(1658)
+    expect(o.twsKn).toBeCloseTo(9 * 0.539957, 4)
+    expect(o.gustKn).toBeCloseTo(20 * 0.539957, 4)
+    expect(o.twdDeg).toBe(156)
+    // The zoned stamp is 10:19 UTC, not 11:19. Getting this wrong stamps every
+    // reading an hour into the future and makes the whole network look fresh
+    // and then abruptly stale.
+    expect(o.t).toBe('2026-11-02T10:19:05.000Z')
+  })
+
+  it('credits FFVL on every reading, because the licence requires it', () => {
+    // Etalab Open Licence 2.0 grants reuse including commercial use ON
+    // CONDITION of attribution, so the credit travels with the observation
+    // rather than depending on a footer being rendered.
+    const [o] = parseFfvl(
+      [{ idbalise: 1, vitesseVentMoy: 10, date: '2026-11-02T11:19:05+01:00' }],
+      [{ idBalise: 1, nom: 'x', latitude: 43, longitude: 6 }],
+    )
+    expect(o.network).toBe('FFVL')
+  })
 })
 
 describe('isoFromFfvl', () => {
@@ -122,6 +164,20 @@ describe('isoFromFfvl', () => {
   })
   it('returns null rather than an Invalid Date', () => {
     expect(isoFromFfvl('not a time')).toBeNull()
+  })
+  it('believes a stamp that declares its own zone, over the assumed offset', () => {
+    // data.gouv.fr's releves.json stamps "+01:00". The regex that reads the
+    // zone-less form matches the date and time and IGNORES a trailing offset,
+    // so a zoned stamp used to be treated as Paris-local and have the
+    // caller's offset applied instead of its own — and parseFfvl passes none,
+    // so every reading landed an hour in the future in winter, two in summer.
+    expect(isoFromFfvl('2026-11-02T11:19:05+01:00')).toBe('2026-11-02T10:19:05.000Z')
+    expect(isoFromFfvl('2026-07-02T11:19:05+02:00')).toBe('2026-07-02T09:19:05.000Z')
+    expect(isoFromFfvl('2026-11-02T10:19:05Z')).toBe('2026-11-02T10:19:05.000Z')
+    // An explicit offset argument must not double-shift a zoned stamp.
+    expect(isoFromFfvl('2026-11-02T11:19:05+01:00', 1)).toBe('2026-11-02T10:19:05.000Z')
+    // And the zone-less form still takes the caller's offset, as before.
+    expect(isoFromFfvl('2026-11-02 11:19:05', 1)).toBe('2026-11-02T10:19:05.000Z')
   })
 })
 

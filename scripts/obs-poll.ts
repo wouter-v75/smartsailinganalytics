@@ -43,9 +43,12 @@ const env: Record<string, string> = (() => {
       .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).trim().replace(/^["']|["']$/g, '')] }),
   )
 })()
-// The source runners read FFVL_API_KEY from the environment, as they do on the
-// server; .env.local is not loaded for us out here.
-for (const k of ['FFVL_API_KEY', 'METEOFRANCE_API_KEY']) if (env[k] && !process.env[k]) process.env[k] = env[k]
+// The source runners read their keys from the environment, as they do on the
+// server; .env.local is not loaded for us out here. FFVL_API_KEY is gone from
+// this list as of 2 Nov 2026 — those datasets are keyless open data on
+// data.gouv.fr now, and the keyed endpoint they replaced answers HTTP 200 with
+// a non-JSON error body.
+for (const k of ['METEOFRANCE_API_KEY']) if (env[k] && !process.env[k]) process.env[k] = env[k]
 
 async function main() {
   const onlyRaw = (flag('only') || '').split(',').map((s) => s.trim()).filter(Boolean)

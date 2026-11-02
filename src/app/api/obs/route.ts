@@ -6,6 +6,7 @@ import {
   davisMapNear, davisMapStations, collectObservations,
   portlogObs, portlogInReach, weatherfileObs, weatherfileNear,
   clubsObs, clubsNear, mfLandNear,
+  FFVL_BALISES_URL, FFVL_RELEVES_URL,
 } from '@/lib/obsSources'
 import { FORCE_ALL } from '@/lib/obsActivation'
 import {
@@ -89,21 +90,33 @@ async function metarAround(lat: number, lon: number, nm: number): Promise<WindOb
   return Array.from(byId.values())
 }
 
-// FFVL is open data but NOT keyless — an unkeyed call answers "invalid FFVL key
-// length" and a key comes by email from informatique@ffvl.fr. Until FFVL_API_KEY
-// is set this source is simply absent, which is why it is a separate try block
-// rather than a hard requirement.
+// FFVL balises, from data.gouv.fr and KEYLESS as of 2 Nov 2026 — FFVL's reply
+// to the key request this comment used to describe is that the datasets are
+// open data there under the Etalab Open Licence 2.0, with support on Discord.
+// So this source is no longer conditional on anything.
+//
+// The old endpoint is worse than retired: data.ffvl.fr/api/ still answers
+// HTTP 200 with the plain text `Invalid request parameter`, so a keyed call
+// passes the ok check and then throws on .json().
+//
+// THE METADATA FETCH IS NOT OPTIONAL any more, and that is the one behavioural
+// trap in the move. The old `releves` carried lat/lon on each reading, so a
+// failed `list` call merely cost the station names. data.gouv's releves.json
+// carries `idbalise` and no position at all, so without balises.json every
+// reading is dropped for want of a lat/lon and the source goes quietly empty.
+//
+// It stays a duplicate of the runner in obsSources.ts rather than calling it,
+// because the revalidate windows below are the point: Next's data cache is
+// what keeps a 258 KB metadata file from being refetched on every viewport
+// move, and obsSources' plain `get()` has no equivalent.
 async function ffvlAround(): Promise<WindObs[]> {
-  const key = process.env.FFVL_API_KEY
-  if (!key) return []
-  const base = 'https://data.ffvl.fr/api/'
-  const q = (r: string) => `${base}?base=balises&r=${r}&mode=json&key=${encodeURIComponent(key)}`
   const [rel, bal] = await Promise.all([
-    fetch(q('releves'), { headers: { 'User-Agent': UA }, next: { revalidate: CACHE_S } }),
-    fetch(q('list'), { headers: { 'User-Agent': UA }, next: { revalidate: 86400 } }),   // metadata moves yearly
+    fetch(FFVL_RELEVES_URL, { headers: { 'User-Agent': UA }, next: { revalidate: CACHE_S } }),
+    fetch(FFVL_BALISES_URL, { headers: { 'User-Agent': UA }, next: { revalidate: 86400 } }),
   ])
-  if (!rel.ok) throw new Error(`ffvl ${rel.status}`)
-  return parseFfvl(await rel.json(), bal.ok ? await bal.json() : [])
+  if (!rel.ok) throw new Error(`ffvl releves ${rel.status}`)
+  if (!bal.ok) throw new Error(`ffvl balises ${bal.status} — readings carry no position without it`)
+  return parseFfvl(await rel.json(), await bal.json())
 }
 
 // Météo-France DPObs v2 — buoys and partner ships. The only sources here that

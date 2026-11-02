@@ -35,6 +35,14 @@ export interface WindObs {
   t: string
   /** 0..10, the same idea as the model WEIGHTS: a weak source contributes weakly. */
   trust: number
+  /**
+   * The network that published this reading, when its licence requires the
+   * source to be credited where the data is shown. FFVL's balises are Etalab
+   * Open Licence 2.0, which grants commercial reuse on condition of
+   * attribution — so the credit is carried on the observation itself rather
+   * than left to a footer somebody forgets to render.
+   */
+  network?: string | null
 }
 
 export const OBS_SOURCES: Record<ObsSourceKey, {
@@ -163,15 +171,20 @@ export function parseMetar(rows: unknown[]): WindObs[] {
 
 /**
  * FFVL balise network (data.ffvl.fr) — ~200 French free-flight beacons, 5-minute
- * cadence, dense along the Med coast where nothing official is.
+ * cadence. NOT dense along the Med COAST, whatever an earlier version of this
+ * comment said: they are paragliding launch sites, so they are on hills. Of the
+ * 189 that reach the live feed the median site elevation is 845 m and five sit
+ * below 50 m.
  *
- * NOT keyless, despite being open data: an unkeyed call answers
- * `error#3 : invalid FFVL key length`, and a key is requested by email from
- * informatique@ffvl.fr. Wired here so it works the day the key arrives; the route
- * skips this source while FFVL_API_KEY is unset.
+ * KEYLESS as of 2 Nov 2026: the datasets moved to data.gouv.fr under the Etalab
+ * Open Licence 2.0 — commercial reuse allowed, attribution required, which is
+ * what `network: 'FFVL'` below carries. The URLs are in obsSources.ts.
  *
- * Speeds are km/h. The beacon's `balise_id` keys the two endpoints together, and
- * the mast height is not published — so these read as measured, height unknown.
+ * Speeds are km/h. `idbalise` keys the two files together, and the mast height
+ * is not published — so these read as measured, height unknown. The READING
+ * carries no position, only its id, so the metadata join is what makes it
+ * usable at all; passing no balises returns nothing rather than an unplaceable
+ * observation.
  */
 export function parseFfvl(releves: unknown[], balises: unknown[] = []): WindObs[] {
   const meta = new Map<string, Record<string, unknown>>()
@@ -203,6 +216,14 @@ export function parseFfvl(releves: unknown[], balises: unknown[] = []): WindObs[
       name: (typeof m.nom === 'string' && m.nom) || (typeof o.nom === 'string' && o.nom) || `FFVL ${id}`,
       lat, lon,
       heightM: null,                       // mast height is not published
+      // SITE elevation, and for this network it is the headline fact rather
+      // than a footnote: these are PARAGLIDING launch sites, so they sit on
+      // hills by definition. Measured 2 Nov 2026 — of the ten balises within
+      // 35 nm of St Tropez the lowest is 187 m, and the five that reach the
+      // live feed are at 440, 1020, 1492, 1658 and 1768 m. A 1658 m ridge top
+      // reads the flow above the boundary layer, not the race area, and FFVL's
+      // own remark on that one (Mont Lachens) says it reads 8-10 km/h LOW in a
+      // westerly. Useful as a gradient-wind indicator; never a surface truth.
       elevM: num(m.altitude),
       surface: 'land',
       twsKn: kmh * 0.539957,
@@ -210,20 +231,38 @@ export function parseFfvl(releves: unknown[], balises: unknown[] = []): WindObs[
       gustKn: gustKmh == null ? null : gustKmh * 0.539957,
       t,
       trust: OBS_SOURCES.beacon.trust,
+      // Etalab Open Licence 2.0: reuse, including commercial, on condition of
+      // attribution. The station panel renders this beside the source label.
+      network: 'FFVL',
     })
   }
   return out
 }
 
-// FFVL stamps "YYYY-MM-DD HH:MM:SS" in PARIS local time with no zone marker —
-// the same trap as the log exports (see CLAUDE.md). Read as UTC it is an hour or
-// two in the future, which would make every beacon look fresher than it is and
-// then abruptly stale. The offset is applied by the caller's tz helper; here we
-// only refuse to pretend a zone-less stamp is UTC.
+// FFVL's old API stamped "YYYY-MM-DD HH:MM:SS" in PARIS local time with NO zone
+// marker — the same trap as the log exports (see CLAUDE.md). Read as UTC it is
+// an hour or two in the future, which makes every beacon look fresher than it
+// is and then abruptly stale. The offset is applied by the caller's tz helper;
+// this only refuses to pretend a zone-less stamp is UTC.
+//
+// THE data.gouv FEED STAMPS ITS OWN ZONE: "2026-11-02T11:19:05+01:00". A stamp
+// that says what it means must be believed, and the bug this guard exists for
+// is subtle — the regex below matches the date and time and IGNORES a trailing
+// offset, so a zoned stamp used to fall through to the zone-less path and have
+// the caller's `offsetHours` applied instead of its own. parseFfvl passes no
+// offset, so every reading off the new feed came out an hour in the future in
+// winter and two in summer. A zone, when present, wins.
+const ZONED = /(?:Z|[+-]\d{2}:?\d{2})$/i
+
 export function isoFromFfvl(s: string, offsetHours = 0): string | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(s.trim())
+  const str = s.trim()
+  if (ZONED.test(str)) {
+    const d = Date.parse(str)
+    return Number.isNaN(d) ? null : new Date(d).toISOString()
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(str)
   if (!m) {
-    const d = Date.parse(s)
+    const d = Date.parse(str)
     return Number.isNaN(d) ? null : new Date(d).toISOString()
   }
   const [, y, mo, da, h, mi, se] = m

@@ -108,7 +108,14 @@ export default function ObsStationPanel({ obs, hours = 6, onClose }) {
              dangerouslySetInnerHTML={{ __html: barbSvg(obs.twsKn, obs.twdDeg, colour, 1) }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, color: '#E2E8F0', lineHeight: 1.25 }}>{obs.name}</div>
-          <div style={{ color: colour, fontSize: 11 }}>{src?.label || obs.source}</div>
+          <div style={{ color: colour, fontSize: 11 }}>
+            {src?.label || obs.source}
+            {/* The publishing network, where its licence asks to be credited —
+                FFVL's balises are Etalab Open Licence 2.0, which grants reuse
+                on condition of attribution. Rendered here because this panel
+                is where a reading is actually looked at. */}
+            {obs.network ? <span style={{ opacity: 0.75 }}>{` · ${obs.network}`}</span> : null}
+          </div>
         </div>
         <button onClick={onClose} aria-label="Close"
                 style={{ background: 'none', border: 'none', color: INK, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>×</button>
