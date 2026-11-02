@@ -131,15 +131,56 @@ describe('nearAnyVenue when the venue is IDLE', () => {
     expect(archiveOnly('xffvl:1')).toBe(false)
   })
 
-  it('keeps an inland frost station only inside the idle radius', () => {
-    // SN27780 Tjølling is 1.2 nm out and probation since the tier was
-    // inverted — so it is kept on DISTANCE, not on tier, and an equally
-    // inland one further out is not.
+  it('now keeps an inland PROBATION station out to VENUE_NM, which it did not', () => {
+    // THIS TEST ASSERTED THE OPPOSITE until 2 Nov 2026, and the change is the
+    // point. The escape hatch from the idle radius was `mayFit`, true only for
+    // `fit` — so every probation station beyond 3 nm was dropped. Measured on
+    // one fetch with both filters applied to the same stations: of 26
+    // Météo-France RADOME stations within 60 nm of a venue, ZERO survived, and
+    // the nearest one lost was CAP CAMARAT at 4.1 nm — the station obsSources'
+    // own comment calls the single most useful one at St Tropez.
+    //
+    // Probation is meant to be a STAGE: a station leaves it when somebody
+    // checks its siting against its history (that is what TIER_EXCEPTIONS
+    // records, and how Cap Camarat and the six Norwegian lighthouses got their
+    // entries). With no history kept it could never leave.
+    //
+    // Gardermoen - Vardåsen is a 445 m hilltop 20 nm out, and it being kept is
+    // correct under the new rule even though it will never be fitted against.
+    // For frost in particular the extra rows are redundancy rather than
+    // insurance — that network keeps its own history back to 1885 and
+    // scripts/frost-backfill.ts can refill a gap — but one tier rule is worth
+    // more than a per-source exemption saving a few hundred rows a day.
     const kept = nearAnyVenue([
       at('frost:SN27780', 1.2),
-      at('frost:SN4685', 20),   // Gardermoen - Vardåsen, 445 m, probation
+      at('frost:SN4685', 20),
+      at('frost:SN4780', VENUE_NM + 2),   // and the bound still holds
     ], [venue('idle')])
-    expect(ids(kept)).toEqual(['frost:SN27780'])
+    expect(ids(kept)).toEqual(['frost:SN27780', 'frost:SN4685'])
+  })
+
+  it('keeps Météo-France RADOME, the case that forced the rule', () => {
+    // Cap Camarat is 4.1 nm from the Golfe de Saint-Tropez and IDLE_NM is 3,
+    // so it was dropped by 1.1 nm — while being both the nearest professional
+    // station to the venue and already carrying a TIER_EXCEPTION explaining
+    // its siting. It is probation, so it is archived and never fitted.
+    const kept = nearAnyVenue([at('mf-land:83101001', 4.1)], [venue('idle')])
+    expect(ids(kept)).toEqual(['mf-land:83101001'])
+    const d = tierFor(at('mf-land:83101001', 4.1))
+    expect(d.mayArchive).toBe(true)
+    expect(d.mayFit).toBe(false)
+  })
+
+  it('and a display-tier station is still NOT archived on tier alone', () => {
+    // The line the new rule must not cross. 250 of the 301 public Davis
+    // gardens are within 60 nm of a venue and they are the volume the bound
+    // exists for; only the named ARCHIVE_PREFIXES get past it.
+    const kept = nearAnyVenue([
+      at('wlmap:abc', 20),
+      at('piou:2217', 20),
+    ], [venue('idle')])
+    expect(kept).toEqual([])
+    expect(tierFor(at('wlmap:abc', 20)).mayArchive).toBe(false)
   })
 })
 

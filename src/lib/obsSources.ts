@@ -11,7 +11,7 @@ import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
   parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
   parsePortlog, parsePortlogLatestUrl, parseWeatherfile,
-  parseMfCsv, parseMfStationList, parseMfLand, latestPerStation, type MfStationMeta,
+  parseMfCsv, parseMfStationList, parseMfLand, parseMfMarine, latestPerStation, type MfStationMeta,
   parseMetOfficeLandObs, parseFrostObs,
   withinNm, type WindObs, type MetOfficeSite, type FrostSite,
 } from './windObs'
@@ -145,15 +145,34 @@ export function bbox(lat: number, lon: number, nm: number): [number, number, num
   return [r(lat - dLat), r(lon - dLon), r(lat + dLat), r(lon + dLon)]
 }
 
-async function get(url: string, headers: Record<string, string> = {}): Promise<Response> {
-  const r = await fetch(url, { headers: { 'User-Agent': UA, ...headers }, cache: 'no-store' })
+/**
+ * Every outbound call is BOUNDED, because none of them were.
+ *
+ * `fetch` with no signal waits as long as the far end likes, and the sources
+ * run one after another inside a 60 s function — so one hung endpoint does not
+ * slow the poll down, it ends it, and every source after the hung one stores
+ * nothing. aviationweather.gov served a 504 after 20 s on the day this was
+ * written, and the metar runner's wall time swung between 20 and 98 seconds
+ * run to run on the same fifteen boxes, which is the shape of an unbounded
+ * wait. 20 s is generous: ndbc, ffvl and frost all answer inside two.
+ */
+const GET_TIMEOUT_MS = 20_000
+
+async function get(
+  url: string, headers: Record<string, string> = {}, timeoutMs = GET_TIMEOUT_MS,
+): Promise<Response> {
+  const r = await fetch(url, {
+    headers: { 'User-Agent': UA, ...headers },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(timeoutMs),
+  })
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog' | 'weatherfile' | 'clubs' | 'mf-land'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog' | 'weatherfile' | 'clubs' | 'mf-land' | 'mf-marine'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile', 'clubs', 'mf-land']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog', 'weatherfile', 'clubs', 'mf-land', 'mf-marine']
 
 /**
  * What a runner needs to know besides its own endpoint: which venues are
@@ -192,27 +211,73 @@ const RUNNERS: Record<SourceName, (ctx: PollContext) => Promise<WindObs[]>> = {
   // stations went first and MMTJ vanished. Near a border that reads as "nothing
   // over there".
   //
-  // Sequentially because PARALLEL WAS TRIED AND WAS NOT FASTER. Eight boxes at
-  // once from Vercel took 20.1 s against 10.4 s and 16.9 s for the same eight
-  // in sequence; aviationweather.gov appears to throttle concurrent connections
-  // from one address, so the requests queue and nothing is gained for the extra
-  // moving parts. This is the slowest source either way, at roughly half the
-  // poll — well inside the function's 60 s budget. If venues ever double, the
-  // thing to try is a CONCURRENCY CAP of two or three, not full parallelism,
-  // and not a bigger box.
+  // TWO AT A TIME, which is the cap the previous note predicted would be the
+  // answer and is now measured. Full parallelism was tried and was not faster
+  // — eight boxes at once from Vercel took 20.1 s against 10.4 s and 16.9 s
+  // for the same eight in sequence, aviationweather.gov appearing to throttle
+  // concurrent connections from one address — so this is not that.
+  //
+  // What changed is the box: sized to VENUE_NM below, fifteen venues took
+  // 68.7 s in sequence, which is past the function's 60 s budget and would
+  // have cost every source after it, since collectObservations runs them one
+  // after another. Measured over the venue list on 2 Nov 2026: cap 1 68.7 s,
+  // cap 2 21.2 s, cap 4 15.9 s, all returning the same ~108 stations. Two is
+  // taken rather than four because the throttling above is real and the
+  // endpoint was flaky on the day — a 504 on one box and between 0 and 9 boxes
+  // failing per run — so the retry below matters more than the last 5 seconds.
   metar: async (ctx) => {
     const out: WindObs[] = []
     const seen = new Set<string>()
-    for (const v of ctx.venues) {
-      const { lat: la, lon: lo } = v
-      // An idle venue gets a small box: same one call, far less to parse.
-      const [a, b, c, d] = bbox(la, lo, keepRadiusNm(v))
-      try {
-        const r = await get(`https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`)
-        // Venues overlap, so the same station arrives more than once.
-        for (const o of parseMetar(await r.json())) if (!seen.has(o.id)) { seen.add(o.id); out.push(o) }
-      } catch { /* one venue's box failing must not lose the other seven */ }
+    const queue = [...ctx.venues]
+    // AND A DEADLINE FOR THE WHOLE SOURCE, which is the part that makes this
+    // safe rather than merely faster. Even bounded per request, fifteen boxes
+    // on a bad day can outlast the function — so workers stop taking new ones
+    // once the budget is spent and the source returns what it has. A partial
+    // METAR set is a thin trace; an overrun is no trace at all for every
+    // source that would have run after it.
+    const deadline = Date.now() + METAR_BUDGET_MS
+    const worker = async () => {
+      for (;;) {
+        const v = queue.shift()
+        if (!v || Date.now() > deadline) return
+        await oneBox(v)
+      }
     }
+    const oneBox = async (v: VenueDecision) => {
+      const { lat: la, lon: lo } = v
+      // THE BOX IS SIZED TO WHAT WE KEEP, NOT TO THE POLL RADIUS, and that was
+      // the bug that killed this source. It used to be keepRadiusNm(v), so an
+      // idle venue asked for a 3 nm box — "same one call, far less to parse",
+      // which is true and cost everything, because a METAR station is an
+      // AIRPORT and airports are not within 3 nm of a race area. The API
+      // answers 204 No Content to an empty box, parses to zero, and the source
+      // reports a clean `0 station(s)` run. Measured 2 Nov 2026: no metar row
+      // had been stored for 10 days, the last of them from a dense window;
+      // `bbox=50.7,-1.4,50.9,-1.2` is 204 while `bbox=50,-2,51,-1` returns
+      // EGHI, which is at 50.95 N — just outside the small box.
+      //
+      // Every metar id is `fit` by class, so nearAnyVenue keeps them to the
+      // full VENUE_NM anyway: asking for less than that could only ever throw
+      // away rows we had already decided were worth storing.
+      const [a, b, c, d] = bbox(la, lo, Math.max(keepRadiusNm(v), VENUE_NM))
+      const url = `https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const r = await get(url, {}, METAR_REQUEST_MS)
+          // 204 No Content for an empty box, which has no body to parse.
+          const rows = r.status === 204 ? [] : await r.json()
+          // Venues overlap, so the same station arrives more than once.
+          for (const o of parseMetar(rows)) if (!seen.has(o.id)) { seen.add(o.id); out.push(o) }
+          return
+        } catch {
+          // One venue's box failing must not lose the others, and this endpoint
+          // drops boxes at random, so it gets one more go — but only if the
+          // budget has not already gone, or the retry is what overruns.
+          if (attempt === 2 || Date.now() > deadline) return
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: METAR_CONCURRENCY }, worker))
     return out
   },
 
@@ -320,7 +385,61 @@ const RUNNERS: Record<SourceName, (ctx: PollContext) => Promise<WindObs[]>> = {
     const [rel, bal] = await Promise.all([get(FFVL_RELEVES_URL), get(FFVL_BALISES_URL)])
     return parseFfvl(await rel.json(), await bal.json())
   },
+
+  /**
+   * Météo-France marine: BUOYS AND SHIPS, and this runner is new on 2 Nov 2026.
+   *
+   * It existed only in /api/obs/route.ts, which serves the live map — so the
+   * highest-trust observations in the whole system, the ones windObs calls "the
+   * prize" at trust 9 because a buoy sits on the water at the height the race
+   * is, were DRAWN and never STORED. mf-buoy, mf-ship and mf-land had zero rows
+   * between them, ever.
+   *
+   * Measured: 10 buoys published, 3 within 60 nm of a venue (BOUEE_VECCHIO
+   * 40.5 nm, BOUEE_AZUR 49.7, BOUEE_PACA 55.6), and 38 ships of which 7. The
+   * buoys are `fit`, so nearAnyVenue keeps them to the full VENUE_NM with no
+   * special case. The ships are `probation` for a reason worth keeping — a
+   * moving platform's rows are each a DIFFERENT PLACE, so they are a record of
+   * the fleet and not of a station, and nothing should fit against them.
+   *
+   * One failing is not both failing, as in the route: a buoy feed outage should
+   * not cost the ships.
+   */
+  'mf-marine': async (_ctx) => {
+    const key = process.env.METEOFRANCE_API_KEY
+    if (!key) return []
+    const csv = async (path: string) => {
+      const r = await fetch(`${MF_DPOBS_BASE}${path}?format=csv`, {
+        headers: { apikey: key, 'User-Agent': UA },
+        signal: AbortSignal.timeout(60_000),
+      })
+      if (!r.ok) throw new Error(`mf ${path} ${r.status}`)
+      return r.text()
+    }
+    const buoys = async () => latestPerStation(parseMfMarine(parseMfCsv(await csv('/liste-bouees')), 'buoy'))
+    const ships = async () => {
+      const meta = parseMfStationList(await csv('/liste-bateaux'))
+      return latestPerStation(parseMfMarine(parseMfCsv(await csv('/bateaux')), 'ship', meta))
+    }
+    const [b, sh] = await Promise.allSettled([buoys(), ships()])
+    const out: WindObs[] = []
+    if (b.status === 'fulfilled') out.push(...b.value)
+    if (sh.status === 'fulfilled') out.push(...sh.value)
+    if (b.status === 'rejected' && sh.status === 'rejected') throw b.reason
+    return out
+  },
 }
+
+/** DPObs **v2**; v1 is SUSPENDED and answers 500 on every path. */
+const MF_DPOBS_BASE = 'https://public-api.meteofrance.fr/public/DPObs/v2'
+
+// Measured over the venue list, 2 Nov 2026: one box at a time took 68.7 s,
+// two 21.2 s and four 15.9 s, all returning the same ~108 stations. Three is
+// the middle of the range the earlier note predicted would work, and the
+// throttling it measured is why this is not simply all fifteen at once.
+const METAR_CONCURRENCY = 3
+const METAR_REQUEST_MS = 12_000
+const METAR_BUDGET_MS = 35_000
 
 /** data.gouv.fr resource ids for the FFVL beacon dataset. Keyless by design. */
 export const FFVL_BALISES_URL = 'https://www.data.gouv.fr/api/1/datasets/r/8d795154-9145-4ab2-99de-6768a36f31ea'
@@ -819,6 +938,23 @@ export function nmToNearestVenue(lat: number, lon: number): number {
  * within 60 nm of all 15 venues is about 70 stations a poll against 27 today —
  * some 3.4k rows a day where a dense day is 12.6k.
  *
+ * THE TEST IS `mayArchive`, NOT `mayFit`, and that distinction cost real data.
+ * It used to be mayFit, which is true only for `fit` — so every PROBATION
+ * station beyond 3 nm was dropped when idle, and probation is where the
+ * professional-but-unchecked networks live. Measured 2 Nov 2026 on one fetch
+ * with both filters applied to the same stations: of 26 Météo-France RADOME
+ * stations within 60 nm of a venue, ZERO survived, and the nearest one lost
+ * was CAP CAMARAT at 4.1 nm — the station this file's own comment calls the
+ * single most useful one at St Tropez, dropped by 1.1 nm. Frost lost 12, the
+ * WeatherLink embeds 4, Port-Log 3, the Met Office 3, the clubs 3.
+ *
+ * Probation is meant to be a STAGE: a station leaves it when somebody checks
+ * its siting against its history, which is what TIER_EXCEPTIONS records. With
+ * no history kept it could never leave, so the tier was a sentence rather than
+ * a stage. `display` still may not be archived — that is where the 250 Davis
+ * gardens and 34 Pioupiou beacons are, and they are the volume the bound
+ * exists for.
+ *
  * A THIRD CLAUSE, for sources whose UPSTREAM KEEPS NOTHING. See
  * ARCHIVE_PREFIXES below: those are kept to the full VENUE_NM whatever their
  * tier, because for them a reading not stored is not merely a thinner trace,
@@ -830,7 +966,7 @@ export function nearAnyVenue(obs: WindObs[], decisions: VenueDecision[]): WindOb
     for (const o of withinNm(obs, v.lat, v.lon, keepRadiusNm(v))) keep.set(o.id, o)
     if (keepRadiusNm(v) >= VENUE_NM) continue // dense already keeps the lot
     for (const o of withinNm(obs, v.lat, v.lon, VENUE_NM)) {
-      if (tierFor(o).mayFit || archiveOnly(o.id)) keep.set(o.id, o)
+      if (tierFor(o).mayArchive || archiveOnly(o.id)) keep.set(o.id, o)
     }
   }
   return Array.from(keep.values())

@@ -62,6 +62,34 @@ describe('class defaults', () => {
   })
 })
 
+describe('mayArchive is a weaker test than mayFit', () => {
+  it('lets probation be KEPT while refusing to let it be COMPUTED FROM', () => {
+    // The two permissions were one, and probation paid for it: a station whose
+    // siting has not been checked could never accumulate the history somebody
+    // would need in order to check it.
+    expect(OBS_TIERS.fit.mayFit).toBe(true)
+    expect(OBS_TIERS.fit.mayArchive).toBe(true)
+    expect(OBS_TIERS.probation.mayFit).toBe(false)
+    expect(OBS_TIERS.probation.mayArchive).toBe(true)
+    expect(OBS_TIERS.display.mayFit).toBe(false)
+    expect(OBS_TIERS.display.mayArchive).toBe(false)
+  })
+
+  it('carries both on every decision, including the exceptions and the demotions', () => {
+    const camarat = tierFor({ id: 'mf-land:83101001' } as never)
+    expect(camarat.tier).toBe('probation')
+    expect(camarat.mayFit).toBe(false)
+    expect(camarat.mayArchive).toBe(true)
+    // A fit-tier station demoted for being inland keeps the archive permission.
+    const inland = tierFor({ id: 'wlmap:x' } as never, { seaNm: 10 })
+    expect(inland.mayArchive).toBe(false)      // display by class, not demoted
+    const demoted = tierFor({ id: 'ndbc:41001' } as never, { seaNm: 10 })
+    expect(demoted.tier).toBe('probation')
+    expect(demoted.mayFit).toBe(false)
+    expect(demoted.mayArchive).toBe(true)
+  })
+})
+
 describe('an unknown source is display, never fit', () => {
   it('defaults an unclassified prefix to display and says so', () => {
     // Defaulting a NEW source into the fitting set is the one mistake that

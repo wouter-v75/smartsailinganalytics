@@ -40,21 +40,44 @@ import type { WindObs } from './windObs'
 
 export type ObsTier = 'fit' | 'probation' | 'display'
 
-export const OBS_TIERS: Record<ObsTier, { label: string; mayFit: boolean; note: string }> = {
+/**
+ * `mayFit` is the permission to be COMPUTED FROM. `mayArchive` is the
+ * permission to be KEPT, and they are not the same question — which is the
+ * thing this file got wrong for `probation`.
+ *
+ * A probation station is a real instrument whose SITING has not been checked.
+ * The only way one is ever promoted is for somebody to have its history and
+ * check it, and `TIER_EXCEPTIONS` below is the mechanism — Cap Camarat and the
+ * six Norwegian lighthouses all got there that way. Keeping only 3 nm of
+ * probation data means a probation station can never graduate, so the tier
+ * stops being a stage and becomes a sentence.
+ *
+ * `display` is different and stays false: "draw it, never compute from it" is
+ * a judgement about the instrument, and the 301 public Davis gardens are the
+ * volume the keep radius exists to bound. The one display-tier source that is
+ * archived anyway is named explicitly in obsSources' ARCHIVE_PREFIXES, on the
+ * separate ground that its upstream keeps nothing at all.
+ */
+export const OBS_TIERS: Record<ObsTier, {
+  label: string; mayFit: boolean; mayArchive: boolean; note: string
+}> = {
   fit: {
     label: 'Fit',
     mayFit: true,
+    mayArchive: true,
     note: 'professionally sited and maintained; may be fitted against',
   },
   probation: {
     label: 'Probation',
     mayFit: false,
+    mayArchive: true,
     note: 'a real instrument with compromised siting or incomplete metadata — timing and '
       + 'gradient yes, absolute bias no, until something has checked it',
   },
   display: {
     label: 'Display only',
     mayFit: false,
+    mayArchive: false,
     note: 'draw it, never compute from it',
   },
 }
@@ -189,6 +212,8 @@ export const FIT_MAX_SEA_NM = 2
 export interface TierDecision {
   tier: ObsTier
   mayFit: boolean
+  /** Whether its history is worth keeping, which is a weaker test than mayFit. */
+  mayArchive: boolean
   why: string
 }
 
@@ -212,7 +237,12 @@ export function tierFor(
   const id = String(obs.id || '')
   const exception = TIER_EXCEPTIONS[id]
   if (exception) {
-    return { tier: exception.tier, mayFit: OBS_TIERS[exception.tier].mayFit, why: exception.why }
+    return {
+      tier: exception.tier,
+      mayFit: OBS_TIERS[exception.tier].mayFit,
+      mayArchive: OBS_TIERS[exception.tier].mayArchive,
+      why: exception.why,
+    }
   }
 
   const prefix = prefixOf(id)
@@ -232,11 +262,12 @@ export function tierFor(
     return {
       tier: 'probation',
       mayFit: false,
+      mayArchive: OBS_TIERS.probation.mayArchive,
       why: `${why}, but measured ${seaNm} nm from the sea — too far inland to fit against`,
     }
   }
 
-  return { tier, mayFit: OBS_TIERS[tier].mayFit, why }
+  return { tier, mayFit: OBS_TIERS[tier].mayFit, mayArchive: OBS_TIERS[tier].mayArchive, why }
 }
 
 /**
