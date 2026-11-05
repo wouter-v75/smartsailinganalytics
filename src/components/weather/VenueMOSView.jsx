@@ -5,7 +5,7 @@
 import React, { useState } from 'react'
 import { specFor } from './mos'
 import { FINDINGS, GUIDANCE, VENUE_LABEL, VENUE_KEYS } from './venueNotes'
-import { modelRows, truthLine, cvScheme, heightNote } from './mosSpecRows'
+import { modelRows, columnsFor, truthLine, cvScheme, heightNote } from './mosSpecRows'
 import ModelUpdates from './ModelUpdates'
 
 // MOS coefficients are keyed by Open-Meteo model id; show friendly labels.
@@ -34,6 +34,11 @@ export default function VenueMOSView() {
   //  of spec write three different names for the same numbers, and reading one
   //  of them is why San Juan and Long Beach showed a dash in every column.
   const rows = modelRows(spec)
+  //  Only draw a column some row can fill. A column of pure dashes reads as
+  //  missing data when the honest statement is that the measure does not exist
+  //  at this venue — "Dir agree" needs a boat heading, which a station has not.
+  const cols = columnsFor(rows)
+  const has = (c) => cols.includes(c)
   const bands = spec?.bands || []
   const truth = truthLine(spec)
 
@@ -96,11 +101,11 @@ export default function VenueMOSView() {
                 <th style={thL}>Model</th>
                 <th style={th}>Correction</th>
                 <th style={th}>Gain</th>
-                <th style={th}>Holds every block</th>
-                <th style={th}>Raw RMSE</th>
-                <th style={th}>MOS RMSE</th>
-                <th style={th}>Dir agree</th>
-                <th style={th}>n</th>
+                {has('holds') && <th style={th}>Holds every block</th>}
+                {has('rawRmse') && <th style={th}>Raw RMSE</th>}
+                {has('cvRmse') && <th style={th}>MOS RMSE</th>}
+                {has('agree') && <th style={th}>Dir agree</th>}
+                {has('n') && <th style={th}>n</th>}
               </tr>
             </thead>
             <tbody>
@@ -120,15 +125,28 @@ export default function VenueMOSView() {
                         {r.best}
                       </td>
                       <td style={td}>{r.gainPct != null ? fmt(r.gainPct, '%') : '–'}</td>
-                      <td style={{ ...td, color: r.holds === false ? '#F59E0B' : '#94A3B8' }}>
-                        {r.holds == null ? '–' : r.holds ? 'yes' : 'NO'}
-                      </td>
-                      <td style={td}>{fmt(r.rawRmse)}</td>
-                      <td style={{ ...td, color: isWin ? '#34D399' : '#E2E8F0', fontWeight: 700 }}>{fmt(r.cvRmse)}</td>
-                      <td style={td}>{r.agree != null ? `${Math.round(r.agree * 100)}%` : '–'}</td>
-                      <td style={td}>
-                        {fmt(r.n)}{r.blocks != null ? <span style={{ color: '#64748B' }}>{` / ${r.blocks}`}</span> : null}
-                      </td>
+                      {has('holds') && (
+                        <td style={{ ...td, color: r.holds === false ? '#F59E0B' : '#94A3B8' }}>
+                          {r.holds == null ? '–' : r.holds ? 'yes' : 'NO'}
+                        </td>
+                      )}
+                      {has('rawRmse') && <td style={td}>{fmt(r.rawRmse)}</td>}
+                      {has('cvRmse') && (
+                        <td style={{ ...td, color: isWin ? '#34D399' : '#E2E8F0', fontWeight: 700 }}>{fmt(r.cvRmse)}</td>
+                      )}
+                      {has('agree') && (
+                        <td style={td}>{r.agree != null ? `${Math.round(r.agree * 100)}%` : '–'}</td>
+                      )}
+                      {has('n') && (
+                        //  nEff on the hover, because a big n here is misleading on
+                        //  its own: an hourly series' autocorrelation makes 36,000
+                        //  hours behave like some 8,500 independent samples, and the
+                        //  bars are measured on that, not on n.
+                        <td style={td} title={r.nEff != null ? `effective n ${r.nEff} after autocorrelation` : undefined}>
+                          {fmt(r.n)}{r.blocks != null ? <span style={{ color: '#64748B' }}>{` / ${r.blocks}`}</span> : null}
+                          {r.nEff != null && <span style={{ color: '#64748B' }}>{` · eff ${r.nEff}`}</span>}
+                        </td>
+                      )}
                     </tr>
                     {/* A model whose coefficients are stored but unreachable must
                         say so on the row: otherwise the table advertises a gain
@@ -136,14 +154,14 @@ export default function VenueMOSView() {
                         mislead rather than merely omit. */}
                     {r.notApplied && (
                       <tr>
-                        <td colSpan={8} style={{ ...tdL, color: '#F59E0B', fontSize: 11, paddingTop: 0, borderTop: 'none' }}>
+                        <td colSpan={3 + cols.length} style={{ ...tdL, color: '#F59E0B', fontSize: 11, paddingTop: 0, borderTop: 'none' }}>
                           NOT APPLIED — {r.notApplied}
                         </td>
                       </tr>
                     )}
                     {r.why && !r.notApplied && (
                       <tr>
-                        <td colSpan={8} style={{ ...tdL, color: '#8A97A9', fontSize: 11, paddingTop: 0, borderTop: 'none' }}>
+                        <td colSpan={3 + cols.length} style={{ ...tdL, color: '#8A97A9', fontSize: 11, paddingTop: 0, borderTop: 'none' }}>
                           {r.why}
                         </td>
                       </tr>
@@ -164,14 +182,14 @@ export default function VenueMOSView() {
             <> The RMSE columns are empty for this venue because its fitting script recorded the
               gain and not the two rmse values — the gain IS the measurement, cross-validated.</>
           )}
-          {rows.some((r) => r.agree == null) && (
-            <> “Dir agree” is a boat-log measure (how often the model put the wind in the band the
-              boat was actually in) and has no meaning at a fixed station.</>
+          {!has('agree') && (
+            <> No “Dir agree” column: it counts how often the model put the wind in the band the
+              BOAT was in, and a fixed-station truth has no heading to agree with.</>
           )}
-          {rows.some((r) => !r.isRaw && r.holds == null) && (
-            <> “Holds every block” is blank here because this venue’s fitting script enforced that
-              bar without recording it: a form that failed it was written as “raw”, so a shipped
-              correction passed it.</>
+          {!has('holds') && (
+            <> No “Holds every block” column: this venue’s fitting script enforced that bar without
+              recording it — a form that failed it was written as “raw”, so a shipped correction
+              passed it.</>
           )}
         </div>
       </Card>

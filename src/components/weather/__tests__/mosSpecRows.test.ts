@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { calibratedVenues, specFor } from '../mos'
-import { modelRows, truthLine, cvScheme, heightNote } from '../mosSpecRows'
+import { modelRows, columnsFor, truthLine, cvScheme, heightNote } from '../mosSpecRows'
 
 const VENUES = calibratedVenues()
 
@@ -125,15 +125,27 @@ describe('the CV scheme is per venue, not one hardcoded sentence', () => {
 })
 
 describe('missing is for what was never stored, not for what moved', () => {
-  it('reports rmse missing only where the spec truly lacks it', () => {
-    // san-juan and long-beach never wrote raw_rmse/cv_rmse. Every other venue
-    // did, so a dash there would be a reading bug.
-    for (const key of ['san-juan', 'long-beach']) {
-      expect(modelRows(specFor(key)).every((r) => r.missing.includes('rmse')), key).toBe(true)
-    }
-    for (const key of ['sorrento', 'porto-cervo', 'st-tropez', 'oslofjord', 'viksfjord']) {
-      const withRmse = modelRows(specFor(key)).filter((r) => !r.missing.includes('rmse'))
+  it('EVERY venue now shows an rmse, which two of them did not', () => {
+    // san-juan and long-beach computed raw_rmse and cv_rmse, printed them and
+    // threw them away, so the table drew a dash for the whole venue. The
+    // fitting scripts now write them, and both specs were re-emitted on their
+    // original pinned windows (--to 2026-10-28) so only the fields changed.
+    // If a future venue's script forgets them, this fails here rather than on
+    // the site.
+    for (const key of VENUES) {
+      const rows = modelRows(specFor(key))
+      const withRmse = rows.filter((r) => r.rawRmse != null && r.cvRmse != null)
       expect(withRmse.length, `${key} shows no rmse at all`).toBeGreaterThan(0)
+    }
+  })
+
+  it('and reports the effective sample size where the fit measured it', () => {
+    // The number to read beside n: 33,263 hourly samples at Long Beach behave
+    // like 15,322 independent ones, and every bar is measured on that.
+    for (const key of ['san-juan', 'long-beach']) {
+      const rows = modelRows(specFor(key)).filter((r) => !r.isRaw)
+      expect(rows.every((r) => r.nEff != null), key).toBe(true)
+      for (const r of rows) expect(r.nEff!, `${key}/${r.id}`).toBeLessThan(r.n!)
     }
   })
 
@@ -210,6 +222,63 @@ describe('the written findings agree with what actually ships', () => {
       expect(unmentioned, `${key}: in the spec but not in the prose`).toEqual([])
     })
   }
+})
+
+describe('the refusal reason reads as a sentence either way', () => {
+  it('appends "not shipped" to a bare FORM NAME, as the Mediterranean specs store', () => {
+    const [r] = modelRows({ models: { x: { type: 'raw', not_shipped: 'bias_scale', why: 'the gain did not hold' } } })
+    expect(r.why).toBe('bias_scale not shipped — the gain did not hold')
+  })
+
+  it('and leaves a whole SENTENCE alone, as the newest two store', () => {
+    // Concatenating produced "...did not clear the bars not shipped".
+    const [r] = modelRows({ models: { x: { type: 'raw', not_shipped: 'best ladder gain 0.0% did not clear the bars' } } })
+    expect(r.why).toBe('best ladder gain 0.0% did not clear the bars')
+    expect(r.why).not.toMatch(/bars not shipped/)
+  })
+
+  it('reads correctly on the real San Juan ECMWF row', () => {
+    const r = modelRows(specFor('san-juan')).find((x) => x.id === 'ecmwf_ifs025')!
+    expect(r.isRaw).toBe(true)
+    expect(r.why).toBeTruthy()
+    expect(r.why).not.toMatch(/bars not shipped/)
+  })
+})
+
+describe('a column no row can fill is not drawn', () => {
+  // The user's second complaint after the first fix: "still a lot of dashes".
+  // Some of those were a reading bug (fixed by modelRows) and some were a
+  // measure that does not exist at that venue — and a column of pure dashes
+  // reads as missing data rather than as not-applicable.
+  it('offers no Dir agree column at a station venue, and does at a boat one', () => {
+    for (const key of ['san-juan', 'long-beach', 'oslofjord', 'viksfjord']) {
+      expect(columnsFor(modelRows(specFor(key))), key).not.toContain('agree')
+    }
+    for (const key of ['sorrento', 'porto-cervo', 'st-tropez']) {
+      expect(columnsFor(modelRows(specFor(key))), key).toContain('agree')
+    }
+  })
+
+  it('offers no Holds column where the script enforced it without recording it', () => {
+    for (const key of ['oslofjord', 'viksfjord']) {
+      expect(columnsFor(modelRows(specFor(key))), key).not.toContain('holds')
+    }
+    for (const key of ['sorrento', 'porto-cervo', 'st-tropez', 'san-juan', 'long-beach']) {
+      expect(columnsFor(modelRows(specFor(key))), key).toContain('holds')
+    }
+  })
+
+  it('drops a column only when EVERY row is empty, never when one is', () => {
+    // The distinction that matters: a venue where one model happens to lack a
+    // number must still draw the column for the others.
+    const rows = modelRows({ models: { a: { type: 'sector', cv_rmse: 2.1 }, b: { type: 'raw' } } })
+    expect(columnsFor(rows)).toContain('cvRmse')
+    expect(columnsFor(rows)).not.toContain('agree')
+  })
+
+  it('returns nothing for no rows rather than every column', () => {
+    expect(columnsFor([])).toEqual([])
+  })
 })
 
 describe('tolerates a spec it has never seen', () => {

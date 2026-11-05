@@ -64,52 +64,80 @@
   "models": {
     "ecmwf_ifs025": {
       "type": "raw",
-      "not_shipped": "best ladder gain 0.0% did not clear the bars"
+      "not_shipped": "best ladder gain 0.0% did not clear the bars",
+      "raw_rmse": 3.77,
+      "cv_rmse": 3.77,
+      "n": 17654,
+      "n_eff": 3313,
+      "blocks": 2
     },
     "icon_global": {
       "type": "sector_diurnal",
-      "a": 0.934236746611434,
-      "b": 3.7167493275105077,
+      "a": 0.9339145662622186,
+      "b": 3.73065266568326,
       "delta": {
-        "N": -1.1929912676794898,
-        "E": -1.0219823244458526,
-        "S": 1.3155028810127674,
+        "N": -1.2063424439442603,
+        "E": -1.0355895170365064,
+        "S": 1.3102977543622178,
         "W": 0
       },
       "global": 0,
       "c0": 0,
-      "c1": -0.17908724680034754,
-      "c2": 0.8509785641555346,
-      "measured_gain_pct": 25.4,
-      "holds_every_block": true
+      "c1": -0.17801038913401013,
+      "c2": 0.8473581941364637,
+      "measured_gain_pct": 25.3,
+      "holds_every_block": true,
+      "raw_rmse": 5.042,
+      "cv_rmse": 3.764,
+      "n": 28301,
+      "n_eff": 5651,
+      "blocks": 3
     },
     "gfs_global": {
       "type": "sector",
-      "a": 0.8525887937722669,
-      "b": 0.5583046616960621,
+      "a": 0.8527809442714245,
+      "b": 0.5526503046559084,
       "delta": {
-        "N": 0.7899698271765597,
-        "E": 1.086777834055907,
-        "S": 2.1739317810994554,
+        "N": 0.7968322092826206,
+        "E": 1.0878546994541187,
+        "S": 2.1853951189849723,
         "W": 0
       },
       "global": 0,
       "measured_gain_pct": 6,
-      "holds_every_block": true
+      "holds_every_block": true,
+      "raw_rmse": 3.774,
+      "cv_rmse": 3.547,
+      "n": 35964,
+      "n_eff": 8512,
+      "blocks": 4
     },
     "gfs_hrrr": {
       "type": "bias_scale",
-      "a": 0.9231127557112556,
-      "b": 0.7234690440198129,
+      "a": 0.9233281783125296,
+      "b": 0.7226491486983302,
       "measured_gain_pct": 1.6,
-      "holds_every_block": true
+      "holds_every_block": true,
+      "raw_rmse": 2.792,
+      "cv_rmse": 2.747,
+      "n": 35964,
+      "n_eff": 15608,
+      "blocks": 4
     },
     "gem_hrdps_continental": {
-      "type": "bias_scale",
-      "a": 0.9025258060916366,
-      "b": 1.321931501310619,
-      "measured_gain_pct": 2.7,
-      "holds_every_block": true
+      "type": "diurnal",
+      "a": 0.9048605669716451,
+      "b": 1.316674190516998,
+      "c0": 0,
+      "c1": -0.13692187271228345,
+      "c2": -0.21676931934302401,
+      "measured_gain_pct": 2.9,
+      "holds_every_block": true,
+      "raw_rmse": 3.285,
+      "cv_rmse": 3.191,
+      "n": 25654,
+      "n_eff": 7622,
+      "blocks": 3
     }
   }
 }

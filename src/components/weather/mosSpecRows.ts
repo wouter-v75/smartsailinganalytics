@@ -87,6 +87,12 @@ export interface ModelRow {
   /** Only the boat-log venues have this: a station has no heading to agree with. */
   agree: number | null
   n: number | null
+  /**
+   * Effective sample size after autocorrelation, where the fit recorded it.
+   * The number to read beside n: 36,000 hourly samples behave like some 8,500
+   * independent ones, and every bar is measured on this, not on n.
+   */
+  nEff: number | null
   blocks: number | null
   /** Did the gain hold in EVERY held-out block, rather than on average? */
   holds: boolean | null
@@ -106,6 +112,12 @@ export interface ModelRow {
 }
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/** A bare form name gets "not shipped" appended; a sentence is left alone. */
+function formatNotShipped(v: unknown): string | null {
+  if (typeof v !== 'string' || !v) return null
+  return /^[a-z][a-z_]*$/.test(v) ? `${v} not shipped` : v
+}
 
 /** One display row per model, in the spec's own order. */
 export function modelRows(spec: MosSpec | null | undefined): ModelRow[] {
@@ -131,18 +143,53 @@ export function modelRows(spec: MosSpec | null | undefined): ModelRow[] {
       cvRmse,
       agree,
       n,
+      nEff: num(m.n_eff),
       blocks: num(m.folds) ?? num(m.blocks),
       holds: typeof m.holds_every_regatta === 'boolean' ? m.holds_every_regatta
         : typeof m.holds_every_block === 'boolean' ? m.holds_every_block : null,
-      // `not_shipped` names the form that won the ladder and was refused;
-      // `why` says what refused it. Either alone is worth showing.
-      why: [m.not_shipped ? `${m.not_shipped} not shipped` : null, m.why || null]
+      // `not_shipped` is TWO different things across the generations, which
+      // is why this is not a plain concatenation. The Mediterranean specs put
+      // a FORM NAME there ("bias_scale") with the reason in `why`, so it
+      // reads "bias_scale not shipped — the gain did not hold...". The newest
+      // two put a whole SENTENCE there ("best ladder gain 0.0% did not clear
+      // the bars"), and appending "not shipped" to that produced "...did not
+      // clear the bars not shipped".
+      why: [formatNotShipped(m.not_shipped), m.why || null]
         .filter(Boolean).join(' — ') || null,
       notApplied: id in na ? String(na[id]) : null,
       slopeConstrained: m.slope_constrained === true,
       missing,
     }
   })
+}
+
+/**
+ * Which optional columns any row at this venue can actually fill.
+ *
+ * A column of pure dashes is worse than no column: it reads as missing data
+ * when the honest statement is that the measure does not exist here. "Dir
+ * agree" is the clear case — it counts how often the model put the wind in the
+ * band the BOAT was in, and a fixed station has no heading to agree with, so
+ * at every station venue that column can only ever be empty. Same for the
+ * stationarity flag at the two venues whose script enforced it without
+ * recording it.
+ *
+ * Model / Correction / Gain are always drawn: the first two cannot be absent
+ * and a venue with no gain anywhere has nothing to show at all.
+ */
+export type OptionalColumn = 'holds' | 'rawRmse' | 'cvRmse' | 'agree' | 'n'
+
+export function columnsFor(rows: readonly ModelRow[]): OptionalColumn[] {
+  const any = (f: (r: ModelRow) => unknown) => rows.some((r) => f(r) != null)
+  return ([
+    ['holds', (r: ModelRow) => r.holds],
+    ['rawRmse', (r: ModelRow) => r.rawRmse],
+    ['cvRmse', (r: ModelRow) => r.cvRmse],
+    ['agree', (r: ModelRow) => r.agree],
+    ['n', (r: ModelRow) => r.n],
+  ] as Array<[OptionalColumn, (r: ModelRow) => unknown]>)
+    .filter(([, f]) => any(f))
+    .map(([k]) => k)
 }
 
 /** Where the truth came from, in one line, whichever generation wrote it. */

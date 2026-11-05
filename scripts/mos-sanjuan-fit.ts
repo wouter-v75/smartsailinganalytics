@@ -608,9 +608,34 @@ async function main() {
     if (!c || !ladder) continue
     const pick = ladder.find((r) => r.type === c.type)
     if (!pick) continue
+    //  THE MEASUREMENT GOES IN THE SPEC, not only the console. These five were
+    //  computed and printed and then thrown away, so the app's Venue MOS table
+    //  drew a dash in its Raw RMSE, MOS RMSE and n columns for this venue --
+    //  the numbers existed, nothing carried them. nEff is the one that matters
+    //  for reading the rest: an hourly series' autocorrelation makes 33k hours
+    //  behave like a couple of thousand independent samples, so n alone
+    //  overstates what the fit had to work with.
+    const raw = ladder.find((r) => r.type === 'raw')
+    const measured = {
+      raw_rmse: raw ? Number(raw.cv.rmse.toFixed(3)) : undefined,
+      cv_rmse: Number(pick.cv.rmse.toFixed(3)),
+      n: pick.cv.n,
+      n_eff: Math.round(pick.cv.nEff),
+      blocks: pick.perBlock.length,
+    }
     models[model] = c.type === 'raw'
-      ? { type: 'raw', not_shipped: `best ladder gain ${c.gain.toFixed(1)}% did not clear the bars` }
-      : { ...pick.spec, measured_gain_pct: Number(c.gain.toFixed(1)), holds_every_block: c.holds }
+      ? {
+        type: 'raw',
+        not_shipped: `best ladder gain ${c.gain.toFixed(1)}% did not clear the bars`,
+        ...measured,
+        cv_rmse: measured.raw_rmse,   // nothing is applied, so raw IS the shipped rmse
+      }
+      : {
+        ...pick.spec,
+        measured_gain_pct: Number(c.gain.toFixed(1)),
+        holds_every_block: c.holds,
+        ...measured,
+      }
   }
   const spec = {
     venue: venue.key,

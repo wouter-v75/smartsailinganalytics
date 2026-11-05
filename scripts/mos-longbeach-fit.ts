@@ -1396,14 +1396,27 @@ async function main() {
       ols_ladder_slope: pick.spec.a == null ? null : Number(pick.spec.a.toFixed(3)),
       ols_rejected_because: c.olsTail,
     }
+    //  THE MEASUREMENT GOES IN THE SPEC, not only the console. raw_rmse,
+    //  cv_rmse and nEff were computed, printed and discarded, so the app's
+    //  Venue MOS table drew a dash in those columns for this venue -- the
+    //  numbers existed and nothing carried them. nEff is the one to read
+    //  beside n: an hourly series' lag-1 means 33,247 hours behave like about
+    //  3,900 independent samples, so n alone overstates the fit's evidence.
+    const measured = {
+      raw_rmse: Number(c.rawRmse.toFixed(3)),
+      cv_rmse: c.con ? Number(c.con.cv.rmse.toFixed(3)) : Number(c.rawRmse.toFixed(3)),
+      n: c.rows,
+      n_eff: c.con ? Math.round(c.con.cv.nEff) : null,
+    }
     models[model] = !c.con
       ? {
         type: 'raw',
         not_shipped: 'no range-preserving form cleared the bars',
-        fitted_span: c.span, blocks: c.blocks, ...cellNote, ...olsNote,
+        fitted_span: c.span, blocks: c.blocks, ...measured, ...cellNote, ...olsNote,
       }
       : {
         ...c.con.spec,
+        ...measured,
         slope_constrained: true,
         slope_constrained_why: 'a is pinned to 1 so the forecast keeps its range; the '
           + 'rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the '

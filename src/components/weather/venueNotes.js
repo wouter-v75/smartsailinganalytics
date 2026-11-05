@@ -86,14 +86,16 @@ export const FINDINGS = {
       'named sectors, because the funnelling is along the strait axis: E and W ' +
       'are the along-strait regimes and carry most of the hours.',
     best: 'ICON global takes sector+diurnal, the largest gain measured here at ' +
-      '25.4% — BUT IT IS NOT APPLIED, and the table says so on its own row. ' +
-      'Of what actually reaches the app: GFS global + sector 6%, HRDPS + ' +
-      'bias/scale 2.7%, HRRR + bias/scale 1.6%. ECMWF is raw — its best ' +
-      'ladder form gained 0.0% and cleared no bar.',
+      '25.3% (5.04→3.76 kn) — BUT IT IS NOT APPLIED, and the table says so on ' +
+      'its own row. Of what actually reaches the app: GFS global + sector 6.0% ' +
+      '(3.77→3.55), HRDPS + diurnal 2.9% (3.29→3.19), HRRR + bias/scale 1.6% ' +
+      '(2.79→2.75). ECMWF is raw — its best ladder form gained 0.0% and ' +
+      'cleared no bar.',
     rec: 'GFS global + sector. The honest summary is that no model is much ' +
-      'wrong here once lifted to mast height, which is why three of the four ' +
-      'corrections are under 3%. ICON global’s 25.4% is inert until ' +
-      'MODELS.ICON stops mapping to icon_eu, which does not reach the Pacific.',
+      'wrong here once lifted to mast height: two of the three APPLIED ' +
+      'corrections are under 3%, and HRRR is already the best raw model at ' +
+      '2.79 kn. ICON global’s 25.3% is inert until MODELS.ICON stops mapping ' +
+      'to icon_eu, which does not reach the Pacific.',
   },
   'long-beach': {
     regime: 'San Pedro Bay, outside the breakwater. Truth is Angels Gate ' +

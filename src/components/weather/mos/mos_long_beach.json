@@ -75,17 +75,21 @@
     "gfs_hrrr": {
       "type": "sector_diurnal",
       "a": 1,
-      "b": 1.4194819905046434,
+      "b": 1.41985328026659,
       "c0": 0,
-      "c1": -0.5355569041712155,
-      "c2": 0.13565811979679057,
+      "c1": -0.5348610079479685,
+      "c2": 0.13552955278255857,
       "delta": {
-        "N": -0.9279086066938098,
-        "E": -1.1888590914151511,
-        "S": -1.1244791250697055,
+        "N": -0.9267647915609483,
+        "E": -1.1884896055477414,
+        "S": -1.1254148914559976,
         "W": 0
       },
       "global": 0,
+      "raw_rmse": 2.55,
+      "cv_rmse": 2.311,
+      "n": 33263,
+      "n_eff": 15322,
       "slope_constrained": true,
       "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
       "form": "offset_sector_diurnal",
@@ -98,7 +102,7 @@
       "season_gain_pct": 17.8,
       "fitted_span": "2022-01-01..2026-10-28",
       "blocks": 5,
-      "paired_hours": 33247,
+      "paired_hours": 33263,
       "fitted_cell": [
         33.7277,
         -118.2422
@@ -107,22 +111,26 @@
       "ols_ladder_best": "sector_diurnal",
       "ols_ladder_gain_pct": 13.4,
       "ols_ladder_slope": 0.769,
-      "ols_rejected_because": "FAILS the tail bar — keeps 58% of raw's >=18 kn hits (71/122), 24+ err -5.4 vs raw -1.5 kn"
+      "ols_rejected_because": "FAILS the tail bar — keeps 58% of raw's >=18 kn hits (71/122), 24+ err -5.4 vs raw -1.5 kn (n 33)"
     },
     "ncep_nam_conus": {
       "type": "sector_diurnal",
       "a": 1,
-      "b": 2.6229592453758226,
+      "b": 2.6238399276895934,
       "c0": 0,
-      "c1": -0.8880271986369187,
-      "c2": -0.5885573139827894,
+      "c1": -0.8865570877160294,
+      "c2": -0.5842913875721532,
       "delta": {
-        "N": -0.34236274059647,
-        "E": -0.8485809271159573,
-        "S": -1.2017376357027003,
+        "N": -0.3418680080122498,
+        "E": -0.8498552266281039,
+        "S": -1.2034101257776042,
         "W": 0
       },
       "global": 0,
+      "raw_rmse": 3.468,
+      "cv_rmse": 2.665,
+      "n": 10098,
+      "n_eff": 2704,
       "slope_constrained": true,
       "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
       "form": "offset_sector_diurnal",
@@ -135,7 +143,7 @@
       "season_gain_pct": 31.4,
       "fitted_span": "2025-08-28..2026-10-28",
       "blocks": 2,
-      "paired_hours": 10082,
+      "paired_hours": 10098,
       "fitted_cell": [
         33.7277,
         -118.2422
@@ -143,16 +151,20 @@
       "fitted_cell_nm_from_truth": 0.74,
       "ols_ladder_best": "sector_diurnal",
       "ols_ladder_gain_pct": 24,
-      "ols_ladder_slope": 0.755,
-      "ols_rejected_because": "FAILS the tail bar — keeps 41% of raw's >=18 kn hits (7/17), 24+ err -8.9 vs raw -5.8 kn"
+      "ols_ladder_slope": 0.754,
+      "ols_rejected_because": "FAILS the tail bar — keeps 41% of raw's >=18 kn hits (7/17), 24+ err -8.9 vs raw -5.8 kn (n 10)"
     },
     "gfs_global": {
       "type": "diurnal",
       "a": 1,
-      "b": -0.5585793103479021,
+      "b": -0.5582516239531915,
       "c0": 0,
-      "c1": -0.6608224442152055,
-      "c2": -0.9240543096172454,
+      "c1": -0.6599171602143237,
+      "c2": -0.9231520585596645,
+      "raw_rmse": 3.141,
+      "cv_rmse": 2.987,
+      "n": 33263,
+      "n_eff": 7726,
       "slope_constrained": true,
       "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
       "form": "offset_diurnal",
@@ -165,7 +177,7 @@
       "season_gain_pct": 5.5,
       "fitted_span": "2022-01-01..2026-10-28",
       "blocks": 5,
-      "paired_hours": 33247,
+      "paired_hours": 33263,
       "fitted_cell": [
         33.6804,
         -118.2422
@@ -174,22 +186,26 @@
       "ols_ladder_best": "diurnal",
       "ols_ladder_gain_pct": 17.8,
       "ols_ladder_slope": 0.573,
-      "ols_rejected_because": "FAILS the tail bar — keeps 32% of raw's >=18 kn hits (58/182), 24+ err -8.0 vs raw 1.7 kn"
+      "ols_rejected_because": "FAILS the tail bar — keeps 32% of raw's >=18 kn hits (58/182), 24+ err -8.0 vs raw 1.7 kn (n 33)"
     },
     "icon_global": {
       "type": "sector_diurnal",
       "a": 1,
-      "b": 0.38360136094342634,
+      "b": 0.3838501206166545,
       "c0": 0,
-      "c1": -0.7675897612229905,
-      "c2": -1.0032482195349288,
+      "c1": -0.7675272553488113,
+      "c2": -1.0030103821611338,
       "delta": {
-        "N": 1.678057337027097,
-        "E": 0.3655460244562858,
-        "S": 1.0447781675068288,
+        "N": 1.6777516190869322,
+        "E": 0.36577251298110214,
+        "S": 1.045376043276158,
         "W": 0
       },
       "global": 0,
+      "raw_rmse": 3.374,
+      "cv_rmse": 3.134,
+      "n": 28057,
+      "n_eff": 5240,
       "slope_constrained": true,
       "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
       "form": "offset_sector_diurnal",
@@ -202,7 +218,7 @@
       "season_gain_pct": 12.5,
       "fitted_span": "2022-11-16..2026-10-28",
       "blocks": 4,
-      "paired_hours": 28041,
+      "paired_hours": 28057,
       "fitted_cell": [
         33.625,
         -118.25
@@ -211,22 +227,26 @@
       "ols_ladder_best": "diurnal",
       "ols_ladder_gain_pct": 22.3,
       "ols_ladder_slope": 0.529,
-      "ols_rejected_because": "FAILS the tail bar — keeps 22% of raw's >=18 kn hits (34/152), 24+ err -8.8 vs raw 0.5 kn"
+      "ols_rejected_because": "FAILS the tail bar — keeps 22% of raw's >=18 kn hits (34/152), 24+ err -8.8 vs raw 0.5 kn (n 32)"
     },
     "ecmwf_ifs025": {
       "type": "sector_diurnal",
       "a": 1,
-      "b": -1.1496929226020192,
+      "b": -1.1482940210282624,
       "c0": 0,
-      "c1": -1.2600512837685918,
-      "c2": -1.5880036337286314,
+      "c1": -1.258756641951035,
+      "c2": -1.5874665218296706,
       "delta": {
-        "N": 2.6362179414447664,
-        "E": 1.2323817249160771,
-        "S": 1.5796911633487143,
+        "N": 2.6369889846570516,
+        "E": 1.2358570440114496,
+        "S": 1.5775542997603036,
         "W": 0
       },
       "global": 0,
+      "raw_rmse": 3.906,
+      "cv_rmse": 3.515,
+      "n": 20817,
+      "n_eff": 3345,
       "slope_constrained": true,
       "slope_constrained_why": "a is pinned to 1 so the forecast keeps its range; the rmse-optimal slope shrinks the strong-wind tail away. Only the bias, the sector offsets and the diurnal harmonic are fitted.",
       "form": "offset_sector_diurnal",
@@ -239,7 +259,7 @@
       "season_gain_pct": 9.3,
       "fitted_span": "2024-02-03..2026-10-28",
       "blocks": 3,
-      "paired_hours": 20801,
+      "paired_hours": 20817,
       "fitted_cell": [
         33.5,
         -118.25
@@ -248,7 +268,7 @@
       "ols_ladder_best": "diurnal",
       "ols_ladder_gain_pct": 29.9,
       "ols_ladder_slope": 0.4,
-      "ols_rejected_because": "FAILS the tail bar — keeps 0% of raw's >=18 kn hits (0/86), 24+ err -12.6 vs raw -2.2 kn"
+      "ols_rejected_because": "FAILS the tail bar — keeps 0% of raw's >=18 kn hits (0/86), 24+ err -12.6 vs raw -2.2 kn (n 18)"
     }
   },
   "seasonal": {
@@ -324,7 +344,7 @@
         "slope_constrained": true,
         "form": "offset_sector_diurnal",
         "measured_gain_pct": 12,
-        "beats_year_round_by_kn": 0.097,
+        "beats_year_round_by_kn": 0.096,
         "warn_kept_pct": 151
       }
     }
