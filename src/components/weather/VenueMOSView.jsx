@@ -5,9 +5,11 @@
 import React, { useState } from 'react'
 import { specFor } from './mos'
 import { FINDINGS, GUIDANCE, VENUE_LABEL, VENUE_KEYS } from './venueNotes'
+import { modelRows, truthLine, cvScheme, heightNote } from './mosSpecRows'
 import ModelUpdates from './ModelUpdates'
 
 // MOS coefficients are keyed by Open-Meteo model id; show friendly labels.
+// The Pacific and Nordic ids were missing, so those venues showed raw keys.
 const MODEL_LABEL = {
   meteofrance_arome_france_hd: 'AROME (1.5 km)',
   meteofrance_arpege_europe: 'ARPEGE (11 km)',
@@ -15,6 +17,12 @@ const MODEL_LABEL = {
   ecmwf_ifs025: 'ECMWF',
   gfs_seamless: 'GFS',
   italia_meteo_arpae_icon_2i: 'ICON-2I (Italy 2 km)',
+  gfs_hrrr: 'HRRR (3 km)',
+  ncep_nam_conus: 'NAM (CONUS 5 km)',
+  gfs_global: 'GFS (global)',
+  icon_global: 'ICON global (13 km)',
+  gem_hrdps_continental: 'HRDPS (2.5 km)',
+  metno_nordic: 'MET Nordic (1 km)',
 }
 const fmt = (v, s = '') => (v == null || Number.isNaN(v) ? '–' : `${v}${s}`)
 
@@ -22,8 +30,12 @@ export default function VenueMOSView() {
   const [venue, setVenue] = useState('sorrento')
   const spec = specFor(venue)
   const f = FINDINGS[venue]
-  const models = spec ? Object.entries(spec.models) : []
+  //  Read through mosSpecRows, NOT straight off spec.models: three generations
+  //  of spec write three different names for the same numbers, and reading one
+  //  of them is why San Juan and Long Beach showed a dash in every column.
+  const rows = modelRows(spec)
   const bands = spec?.bands || []
+  const truth = truthLine(spec)
 
   return (
     <div style={{ padding: '16px 20px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -51,6 +63,16 @@ export default function VenueMOSView() {
         <div style={{ fontSize: 13, fontWeight: 800, color: '#34D399', marginBottom: 8 }}>
           Findings — {VENUE_LABEL[venue]}
         </div>
+        {truth && (
+          <div style={{ fontSize: 12, color: '#94A3B8', marginBottom: f ? 10 : 0, lineHeight: 1.5 }}>
+            <b style={{ color: '#7DD3FC' }}>Truth:</b> {truth}
+          </div>
+        )}
+        {!f && (
+          <div style={{ fontSize: 13, color: '#CBD5E1', lineHeight: 1.55 }}>
+            No written findings for this venue yet — the table below is the measurement.
+          </div>
+        )}
         {f && (
           <div style={{ fontSize: 13, color: '#CBD5E1', lineHeight: 1.55, display: 'flex', flexDirection: 'column', gap: 7 }}>
             <Line label="Regime" text={f.regime} />
@@ -73,38 +95,83 @@ export default function VenueMOSView() {
               <tr>
                 <th style={thL}>Model</th>
                 <th style={th}>Correction</th>
-                <th style={th}>Dir agree</th>
+                <th style={th}>Gain</th>
+                <th style={th}>Holds every block</th>
                 <th style={th}>Raw RMSE</th>
                 <th style={th}>MOS RMSE</th>
-                <th style={th}>Reduction</th>
+                <th style={th}>Dir agree</th>
                 <th style={th}>n</th>
               </tr>
             </thead>
             <tbody>
-              {models.map(([id, m]) => {
-                const best = m.best || m.type || 'raw'
-                const isWin = best !== 'raw'
+              {rows.map((r) => {
+                const isWin = !r.isRaw && !r.notApplied
                 return (
-                  <tr key={id}>
-                    <td style={tdL}>{MODEL_LABEL[id] || id}</td>
-                    <td style={{ ...td, color: isWin ? '#34D399' : '#64748B', fontWeight: isWin ? 700 : 400 }}>
-                      {best}
-                    </td>
-                    <td style={td}>{m.sector_agreement != null ? `${Math.round(m.sector_agreement * 100)}%` : '–'}</td>
-                    <td style={td}>{fmt(m.raw_rmse)}</td>
-                    <td style={{ ...td, color: isWin ? '#34D399' : '#E2E8F0', fontWeight: 700 }}>{fmt(m.cv_rmse)}</td>
-                    <td style={td}>{m.reduction_pct != null ? fmt(m.reduction_pct, '%') : '–'}</td>
-                    <td style={td}>{fmt(m.n)}</td>
-                  </tr>
+                  <React.Fragment key={r.id}>
+                    <tr>
+                      <td style={tdL}>
+                        {MODEL_LABEL[r.id] || r.id}
+                        {r.slopeConstrained && (
+                          <span title="slope pinned at 1 to protect the strong-wind tail"
+                                style={{ color: '#7DD3FC', fontSize: 10, marginLeft: 5 }}>a=1</span>
+                        )}
+                      </td>
+                      <td style={{ ...td, color: isWin ? '#34D399' : '#64748B', fontWeight: isWin ? 700 : 400 }}>
+                        {r.best}
+                      </td>
+                      <td style={td}>{r.gainPct != null ? fmt(r.gainPct, '%') : '–'}</td>
+                      <td style={{ ...td, color: r.holds === false ? '#F59E0B' : '#94A3B8' }}>
+                        {r.holds == null ? '–' : r.holds ? 'yes' : 'NO'}
+                      </td>
+                      <td style={td}>{fmt(r.rawRmse)}</td>
+                      <td style={{ ...td, color: isWin ? '#34D399' : '#E2E8F0', fontWeight: 700 }}>{fmt(r.cvRmse)}</td>
+                      <td style={td}>{r.agree != null ? `${Math.round(r.agree * 100)}%` : '–'}</td>
+                      <td style={td}>
+                        {fmt(r.n)}{r.blocks != null ? <span style={{ color: '#64748B' }}>{` / ${r.blocks}`}</span> : null}
+                      </td>
+                    </tr>
+                    {/* A model whose coefficients are stored but unreachable must
+                        say so on the row: otherwise the table advertises a gain
+                        that can never fire, which is the one way this panel can
+                        mislead rather than merely omit. */}
+                    {r.notApplied && (
+                      <tr>
+                        <td colSpan={8} style={{ ...tdL, color: '#F59E0B', fontSize: 11, paddingTop: 0, borderTop: 'none' }}>
+                          NOT APPLIED — {r.notApplied}
+                        </td>
+                      </tr>
+                    )}
+                    {r.why && !r.notApplied && (
+                      <tr>
+                        <td colSpan={8} style={{ ...tdL, color: '#8A97A9', fontSize: 11, paddingTop: 0, borderTop: 'none' }}>
+                          {r.why}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 )
               })}
             </tbody>
           </table>
         </div>
-        <div style={{ fontSize: 10, color: '#8A97A9', marginTop: 8 }}>
-          RMSE in knots, leave-one-regatta-out cross-validated. “raw” = no correction beats the raw model (shipped uncorrected).
+        <div style={{ fontSize: 10, color: '#8A97A9', marginTop: 8, lineHeight: 1.6 }}>
+          RMSE in knots, {cvScheme(spec)}. “raw” = no correction cleared the bars, so the model
+          ships uncorrected. <b>n</b> is paired samples / held-out blocks. {heightNote(spec)}
           {bands.length > 0 && (
             <> Sector bands: {bands.map((b) => `${b[0]} (${b[1]}–${b[2]}°)`).join(', ')}.</>
+          )}
+          {rows.some((r) => r.missing.includes('rmse')) && (
+            <> The RMSE columns are empty for this venue because its fitting script recorded the
+              gain and not the two rmse values — the gain IS the measurement, cross-validated.</>
+          )}
+          {rows.some((r) => r.agree == null) && (
+            <> “Dir agree” is a boat-log measure (how often the model put the wind in the band the
+              boat was actually in) and has no meaning at a fixed station.</>
+          )}
+          {rows.some((r) => !r.isRaw && r.holds == null) && (
+            <> “Holds every block” is blank here because this venue’s fitting script enforced that
+              bar without recording it: a form that failed it was written as “raw”, so a shipped
+              correction passed it.</>
           )}
         </div>
       </Card>
