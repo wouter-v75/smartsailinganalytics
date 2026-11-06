@@ -103,6 +103,47 @@ export interface SailWidths {
    * this replaces the worst interpolation the twist pipeline does.
    */
   quarter?: number | null
+  /**
+   * The LUFF's rake from vertical, degrees — the correction that turns a
+   * certificate width into the chord this file actually measures.
+   *
+   * Both rules girth a sail PERPENDICULAR TO THE LUFF. The chord measured from
+   * a photograph runs horizontally, luff to leech at one height. For a leech
+   * point at perpendicular distance w from a luff raked ρ, the horizontal
+   * distance to that luff is exactly
+   *
+   *     L = w / cos ρ
+   *
+   * and the derivation is worth keeping because the result is so much simpler
+   * than it looks: writing the leech point as the luff point at fraction f plus
+   * w perpendicular, L = f·HLU·sinρ + w·cosρ − (f·HLU·cosρ − w·sinρ)·tanρ, and
+   * the f·HLU terms cancel identically, leaving w(cos²ρ + sin²ρ)/cosρ. So it
+   * does not depend on the station, and — the part I expected to be messy — it
+   * does not depend on the LEECH's shape at all. It is just the horizontal
+   * distance from a point to a raked line.
+   *
+   * ONE THING THIS DOES NOT FIX, and it is worth knowing the size of. A girth
+   * is taken at a fraction of the LUFF, and its leech end is therefore LOWER
+   * than that fraction of the hoist by w·sinρ. On Ryujin the 50 % girth's leech
+   * end sits at 45.5 % of the hoist, the 25 % girth's at 18.5 %. So `w / cosρ`
+   * is the horizontal width at the GIRTH STATION's height — exactly right if a
+   * trim stripe is drawn through that point, which is the natural way to draw
+   * one, and wrong by the width's slope with height if the stripes are instead
+   * at round fractions of the hoist. At the half station that second term would
+   * be about 9 %, and in the opposite direction, so a stripe at 50 % of hoist
+   * wants ~4.29 m where this returns 4.67. Which convention the sailmaker used
+   * is a question about the sail, not about the geometry, and guessing it would
+   * be worse than the error it tries to remove.
+   *
+   * FOR THE JIB THIS MATTERS: the luff is the forestay, asin(J/HLU), which is
+   * 13.5° on Ryujin and 16.8-17.0° on Northstar and Baraka — worth 2.8 % to
+   * 4.4 %. FOR THE MAIN IT DOES NOT: the luff is the mast, raked 2-4°, worth
+   * 0.14 %, and no certificate carries the figure anyway. So this is set for the
+   * jib and left null for the main, which is also why the note that used to
+   * stand here — "a few degrees of rake, second-order, small" — was true of the
+   * main and wrongly applied to a sail whose luff is raked five times as far.
+   */
+  luffRakeDeg?: number | null
   /** At 1/2 the hoist: MHW / HHW. */
   half: number | null
   /** At 3/4: MTW / HTW. */
@@ -135,6 +176,11 @@ export interface WidthAt {
  * between the linear and quadratic readings, which on the main is ~0.1 m.
  */
 export function widthAt(w: SailWidths, fraction: number): WidthAt | null {
+  // The certificate's girth is perpendicular to the luff; the chord measured
+  // off a photograph is horizontal. L = w / cos ρ, exactly. See `luffRakeDeg`.
+  const rake = w.luffRakeDeg
+  const lift = rake != null && Number.isFinite(rake) && Math.abs(rake) < 60
+    ? 1 / Math.cos(rake * DEG) : 1
   const pts: [number, number][] = []
   if (w.foot != null) pts.push([0, w.foot])
   // ORR only. An IRC boat has nothing here and the 25 % station interpolates
@@ -151,11 +197,13 @@ export function widthAt(w: SailWidths, fraction: number): WidthAt | null {
   const exact = pts.find(([f]) => Math.abs(f - fraction) < 1e-9)
   if (exact) {
     return {
-      m: exact[1],
-      // A measurer's width, clicked off a certificate. 20 mm is generous.
-      sigmaM: 0.02,
+      m: exact[1] * lift,
+      // A measurer's width, clicked off a certificate. 20 mm is generous — and
+      // it scales with the correction, so the RELATIVE uncertainty is unchanged.
+      sigmaM: 0.02 * lift,
       source: 'certificate',
-      note: `measured at ${(fraction * 100).toFixed(0)} % of hoist`,
+      note: `measured at ${(fraction * 100).toFixed(0)} % of hoist`
+        + (lift !== 1 ? `, ÷cos ${rake!.toFixed(1)}° luff rake` : ''),
     }
   }
 
@@ -176,10 +224,11 @@ export function widthAt(w: SailWidths, fraction: number): WidthAt | null {
     sigmaM = Math.max(0.05, Math.abs(q - linear) / 2)
   }
   return {
-    m: linear,
-    sigmaM,
+    m: linear * lift,
+    sigmaM: sigmaM * lift,
     source: 'interpolated',
-    note: `interpolated between ${(lo[0] * 100).toFixed(0)} % and ${(hi[0] * 100).toFixed(0)} % of hoist`,
+    note: `interpolated between ${(lo[0] * 100).toFixed(0)} % and ${(hi[0] * 100).toFixed(0)} % of hoist`
+      + (lift !== 1 ? `, ÷cos ${rake!.toFixed(1)}° luff rake` : ''),
   }
 }
 

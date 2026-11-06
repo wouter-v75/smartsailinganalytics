@@ -1280,7 +1280,7 @@ export interface SailTrimResult {
  *                  longer inflated by the product of its baseline's two depth
  *                  factors — 45 % at a 25 m range, 1.3 % at 260 m
  */
-export const SAILTRIM_VERSION = 'sailtrim-v0.6-overlay-views'
+export const SAILTRIM_VERSION = 'sailtrim-v0.7-jib-luff-rake'
 
 export function toCsv(r: SailTrimResult): string {
   const head = [

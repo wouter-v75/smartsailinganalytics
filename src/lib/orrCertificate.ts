@@ -349,7 +349,13 @@ export function rigModelFromOrr(cert: OrrCertificate): RigModel {
       // `widthAt` otherwise interpolates, and on a mainsail that interpolation
       // is the worst one it does.
       main: { foot: e, quarter: cert.main.qw, half: cert.main.hw, threeQuarter: cert.main.tw, upper: cert.main.uw },
-      jib: { foot: hlp, quarter: cert.jib.qw, half: cert.jib.hw, threeQuarter: cert.jib.tw, upper: cert.jib.uw },
+      jib: {
+        foot: hlp, quarter: cert.jib.qw, half: cert.jib.hw, threeQuarter: cert.jib.tw, upper: cert.jib.uw,
+        // The girths are perpendicular to the LUFF and the forestay is raked
+        // asin(J/HLU) — 13.5° on Ryujin. widthAt divides by cos of it to get
+        // the horizontal chord a photograph measures.
+        luffRakeDeg: geom ? geom.forestayAngleDeg : null,
+      },
     },
     depths: {
       // E is to the outer band on the boom; aft of the mast, so negative.

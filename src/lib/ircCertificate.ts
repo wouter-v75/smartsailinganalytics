@@ -408,7 +408,14 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
     // HLP for the headsail — both already parsed, both the width at zero hoist.
     widths: {
       main: { foot: e, half: cert.rig.mhw, threeQuarter: cert.rig.mtw, upper: cert.rig.muw },
-      jib: { foot: cert.rig.hlp, half: cert.rig.hhw, threeQuarter: cert.rig.htw, upper: cert.rig.huw },
+      jib: {
+        foot: cert.rig.hlp, half: cert.rig.hhw, threeQuarter: cert.rig.htw, upper: cert.rig.huw,
+        // IRC girths the headsail perpendicular to the luff exactly as ORR
+        // does, so this is not an ORR-only correction: Northstar's forestay is
+        // raked 16.8° and Baraka's 17.0°, worth 4.3-4.4 % on every jib chord
+        // angle either boat has ever produced.
+        luffRakeDeg: geom ? geom.forestayAngleDeg : null,
+      },
     },
     depths: {
       // E is to the outer band on the boom; aft of the mast, so negative.
