@@ -698,7 +698,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC', logDat
           return (
             <ComparePanel
               title="🌫 Boundary-layer height (PBL — model comparison)"
-              point={pblPoint} hidden={NO_HIDDEN} cycles={cycles} legend
+              point={pblPoint} hidden={NO_HIDDEN} cycles={cycles} legend tz={resolvedTz}
               seriesFn={(h) => (h.boundary_layer_height && h.boundary_layer_height.some((x) => x != null && x > 0) ? h.boundary_layer_height : null)}
               yTitle="PBL height (m)" isDir={false} unit="m"
             />

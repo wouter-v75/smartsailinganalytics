@@ -9,7 +9,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import PlotlyChart from './PlotlyChart'
-import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight, labelWithCycle, localRacingWindow } from './openMeteo'
+import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight, labelWithCycle } from './openMeteo'
+import { wallStamp, racingWindowIn, tzAbbrev } from './venueTz'
 import { useModelCycles } from './modelCycles'
 import { matchVenue, specFor, mosSeries } from './mos'
 
@@ -98,14 +99,14 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
 
       <ComparePanel
         title="10 m wind speed"
-        point={point} hidden={hidden} cycles={cycles}
+        point={point} hidden={hidden} cycles={cycles} tz={resolvedTz}
         seriesFn={(h) => h.wind_speed_10m ? h.wind_speed_10m.map((v) => v != null ? kmhToKnots(v) : null) : null}
         yTitle="Wind speed (knots)" isDir={false}
       />
       {canHeights && (
       <ComparePanel
         title={`⛵ Wind speed at mast height (${mastHeight} m)`}
-        point={point} hidden={hidden} cycles={cycles}
+        point={point} hidden={hidden} cycles={cycles} tz={resolvedTz}
         seriesFn={(h, key) => {
           if (!h || !h.time) return null
           const hgts = MODELS[key].heights
@@ -120,7 +121,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
       {spec && canMos && (
         <ComparePanel
           title={`✓ MOS-corrected mast-height wind (30 m) — ${venue.replace('_', ' ')}`}
-          point={point} hidden={hidden} cycles={cycles}
+          point={point} hidden={hidden} cycles={cycles} tz={resolvedTz}
           seriesFn={(h, key) => {
             const mosId = MODELS[key].mosModel
             if (!mosId) return null
@@ -132,7 +133,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
       {canHeights && (
       <ComparePanel
         title="100 m wind speed  (ICON interpolated 80↔120 m)"
-        point={point} hidden={hidden} cycles={cycles}
+        point={point} hidden={hidden} cycles={cycles} tz={resolvedTz}
         seriesFn={(h, key) => speed100mSeries(h, key)}
         yTitle="Wind speed (knots)" isDir={false}
       />
@@ -140,7 +141,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
       {/* Boundary-layer height moved to the Stability tab. */}
       <ComparePanel
         title="10 m wind direction"
-        point={point} hidden={hidden} cycles={cycles}
+        point={point} hidden={hidden} cycles={cycles} tz={resolvedTz}
         seriesFn={(h) => h.wind_direction_10m || null}
         yTitle="Wind direction (°)" isDir
       />
@@ -148,7 +149,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
   )
 }
 
-export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, unit = 'kt', legend = false }) {
+export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, unit = 'kt', legend = false, tz = 'UTC' }) {
   const data = useMemo(() => {
     if (!point) return []
     const traces = []
@@ -156,11 +157,24 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
       if (hidden && hidden.has(key)) continue          // shared legend toggle
       const surf = point.surfaceByModel[key]
       if (!surf || !surf.hourly) continue
-      const y = seriesFn(surf.hourly, key)
-      if (!y) continue
+      const ySrc = seriesFn(surf.hourly, key)
+      if (!ySrc) continue
+      // VENUE wall-clock stamps, as strings, not Dates — see wallStamp().
+      // Plotly prints a Date in the BROWSER's zone (measured), and the models
+      // arrive in two shapes: Open-Meteo in the venue's zone with no suffix,
+      // SSA-Race in UTC with a Z. So `new Date(t)` made the Open-Meteo curves
+      // right by accident and drew the SSA-Race ones in the viewer's clock —
+      // hours apart on the same axis.
+      const x = []; const y = []
+      for (let i = 0; i < surf.hourly.time.length; i++) {
+        const s = wallStamp(surf.hourly.time[i], tz)
+        if (s == null) continue                        // unreadable stamp: drop the pair, never the alignment
+        x.push(s); y.push(ySrc[i] ?? null)
+      }
+      if (!x.length) continue
       const name = labelWithCycle(key, cycles)
       traces.push({
-        x: surf.hourly.time.map((t) => new Date(t)),
+        x,
         y,
         type: 'scatter',
         mode: isDir ? 'markers' : 'lines+markers',
@@ -175,7 +189,7 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
     }
     return traces
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [point, isDir, cycles, hidden])
+  }, [point, isDir, cycles, hidden, tz])
 
   // ±1σ shading across the visible model series (matches the forecast-deck
   // comparison band). For direction it uses CIRCULAR mean/σ so the band is
@@ -186,10 +200,14 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
     for (const tr of data) {
       for (let i = 0; i < tr.x.length; i++) {
         const v = tr.y[i]; if (v == null || Number.isNaN(v)) continue
-        const t = +tr.x[i]; if (!byT.has(t)) byT.set(t, []); byT.get(t).push(v)
+        // Key on the wall-clock STRING. `+tr.x[i]` was a number coercion of a
+        // Date; a stamp coerces to NaN, so every model would have shared one
+        // bucket and the band would have been drawn across the whole chart.
+        // ISO stamps sort lexicographically, which is also chronological.
+        const t = tr.x[i]; if (!byT.has(t)) byT.set(t, []); byT.get(t).push(v)
       }
     }
-    const ts = [...byT.keys()].sort((a, b) => a - b)
+    const ts = [...byT.keys()].sort()
     const D2R = Math.PI / 180
     const x = [], lo = [], hi = []
     for (const t of ts) {
@@ -200,11 +218,11 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
         const meanDir = ((Math.atan2(mu, mv) * 180 / Math.PI) + 360) % 360
         const R = Math.min(1, Math.hypot(mu, mv))
         const sd = R > 1e-6 ? Math.min(90, Math.sqrt(-2 * Math.log(R)) * 180 / Math.PI) : 90
-        x.push(new Date(t)); lo.push(meanDir - sd); hi.push(meanDir + sd)
+        x.push(t); lo.push(meanDir - sd); hi.push(meanDir + sd)
       } else {
         const m = a.reduce((s, v) => s + v, 0) / a.length
         const sd = Math.sqrt(a.reduce((s, v) => s + (v - m) * (v - m), 0) / a.length)
-        x.push(new Date(t)); lo.push(m - sd); hi.push(m + sd)
+        x.push(t); lo.push(m - sd); hi.push(m + sd)
       }
     }
     if (x.length < 2) return []
@@ -219,7 +237,9 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
   const layout = {
     // Open zoomed to the racing window; pan (drag) is the default tool, scroll to
     // zoom, and the data extends either side so you can pan to the full forecast.
-    xaxis: { title: 'Time', type: 'date', range: localRacingWindow(), autorange: false },
+    // Venue time on the axis, and the opening window is the VENUE's racing
+    // day — not the viewer's clock and not the viewer's date.
+    xaxis: { title: `Time (${tzAbbrev(tz)})`, type: 'date', range: racingWindowIn(tz), autorange: false },
     yaxis: {
       title: yTitle,
       rangemode: isDir ? 'normal' : 'tozero',

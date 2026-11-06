@@ -22,10 +22,10 @@ import {
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
   interpolateSpeedAtHeight,
-  labelWithCycle, withCycleLabel, localRacingWindow, venueHalf,
+  labelWithCycle, withCycleLabel, venueHalf,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
-import { resolveVenueTz, deviceTz, tzAbbrev, wallHour, formatWall } from './venueTz'
+import { resolveVenueTz, deviceTz, tzAbbrev, wallHour, formatWall, wallStamp, racingWindowIn } from './venueTz'
 import {
   matchVenue, specFor, mosSeries, correctionInfo, correctedWind30,
 } from './mos'
@@ -954,7 +954,7 @@ export default function ForecastView({
             </div>
           )}
           {viewMode === '2D' && showObs && selectedObs && (
-            <ObsStationPanel obs={selectedObs} hours={6} onClose={() => setSelectedObs(null)} />
+            <ObsStationPanel obs={selectedObs} hours={6} tz={tzResolved} onClose={() => setSelectedObs(null)} />
           )}
           {viewMode === '3D' && (
             (field && field.frames?.length)
@@ -1446,7 +1446,12 @@ function WindCompareChart({ windData, model, timezone }) {
       const meta = LOCATION_META.find((m) => m.key === key)
       const surf = point.surfaceByModel[model.key]
       if (!surf || !hasValidSpeed(surf.hourly)) continue
-      const xs = surf.hourly.time.map((t) => new Date(t))
+      // VENUE wall-clock stamps as STRINGS, not Dates: Plotly prints a bare
+      // stamp back unchanged and prints a Date in the VIEWER's zone (measured;
+      // see wallStamp() in venueTz.js). The active model here may be
+      // Open-Meteo (venue-local, no suffix) or SSA-Race (UTC with a Z), and
+      // only one of those two came out right through `new Date()`.
+      const xs = surf.hourly.time.map((t) => wallStamp(t, timezone))
       const s10 = surf.hourly.wind_speed_10m
       const sUp = surf.hourly[upParam]
       if (s10) {
@@ -1488,8 +1493,9 @@ function WindCompareChart({ windData, model, timezone }) {
   }, [windData, model.key, timezone])
 
   const layout = {
-    // Open zoomed to the racing window (10:00–16:00); pan to see the rest.
-    xaxis: { title: 'Time', type: 'date', range: localRacingWindow(), autorange: false },
+    // Open zoomed to the racing window (10:00-16:00) on the VENUE's day and
+    // clock; pan to see the rest.
+    xaxis: { title: `Time (${tzAbbrev(timezone)})`, type: 'date', range: racingWindowIn(timezone), autorange: false },
     yaxis: { title: 'Wind speed (knots)', rangemode: 'tozero' },
     dragmode: 'pan',
     hovermode: 'x unified',

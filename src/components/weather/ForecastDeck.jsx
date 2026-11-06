@@ -39,20 +39,18 @@ import { pointWindweightByHour, asBoxHour } from './windweightPoint'
 import { MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, captureField3DSeries } from './field3dUtils'
 import { loadPolarFromLS } from '../../lib/polarCalc'
 import { gradientText, favouredSide, vmgSides, enrichCourse } from './courseSides'
+import { DECK_MODELS, weightsFor, weightTableFor, weightNote } from './forecastWeights'
+import { tempUnitFor, fmtTemp } from './forecastUnits'
 
 const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
 const KN = 0.539957
 const OUTLOOK_MODELS = ['ARPEGE', 'ECMWF']; const OUTLOOK_DAYS = 4
-// HRRR / NAM: the local models at a North-American venue — region-gated, so they
-// only ever have data there, and were fetched but DROPPED from the deck before.
-const ALL_TODAY = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'METNO', 'HRRR', 'NAM', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA', 'DMI']
-// METNO sits with the other ~1 km local models. In Norway it is the local,
-// observation-corrected forecast (yr.no), and the only other models present are
-// the coarse globals plus DMI Harmonie — so it carries the consensus there.
-// HRRR is 3 km with hourly rapid refresh — the local model, like AROME. NAM is 12 km:
-// regional, better than the globals, well short of a 1-3 km model.
-const WEIGHTS = { ICONRACE: 7.0, ICONRACE_1KM: 8.5, AROME: 8.5, METNO: 8.5, HRRR: 8.5, NAM: 3.0, ECMWF: 1.3, ICON: 1.3, ARPEGE: 0.9, ITALIA: 1.5, DMI: 1.0 }
+// The deck's model list and per-venue weights now live in forecastWeights.ts —
+// HRRR / NAM were once "fetched but DROPPED from the deck", and HRDPS and GFS
+// were the two still being dropped. Read that file's header before changing a
+// number here; the weights are no longer the same at every venue.
+const ALL_TODAY = DECK_MODELS
 const RACE0 = 10; const RACE1 = 17   // the racing window, in venue-local hours
 const RACE_FILL = 'rgba(56,189,248,0.13)'
 const pad2 = (n) => String(n).padStart(2, '0')
@@ -156,8 +154,14 @@ function buildDaily(short, mastH, bandModels) {
     if (lt[i].slice(0, 10) !== today) break
     const hh = parseInt(lt[i].slice(11, 13), 10); if (hh < 8 || hh > 18) continue
     const s = mastKn(short.hourly, short.heights, mastH, i, short.mos, short.mosZ); if (s == null) continue
-    const tws = [{ v: s, w: WEIGHTS[short.key] || 1 }]; const dirs = []
-    const d0 = dirAt(short, i); if (d0 != null) dirs.push({ v: d0, w: WEIGHTS[short.key] || 1 })
+    // The PRIMARY model always votes, whatever the venue table says — a deck
+    // whose own headline model carried weight 0 would fall through to the
+    // ±2 kn placeholder band below with no sign that it had. weightsFor() is
+    // given `prefer: shortSel` so this cannot normally arise; it is a floor,
+    // not a weight.
+    const sw = short.weight > 0 ? short.weight : 1
+    const tws = [{ v: s, w: sw }]; const dirs = []
+    const d0 = dirAt(short, i); if (d0 != null) dirs.push({ v: d0, w: sw })
     for (const bm of bandModels) { const j = idxByKey(bm, lt[i].slice(0, 13)); if (j < 0) continue; const v = mastKn(bm.hourly, bm.heights, mastH, j, bm.mos, bm.mosZ); if (v != null) tws.push({ v, w: bm.weight }); const dd = dirAt(bm, j); if (dd != null) dirs.push({ v: dd, w: bm.weight }) }
     const band = weightedBand(tws) || [Math.max(0, Math.round(s) - 2), Math.round(s) + 2, s]
     // Headline TWS = the band CENTRE (weighted-model mean), clamped into [lo,hi],
@@ -646,9 +650,12 @@ async function buildDiagnostics(o) {
     if (ms.length) {
       const v = dMean(ms)
       spds.push(v)
-      // Same WEIGHTS the band and the comparison page use, so one model's standing
-      // is the same number everywhere in the deck.
-      twsEntries.push({ key: m.key, label: MODELS[m.key]?.label || m.key, v, w: m.weight || WEIGHTS[m.key] || 0.5 })
+      // The venue weight already resolved in mk(), so one model's standing is
+      // the same number everywhere in the deck. Read `m.weight` directly —
+      // `m.weight || <fallback>` resurrected a DE-DUPLICATED model, because 0
+      // is falsy, and the SSA pair would have voted twice here and once
+      // everywhere else.
+      twsEntries.push({ key: m.key, label: MODELS[m.key]?.label || m.key, v, w: m.weight })
     }
   }
   const spread = modelSpread(dirs, spds)
@@ -1040,6 +1047,10 @@ function buildDeck(P, d) {
   s = pptx.addSlide(); addTitle(s, 'Model comparison — TWS & TWD (±1σ)')
   if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, M, 1.35, CW, 5.4) }); else ph(s, M, 1.35, CW, 5.4, 'Wind-speed comparison')
   if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, M, 7.0, CW, 5.4) }); else ph(s, M, 7.0, CW, 5.4, 'Wind-direction (TWD) comparison')
+  // The weights the bands on this page were built from. Said out loud because
+  // every range on the deck is a weighted mean ±1σ and the footnotes only ever
+  // said "weighted".
+  if (d.weightNote) s.addText(d.weightNote, { x: M, y: FOOT, w: CW, h: 0.35, fontFace: FONT, fontSize: 10, color: GREY })
 
   // ── 8) Strategic considerations — AFTER the model evidence, not before it ────
   // (Moved here on purpose: you read the models, then the call that follows from
@@ -1430,17 +1441,26 @@ async function resolveApparelImages(list) {
 
 const SKY_PHRASE = { sunny: 'plenty of sunshine', cloud: 'sun and cloud', overcast: 'grey, overcast skies', showers: 'showers around', rain: 'rain likely' }
 
+// Everything here is stored in °C (Open-Meteo's unit, and SSA's everywhere
+// else); `a.tempUnit` decides only how it is PRINTED. At a Fahrenheit venue
+// each figure reads "54 °F (12 °C)", so the crew get their own unit and the
+// number still reconciles with the boat's instruments and the SST feeds.
 function apparelIntro(a, k) {
-  const rC = (c) => Math.round(c)
+  const u = a.tempUnit || 'C'
+  const t = (c) => fmtTemp(c, u)
   const lines = []
   if (a.tMornC != null && a.tMaxC != null) {
     const feel = k.coolMorn ? 'a touch cooler' : 'relatively mild'
     const sky = a.sky && SKY_PHRASE[a.sky] ? `, with ${SKY_PHRASE[a.sky]}` : ''
-    lines.push(`Temperatures are ${feel} this morning (${rC(a.tMornC)} °C), climbing to ${rC(a.tMaxC)} °C this afternoon${sky}.`)
+    // The °F form carries its own brackets, so it is set off with dashes
+    // instead of being nested in a second pair.
+    lines.push(u === 'F'
+      ? `Temperatures are ${feel} this morning — ${t(a.tMornC)} — climbing to ${t(a.tMaxC)} this afternoon${sky}.`
+      : `Temperatures are ${feel} this morning (${t(a.tMornC)}), climbing to ${t(a.tMaxC)} this afternoon${sky}.`)
   } else if (a.tMaxC != null || a.tMornC != null) {
-    lines.push(`Air temperature around ${rC(a.tMaxC ?? a.tMornC)} °C.`)
+    lines.push(`Air temperature around ${t(a.tMaxC ?? a.tMornC)}.`)
   }
-  if (a.seaC != null) lines.push(`Sea-water temperature ${rC(a.seaC)} °C.`)
+  if (a.seaC != null) lines.push(`Sea-water temperature ${t(a.seaC)}.`)
   return lines
 }
 
@@ -1591,7 +1611,10 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
   // (Nordics) → HRRR → NAM (North America) — then ECMWF. The regional models are
   // region-gated, so each only has data at its own venues; at Newport this picks
   // HRRR (3 km) where it used to fall through to ECMWF (9 km).
-  const SHORT_PREF = ['ICONRACE_1KM', 'ICONRACE', 'AROME', 'METNO', 'HRRR', 'NAM', 'ECMWF']
+  // HRDPS sits with HRRR, ahead of NAM: 2.5 km against 12, and at the San Juan
+  // Islands it is the only model whose levels (10/40/80/120 m) BRACKET a 30 m
+  // masthead rather than extrapolating to it from a 10/80 pair.
+  const SHORT_PREF = ['ICONRACE_1KM', 'ICONRACE', 'AROME', 'METNO', 'HRRR', 'HRDPS', 'NAM', 'ECMWF']
   const [outlookModel, setOutlookModel] = useState('ARPEGE'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState(''); const [aiErr, setAiErr] = useState(''); const [noteMsg, setNoteMsg] = useState('')
   const shortSel = shortModel && shortModels.includes(shortModel) ? shortModel : (SHORT_PREF.find((k) => shortModels.includes(k)) || shortModels[0] || '')
 
@@ -1614,9 +1637,28 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       // No-op where nothing is fitted: applyMOS returns the raw speed for type
       // 'raw', and applyMosToField passes the field straight through with no spec.
       const mosField = (key, f) => applyMosToField(f, spec, MODELS[key]?.mosModel)
-      const mk = (k, hourly, heights) => ({ key: k, hourly, lt: localTimes(hourly, tz), heights: heights || MODELS[k]?.heights || [10], mos: mosFor(k, hourly), mosZ, weight: WEIGHTS[k] || 0.5 })
       const sb = point1.surfaceByModel
-      const todayModels = ALL_TODAY.filter((k) => sb[k] && hasValidSpeed(sb[k].hourly)).map((k) => mk(k, sb[k].hourly))
+      // THIS VENUE's weights, resolved once over the models that actually
+      // returned data, and used for every band, mean and spread in the deck.
+      // `prefer: shortSel` keeps the deck's primary model out of the SSA
+      // de-duplication, so the model the tables are built around always votes.
+      const presentToday = ALL_TODAY.filter((k) => sb[k] && hasValidSpeed(sb[k].hourly))
+      // The outlook models are resolved in the same pass: they are fetched
+      // separately (4 days, their own request), so a weight looked up only
+      // over today's list would have dropped ECMWF to the venue's "other"
+      // value on the outlook page and its real one everywhere else.
+      const W = weightsFor(venueKey, [...new Set([...presentToday, ...OUTLOOK_MODELS])], { prefer: shortSel })
+      const vOther = weightTableFor(venueKey).other
+      const wOf = (k) => W[k] ?? vOther
+      // The model's STANDING at this venue, before any de-duplication. Used to
+      // rank a fallback model, where a de-duplicated 0 would mean "worst model
+      // present" rather than "already represented by its sibling".
+      const rankOf = (k) => weightTableFor(venueKey).models[k] ?? vOther
+      // `w` lets points 2 and 3 pass their OWN resolved weight: each point has
+      // its own set of models with data, so a de-duplication decided on point
+      // 1's set does not describe point 2's.
+      const mk = (k, hourly, heights, w) => ({ key: k, hourly, lt: localTimes(hourly, tz), heights: heights || MODELS[k]?.heights || [10], mos: mosFor(k, hourly), mosZ, weight: w != null ? w : wOf(k) })
+      const todayModels = presentToday.map((k) => mk(k, sb[k].hourly))
       const short = mk(shortSel, sb[shortSel].hourly)
       const dailyRows = buildDaily(short, mastHeight, todayModels.filter((m) => m.key !== shortSel))
 
@@ -1635,12 +1677,14 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         // under Open-Meteo's rate limit) used to be DROPPED without a word. Fall back
         // to the heaviest-weighted model that does have data there, and say so.
         const usable = (k) => psb[k] && hasValidSpeed(psb[k].hourly)
+        const pPresent = ALL_TODAY.filter(usable)
         const pKey = usable(shortSel)
           ? shortSel
-          : ALL_TODAY.filter(usable).sort((a, b) => (WEIGHTS[b] || 0) - (WEIGHTS[a] || 0))[0]
+          : pPresent.slice().sort((a, b) => rankOf(b) - rankOf(a))[0]
         if (!pKey) { console.warn(`[deck] point ${key}: no model returned data there — table omitted`); continue }
-        const pShort = mk(pKey, psb[pKey].hourly)
-        const pBand = ALL_TODAY.filter((k) => usable(k) && k !== pKey).map((k) => mk(k, psb[k].hourly))
+        const pW = weightsFor(venueKey, pPresent, { prefer: pKey })
+        const pShort = mk(pKey, psb[pKey].hourly, undefined, pW[pKey])
+        const pBand = pPresent.filter((k) => k !== pKey).map((k) => mk(k, psb[k].hourly, undefined, pW[k]))
         const rows = buildDaily(pShort, mastHeight, pBand)
         if (rows.length) extraDaily.push({ key, rows, coords: pt?.coords || null, fallbackModel: pKey !== shortSel ? (MODELS[pKey]?.label || pKey) : null })
       }
@@ -1793,6 +1837,8 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         tMornC: apparelWx?.tMornC ?? null, tMaxC: apparelWx?.tMaxC ?? null, cloudPct: apparelWx?.cloudPct ?? null,
         seaC: apparelWx?.seaC ?? (readVenueSST(point1) ?? null),
         region: venueRegion(p1lat, p1lon), sky: apparelWx?.sky ?? null,
+        // Which unit this venue's crew read. °F at San Juan, metric elsewhere.
+        tempUnit: tempUnitFor(venueKey),
       }
       // Pre-fetch this tier's North Sails imagery and inline it as data URLs so
       // the photos reliably bake into the pptx (empty -> the styled kit ladder shows).
@@ -1834,6 +1880,10 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })} ${tzAbbrev(tz)} · all times venue local (${tz})`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, extraDaily, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
+        weightNote: weightNote(
+          Object.fromEntries(todayModels.map((m) => [m.key, m.weight])),
+          (k) => MODELS[k]?.label || k,
+        ),
         wwRows, wwProfileImg, apparel,
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze through the racing window — edit', 'Racing window 10:00–16:00 — edit', 'Local effects — edit'],

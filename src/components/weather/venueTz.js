@@ -107,6 +107,57 @@ export function formatWall(t, tz, opts = {}) {
   return new Date(t).toLocaleString('en-GB', { ...opts, timeZone: tz || 'UTC' })
 }
 
+/**
+ * A model time as a NAIVE venue wall-clock stamp, "YYYY-MM-DDTHH:MM".
+ *
+ * This is the x value for a Plotly date axis, and its being a STRING is the
+ * whole point. Measured against plotly 2.24.1 (the version the app loads):
+ *
+ *   a naive stamp  -> parsed as a calendar value and printed straight back,
+ *                     so the axis reads exactly what you passed, in any zone
+ *   a Date object  -> printed in the BROWSER's zone
+ *
+ * The second line is what broke the charts, because the models arrive in two
+ * different time shapes and `new Date()` treats them differently:
+ *
+ *   Open-Meteo "2026-11-05T14:00"  no zone -> Date at BROWSER 14:00 -> "14:00"
+ *   SSA-Race   "2026-11-05T14:00Z"  UTC    -> Date at 14:00Z        -> browser clock
+ *
+ * So the Open-Meteo curves were right BY ACCIDENT — the browser zone cancels
+ * between the parse and the print — and the SSA-Race curves were drawn in the
+ * VIEWER's clock. On a comparison panel that put them hours apart on one axis;
+ * on the Boundary-layer chart, where SSA-Race is the only source there is, the
+ * entire series was in the viewer's clock and nothing was there to disagree
+ * with it. A stamp removes the accident along with the bug.
+ */
+export function wallStamp(t, tz) {
+  if (typeof t !== 'string' || t.length < 13) return null
+  if (!HAS_ZONE.test(t)) return t.slice(0, 16)
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(t))
+  const g = (k) => p.find((x) => x.type === k)?.value || ''
+  const day = `${g('year')}-${g('month')}-${g('day')}`
+  if (day.length !== 10) return null
+  return `${day}T${g('hour')}:${g('minute')}`
+}
+
+/**
+ * The racing window as naive venue wall-clock stamps, for a chart's opening
+ * x-range.
+ *
+ * The old version built it from `new Date().setHours(10)` — the BROWSER's
+ * 10:00 on the BROWSER's today. Two errors in one line at a venue nine hours
+ * away: the hours were the viewer's, and late in a European evening the date
+ * was already tomorrow at a venue still sailing yesterday afternoon.
+ */
+export function racingWindowIn(tz, now = new Date(), from = 10, to = 16) {
+  const { day } = nowInTz(tz, now)
+  const p2 = (n) => String(n).padStart(2, '0')
+  return [`${day}T${p2(from)}:00`, `${day}T${p2(to)}:00`]
+}
+
 /** The venue's current wall-clock date and hour — "now" for picking a row or frame. */
 export function nowInTz(tz, now = new Date()) {
   const p = new Intl.DateTimeFormat('en-CA', {

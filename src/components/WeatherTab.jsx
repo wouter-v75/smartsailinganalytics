@@ -174,7 +174,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
           <CompareView windData={windData} mastHeight={mastHeight} resolvedTz={resolvedTz} canMos={canMos} canHeights={canHeights} />
         )}
         {sub === 'currents' && (
-          <ChannelCurrents point1={forecastPersist?.locations?.['1']} />
+          <ChannelCurrents point1={forecastPersist?.locations?.['1']} resolvedTz={resolvedTz} />
         )}
         {sub === 'sounding' && (
           <SoundingView windData={windData} resolvedTz={resolvedTz} logData={logData} mastHeight={mastHeight} />

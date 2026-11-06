@@ -14,6 +14,7 @@ import { useScriptsOnce } from './useScriptOnce'
 import { addDarkBasemap } from './basemaps'
 import { toVelocityData, currentSourceAt } from './windField'
 import { MODELS } from './openMeteo'
+import { tzAbbrev } from './venueTz'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
@@ -22,7 +23,13 @@ const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity
 
 const KN = 1.94384
 const ZOOM_HIRES = 10            // at/above this zoom, load the 20 km native clip
-const TZ = 'UTC'                 // coverage spans UK + FR coasts — UTC is unambiguous
+// Times here were hardcoded UTC, reasoned as "coverage spans UK + FR coasts, so
+// UTC is unambiguous". True of the BOX and false of the reader: a tide table in
+// the wrong clock is the classic way to miss a gate, and every other time in
+// the Weather tab is venue time (venueTz.js). It is resolved from the point the
+// user actually picked, not from the coverage box, so the UK/FR ambiguity never
+// arises — and the zone is named on screen either way.
+const TZ_FALLBACK = 'UTC'
 
 // Channel current coverage (matches the box bbox) + ~50 km buffer for the gate.
 const COV = { west: -2.5, east: -1.0, south: 49.3, north: 50.8 }
@@ -68,10 +75,10 @@ async function getJSON(url) {
   return res.json()
 }
 
-function localLabel(iso) {
+function localLabel(iso, tz) {
   if (!iso) return ''
   const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`)
-  return d.toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TZ })
+  return d.toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz || TZ_FALLBACK })
 }
 
 // bilinear sample -> { kt, toward } (compass heading the flow goes TOWARD)
@@ -89,7 +96,8 @@ function sampleCurrent(field, idx, lat, lon) {
   return { kt: Math.hypot(u, v) * KN, toward: ((Math.atan2(u, v) * 180) / Math.PI + 360) % 360 }
 }
 
-export default function ChannelCurrents({ point1 = null }) {
+export default function ChannelCurrents({ point1 = null, resolvedTz = TZ_FALLBACK }) {
+  const tz = resolvedTz || TZ_FALLBACK
   const p1 = useMemo(() => asPoint(point1), [point1])
   const covered = !!(p1 && inCoverage(p1.lat, p1.lon))
   // 'amm15' | 'salishseacast' | null — the heading and the attribution below
@@ -194,13 +202,13 @@ export default function ChannelCurrents({ point1 = null }) {
     const updated = field?.updated ? Date.parse(field.updated) : null
     const now = Date.now()
     const stale = (Number.isFinite(last) && last < now - 3 * 3600e3) || (updated != null && now - updated > 36 * 3600e3)
-    const dfmt = (m) => new Date(m).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: TZ })
+    const dfmt = (m) => new Date(m).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: tz })
     const range = Number.isFinite(first)
       ? (new Date(first).toDateString() === new Date(last).toDateString() ? dfmt(first) : `${dfmt(first)} \u2192 ${dfmt(last)}`)
       : ''
-    const upd = updated ? new Date(updated).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ }) : null
+    const upd = updated ? new Date(updated).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz }) : null
     return { stale, range, upd }
-  }, [field])
+  }, [field, tz])
 
   // draw/update velocity layer
   useEffect(() => {
@@ -293,7 +301,7 @@ export default function ChannelCurrents({ point1 = null }) {
           </button>
           <input type="range" min={0} max={times.length - 1} value={idx}
             onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)) }} style={{ flex: 1 }} />
-          <span style={{ fontSize: 12, color: '#E2E8F0', minWidth: 116, textAlign: 'right' }}>{localLabel(times[idx])}</span>
+          <span style={{ fontSize: 12, color: '#E2E8F0', minWidth: 140, textAlign: 'right' }}>{localLabel(times[idx], tz)} {tzAbbrev(tz)}</span>
         </div>
       )}
 

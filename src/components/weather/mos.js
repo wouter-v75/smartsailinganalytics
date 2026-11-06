@@ -267,7 +267,10 @@ export function applyMOS(spec, mosModelId, ws30, twd, localHour, localMonth) {
   const base = m.a * ws30 + m.b
   if (t === 'bias_scale') return { ws: base, type: t, season }
   if (t === 'diurnal') {
-    if (localHour == null) return { ws: base, type: t, season }
+    // Number.isFinite, not `!= null`: the hour comes from a clock conversion
+    // that can fail, and a NaN hour would otherwise make the whole corrected
+    // wind NaN instead of falling back to the plain bias form.
+    if (!Number.isFinite(localHour)) return { ws: base, type: t, season }
     const ang = (2 * Math.PI * localHour) / 24
     return { ws: base + m.c0 + m.c1 * Math.sin(ang) + m.c2 * Math.cos(ang), type: t, season }
   }
@@ -288,7 +291,7 @@ export function applyMOS(spec, mosModelId, ws30, twd, localHour, localMonth) {
       const d = m.delta || {}
       ws += sec in d ? d[sec] : m.global
     }
-    if (localHour != null) {
+    if (Number.isFinite(localHour)) {
       const ang = (2 * Math.PI * localHour) / 24
       ws += (m.c0 || 0) + m.c1 * Math.sin(ang) + m.c2 * Math.cos(ang)
     }
@@ -303,7 +306,17 @@ export function applyMOS(spec, mosModelId, ws30, twd, localHour, localMonth) {
 // differed from the venue's.
 export function hourInTz(timeStr, tz) {
   const h = wallHour(timeStr, tz)
-  return Number.isFinite(h) ? h : new Date(timeStr).getHours()
+  if (Number.isFinite(h)) return h
+  // The old fallback was `new Date(timeStr).getHours()` — the VIEWER's hour,
+  // which is the very thing wallHour exists to avoid. It only fired on a stamp
+  // wallHour could not read, and then it did not fail: it quietly applied the
+  // diurnal correction at an hour taken from whoever was looking.
+  //
+  // NULL, not NaN. applyMOS degrades on `no hour`, and its guard is the one
+  // that has to agree with this: a NaN would have passed a `== null` test and
+  // gone into the harmonic, turning a wrong hour into a NaN wind — worse, and
+  // visible nowhere but a blank cell.
+  return null
 }
 
 /**

@@ -13,7 +13,7 @@
 // would be worthless.
 
 import { describe, expect, it } from 'vitest'
-import { fitHeightM, needsPreLift, correctedWind30, mosSeries, applyMOS, wind30, specFor, calibratedVenues } from '../mos'
+import { fitHeightM, needsPreLift, correctedWind30, mosSeries, applyMOS, wind30, specFor, calibratedVenues, hourInTz } from '../mos'
 import { applyMosToField } from '../windField'
 
 const KMH = 1 / 0.539957   // knots -> km/h, the payload's unit
@@ -246,5 +246,66 @@ describe('the 30 m-space paths refuse a spec that needs reordering', () => {
     expect(out).not.toBe(field)
     expect(Math.hypot(out.frames[0].u[0], out.frames[0].v[0]))
       .not.toBeCloseTo(Math.hypot(field.frames[0].u[0], field.frames[0].v[0]), 6)
+  })
+})
+
+// ── a clock conversion that fails must not poison the wind ───────────────────
+// hourInTz used to fall back to `new Date(t).getHours()` — the VIEWER's hour —
+// so an unreadable stamp quietly applied the diurnal correction at an hour
+// taken from whoever happened to be looking. It returns null now, and these
+// pin the other half of that contract: applyMOS has to degrade on a missing
+// hour rather than arithmetic its way to NaN.
+
+const SPEC_DIURNAL = {
+  venue: 'sorrento',
+  target_height_m: 30,
+  bands: [],
+  models: { metno_nordic: { type: 'diurnal', a: 1.0, b: 1.0, c0: 0, c1: 2, c2: -1 } },
+}
+const SPEC_SECTOR_DIURNAL = {
+  venue: 'san-juan',
+  target_height_m: 30,
+  bands: [['W', 225, 315]],
+  models: {
+    metno_nordic: {
+      type: 'sector_diurnal', a: 1.0, b: 1.0,
+      delta: { W: 0.5 }, global: 0, c0: 0, c1: 2, c2: -1,
+    },
+  },
+}
+
+describe('hourInTz refuses rather than guessing', () => {
+  it('reads a venue-local stamp', () => {
+    expect(hourInTz('2026-11-05T14:00', 'America/Los_Angeles')).toBe(14)
+  })
+  it('converts a UTC stamp into the venue hour', () => {
+    expect(hourInTz('2026-11-05T20:00Z', 'America/Los_Angeles')).toBe(12)
+  })
+  it('returns null — never the viewer\'s hour — for a stamp it cannot read', () => {
+    expect(hourInTz('2026-11-05', 'America/Los_Angeles')).toBeNull()
+    expect(hourInTz('', 'UTC')).toBeNull()
+  })
+})
+
+describe('a missing hour drops the diurnal term instead of producing NaN', () => {
+  for (const [label, h] of [['null', null], ['undefined', undefined], ['NaN', Number.NaN]] as const) {
+    it(`degrades to the plain bias form on a ${label} hour`, () => {
+      const d = applyMOS(SPEC_DIURNAL, 'metno_nordic', 10, 270, h as number, 6)
+      expect(d?.ws).toBe(11)                 // a*10 + b, harmonic dropped
+      expect(Number.isFinite(d?.ws)).toBe(true)
+    })
+    it(`keeps the SECTOR offset while dropping the harmonic on a ${label} hour`, () => {
+      // The two terms degrade independently — no hour must not cost the
+      // direction correction as well.
+      const d = applyMOS(SPEC_SECTOR_DIURNAL, 'metno_nordic', 10, 270, h as number, 11)
+      expect(d?.ws).toBe(11.5)               // a*10 + b + delta.W
+      expect(d?.sector).toBe('W')
+    })
+  }
+
+  it('still applies the harmonic when the hour IS known, so the guard is not a no-op', () => {
+    const d = applyMOS(SPEC_DIURNAL, 'metno_nordic', 10, 270, 0, 6)
+    expect(d?.ws).toBeCloseTo(11 + 0 * 2 - 1, 10)   // sin(0)=0, cos(0)=1 -> +c2
+    expect(d?.ws).not.toBe(11)
   })
 })

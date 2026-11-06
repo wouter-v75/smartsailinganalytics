@@ -20,12 +20,23 @@ const BOX = { w: 340, h: 96, left: 30, right: 8, top: 8, bottom: 16 }
 const AXIS = '#1E3A5A'
 const INK = '#94A3B8'
 
-function hhmm(ms) {
-  const d = new Date(ms)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+// Observation times are epoch ms; the label has to be the VENUE's clock, not
+// the viewer's. `d.getHours()` was the browser's, so a buoy beside the start
+// line read 17:20 on a laptop in Amsterdam for a sample taken at 08:20 local.
+function hhmm(ms, tz) {
+  try {
+    const p = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz || 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(ms))
+    const g = (k) => p.find((x) => x.type === k)?.value || ''
+    return `${g('hour')}:${g('minute')}`
+  } catch {
+    const d = new Date(ms)
+    return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+  }
 }
 
-function Axes({ t0, t1, ticks, max, unit, lines }) {
+function Axes({ t0, t1, ticks, max, unit, lines, tz }) {
   return (
     <>
       <rect x={BOX.left} y={BOX.top} width={BOX.w - BOX.left - BOX.right} height={BOX.h - BOX.top - BOX.bottom}
@@ -43,14 +54,14 @@ function Axes({ t0, t1, ticks, max, unit, lines }) {
           <line x1={xOf(t, t0, t1, BOX)} x2={xOf(t, t0, t1, BOX)} y1={BOX.h - BOX.bottom} y2={BOX.h - BOX.bottom + 3}
                 stroke={AXIS} strokeWidth="1" />
           <text x={xOf(t, t0, t1, BOX)} y={BOX.h - 4} textAnchor="middle"
-                style={{ font: '9px system-ui, sans-serif', fill: INK }}>{hhmm(t)}</text>
+                style={{ font: '9px system-ui, sans-serif', fill: INK }}>{hhmm(t, tz)}</text>
         </g>
       ))}
     </>
   )
 }
 
-export default function ObsStationPanel({ obs, hours = 6, onClose }) {
+export default function ObsStationPanel({ obs, hours = 6, onClose, tz = 'UTC' }) {
   const [points, setPoints] = useState(null)   // null = loading
   const [state, setState] = useState('loading')
 
@@ -165,7 +176,7 @@ export default function ObsStationPanel({ obs, hours = 6, onClose }) {
             wind &amp; gust, last {hours} h
           </div>
           <svg width={BOX.w} height={BOX.h} role="img" aria-label="wind speed and gust">
-            <Axes t0={geom.t0} t1={geom.t1} ticks={geom.ticks} max={geom.max} unit=""
+            <Axes t0={geom.t0} t1={geom.t1} ticks={geom.ticks} max={geom.max} unit="" tz={tz}
                   lines={[0, geom.max / 2, geom.max].map((v) => Math.round(v))} />
             {geom.gust && <polyline points={geom.gust} fill="none" stroke={colour} strokeWidth="1"
                                     strokeDasharray="3 2" opacity="0.75" />}
@@ -174,7 +185,7 @@ export default function ObsStationPanel({ obs, hours = 6, onClose }) {
 
           <div style={{ fontSize: 10.5, color: INK, marginTop: 4 }}>direction (true)</div>
           <svg width={BOX.w} height={BOX.h} role="img" aria-label="wind direction">
-            <Axes t0={geom.t0} t1={geom.t1} ticks={geom.ticks} max={360} unit="°"
+            <Axes t0={geom.t0} t1={geom.t1} ticks={geom.ticks} max={360} unit="°" tz={tz}
                   lines={[0, 90, 180, 270, 360]} />
             {/* One polyline per run: the series is cut where it crosses the
                 0/360 wrap, so a veer through north does not draw a line down

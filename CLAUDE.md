@@ -142,6 +142,25 @@ is literally suffixed `Z`) are all venue-local. Read any of them as UTC and the
 day is shifted by the venue offset — wrong calendar day, wrong log rows, wrong
 overlay. Convert explicitly, and say which offset you used.
 
+**A Plotly date axis prints a `Date` in the BROWSER's zone — so pass it a
+STRING.** Measured against plotly 2.24.1, the version the app loads: a naive
+stamp (`"2026-11-05T14:00"`) is parsed as a calendar value and printed straight
+back, in any zone, while a `Date` is printed in the viewer's clock. The Weather
+tab draws models that report time in TWO shapes — Open-Meteo answers in the
+venue's zone with NO suffix, SSA-Race `grid.json` in UTC with a `Z` — and
+`new Date(t)` therefore made the Open-Meteo curves right **by accident** (the
+browser zone cancels between the parse and the print) and drew the SSA-Race
+ones in the viewer's clock. On a comparison panel that put them hours apart on
+one axis; on the **Boundary-layer chart, where SSA-Race is the only source**,
+the whole series was in the viewer's clock with nothing on the page to
+contradict it — San Juan's first frame, `16:00:00Z`, is 08:00 on the water and
+read 16:00. Use `wallStamp(t, tz)` from `venueTz.js` for any chart x value and
+`racingWindowIn(tz)` for the opening zoom; `localRacingWindow()` is DELETED
+because it built the window from `new Date().setHours(10)` — the viewer's hours
+on the viewer's date, which late in a European evening is already tomorrow at a
+venue still sailing its afternoon. The deck was never affected: it converts
+every model onto one venue-local grid first, which is also the fix.
+
 **ψ was inflated on CLOSE shots, and the test suite could not see it.**
 `solvePsi` reads ψ off the image displacement between two centreplane landmarks
 and used to convert that displacement with ONE scale — the mast's. The two

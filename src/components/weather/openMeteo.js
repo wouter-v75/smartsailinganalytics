@@ -912,19 +912,15 @@ export async function fetchWindweight(domain, venue) {
 // to +`days` 00:00. Used to PIN the comparison-chart x-axes so a stray earlier
 // cycle (e.g. an old Icon-Race grid spanning yesterday) can't widen the view —
 // the window is always "00 today → 00 +N days" regardless of the data extent.
-export function localForecastWindow(days = 2) {
-  const start = new Date(); start.setHours(0, 0, 0, 0)
-  const end = new Date(start); end.setDate(end.getDate() + days)
-  return [start, end]
-}
-
-// Today's racing window [10:00, 16:00] local — default zoom for the comparison
-// charts (pannable to the full forecast either side).
-export function localRacingWindow() {
-  const a = new Date(); a.setHours(10, 0, 0, 0)
-  const b = new Date(); b.setHours(16, 0, 0, 0)
-  return [a, b]
-}
+// localRacingWindow() / localForecastWindow() lived here and are GONE on
+// purpose (2026-11-05). Both built their window from `new Date().setHours(...)`
+// — the VIEWER's clock on the VIEWER's date — and handed Plotly `Date` objects.
+// Two errors in one line at a venue nine hours away: the hours belonged to
+// whoever was looking, and late in a European evening the date had already
+// rolled over at a venue still sailing its afternoon. Use
+// `racingWindowIn(tz)` from venueTz.js, which returns naive venue wall-clock
+// stamps. Deleted rather than deprecated so nobody reaches for the old one:
+// neither function had any symptom a reader could see.
 
 // Init-cycle tag like "00z" / "06z" from a unix-seconds run-initialisation time.
 export function cycleTagFromSec(sec) {
