@@ -23,6 +23,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { deriveBaselines, MERGE_RANK, type RigModel, type ScaleRef } from './rigModel'
+import type { SailWidths } from './sailTwist'
 
 /**
  * Which of two numbers for the same dimension to believe.
@@ -67,7 +68,36 @@ export function mergeModels(current: RigModel, incoming: RigModel, supersede = f
   for (const k of Object.keys(incoming.depths) as (keyof RigModel['depths'])[]) {
     out.depths[k] = better(current.depths[k], incoming.depths[k], supersede)!
   }
-  out.widths = { ...(incoming.widths || {}), ...(current.widths || {}) }
+  // PER FIELD, not per sail. This used to be
+  //     { ...(incoming.widths || {}), ...(current.widths || {}) }
+  // which merges at the {main, jib} level, so a stored sail's widths object
+  // replaced the incoming one ENTIRE — and any field the stored one predates
+  // was dropped on every merge, for ever. That is how Ryujin went in with no
+  // `luffRakeDeg` twice from a file that had it: the first seed stored widths
+  // without the field, and `--merge` then kept that object whole.
+  //
+  // It is the same trap as the one CLAUDE.md records about --merge itself ("a
+  // boat that already has a stored model is left alone, so a new measurement
+  // never lands"), one level further down, and it bites exactly when the shape
+  // GAINS a field — which is the only time anyone would not be looking.
+  //
+  // The rule is unchanged where both have a value: the stored number wins,
+  // because it is the boat's own measurement. Incoming fills only what the
+  // stored sail has nothing for.
+  const mergeWidths = (cur?: SailWidths, inc?: SailWidths): SailWidths | undefined => {
+    if (!cur) return inc
+    if (!inc) return cur
+    const merged: SailWidths = { ...inc, ...cur }
+    for (const k of Object.keys(inc) as (keyof SailWidths)[]) {
+      // An explicit null in the stored sail is an absence, not a measurement.
+      if (cur[k] == null && inc[k] != null) (merged as unknown as Record<string, unknown>)[k] = inc[k]
+    }
+    return merged
+  }
+  out.widths = {
+    main: mergeWidths(current.widths?.main, incoming.widths?.main),
+    jib: mergeWidths(current.widths?.jib, incoming.widths?.jib),
+  }
   out.notes = [current.notes, incoming.notes].filter(Boolean).join(' · ')
   return deriveBaselines(out)
 }

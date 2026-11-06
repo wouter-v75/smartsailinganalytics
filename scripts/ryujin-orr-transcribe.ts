@@ -209,6 +209,18 @@ console.log(`  area check   main ${mainArea?.toFixed(1)} vs ${cert.main.areaM2} 
 // that interpolation is its worst.
 console.log(`  MQW/HQW present, so the 25 % stripe is MEASURED rather than interpolated`)
 
+// A model whose jib has no luff rake is one the twist maths will silently not
+// correct — and the file outlives the session that wrote it. This exact thing
+// happened: the JSON was generated before rigModelFromOrr learned to set the
+// rake, seeded faithfully, and Ryujin went in at 0°. Refuse rather than write a
+// model that looks complete.
+if (model.widths?.jib?.luffRakeDeg == null) {
+  console.error('\nREFUSING to write: the jib carries no luffRakeDeg.')
+  console.error('Both rules girth perpendicular to the luff; without the rake the')
+  console.error('twist maths uses a width 4-5 % too small and says nothing.')
+  process.exit(1)
+}
+
 if (outDir) {
   mkdirSync(outDir, { recursive: true })
   const p = join(outDir, 'ryujin.rigmodel.json')

@@ -92,3 +92,50 @@ describe('the jib girth is perpendicular to the luff', () => {
     expect(widthAt({ ...RYUJIN_JIB, luffRakeDeg: Number.NaN }, 0.5)!.m).toBe(4.540)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The merge has to let a NEW field through.
+//
+// mergeModels merged widths at the {main, jib} level, so a stored sail's widths
+// object replaced the incoming one entire and any field the stored one predated
+// was dropped — on every merge, for ever. Ryujin went in with no luffRakeDeg
+// twice from a file that had it, because the first seed stored widths without
+// the field and `--merge` then kept that object whole.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { mergeModels } from '../rigModelMerge'
+import { defaultRigModel } from '../rigModel'
+
+describe('mergeModels — widths', () => {
+  const withJib = (jib: Record<string, unknown>) => ({
+    ...defaultRigModel('Ryujin'),
+    widths: { jib: jib as never, main: { foot: 6.528, half: 4.370 } as never },
+  })
+
+  it('takes a field the stored sail has never heard of', () => {
+    const current = withJib({ foot: 8.52, half: 4.54 })                      // seeded before the field existed
+    const incoming = withJib({ foot: 8.52, half: 4.54, luffRakeDeg: 13.498, quarter: 6.62 })
+    const out = mergeModels(current, incoming)
+    expect(out.widths!.jib!.luffRakeDeg).toBe(13.498)
+    expect(out.widths!.jib!.quarter).toBe(6.62)
+  })
+
+  it('still lets the STORED number win where both have one', () => {
+    // The stored value is the boat's own measurement; that rule is unchanged.
+    const current = withJib({ foot: 8.52, half: 4.54 })
+    const incoming = withJib({ foot: 8.52, half: 9.99 })
+    expect(mergeModels(current, incoming).widths!.jib!.half).toBe(4.54)
+  })
+
+  it('treats an explicit null in the stored sail as an absence, not a measurement', () => {
+    const current = withJib({ foot: 8.52, half: 4.54, quarter: null })
+    const incoming = withJib({ foot: 8.52, half: 4.54, quarter: 6.62 })
+    expect(mergeModels(current, incoming).widths!.jib!.quarter).toBe(6.62)
+  })
+
+  it('keeps a sail the incoming model does not mention', () => {
+    const current = withJib({ foot: 8.52, half: 4.54 })
+    const incoming = { ...defaultRigModel('Ryujin'), widths: { jib: undefined, main: undefined } }
+    expect(mergeModels(current, incoming as never).widths!.jib!.half).toBe(4.54)
+  })
+})
