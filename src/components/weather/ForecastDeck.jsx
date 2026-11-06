@@ -25,6 +25,7 @@ import { useScriptsOnce } from './useScriptOnce'
 import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, fetchWindweightNearest, SSARACE_SOUNDING_LEVELS, ICON_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS, GFS_SOUNDING_LEVELS } from './openMeteo'
 import { matchVenue, specFor, mosSeries, venueLabel } from './mos'
 import { tzAbbrev } from './venueTz'
+import { deckDay, indicesOnDay } from './deckDay'
 import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField, applyMosToField, scaleFieldSpeeds } from './windField'
 import { getWeatherSession } from './weatherSession'
 import {
@@ -147,11 +148,16 @@ async function fetchModelDays(modelKey, lat, lon, tz, days) { const m = MODELS[m
   for (let attempt = 0; attempt < 4; attempt++) { const res = await fetch(url); if (res.ok) return res.json(); if ((res.status === 429 || res.status >= 500) && attempt < 3) { await new Promise((r) => setTimeout(r, 600 * 2 ** attempt)); continue } throw new Error(`${modelKey} ${res.status}`) } throw new Error(`${modelKey} retry exhausted`) }
 
 // ── today's detail rows (mast +MOS): numeric TWD range + weighted TWS band ───
-function buildDaily(short, mastH, bandModels) {
+function buildDaily(short, mastH, bandModels, day) {
   const lt = short.lt; if (!lt.length) return []
-  const today = lt[0].slice(0, 10); const rows = []
-  for (let i = 0; i < lt.length; i++) {
-    if (lt[i].slice(0, 10) !== today) break
+  // The day is DECIDED BY THE CALLER (deckDay) and passed in. It used to be
+  // `lt[0].slice(0, 10)` — the primary model's first row — which on any deck
+  // built while SSA-Race's grid still reached back into yesterday produced a
+  // table of yesterday's racing. The `break` below was part of the same bug:
+  // it stopped at the first row off the day, so a model whose series did not
+  // START on the chosen day contributed nothing at all.
+  const today = day || lt[0].slice(0, 10); const rows = []
+  for (const i of indicesOnDay(lt, today)) {
     const hh = parseInt(lt[i].slice(11, 13), 10); if (hh < 8 || hh > 18) continue
     const s = mastKn(short.hourly, short.heights, mastH, i, short.mos, short.mosZ); if (s == null) continue
     // The PRIMARY model always votes, whatever the venue table says — a deck
@@ -265,10 +271,15 @@ function offDiv() { const d = document.createElement('div'); d.style.cssText = '
 // common local-hour key grid across models, so EVERY model aligns (SSA UTC vs OM local)
 function keyGrid(models) { const ks = new Set(); models.forEach((m) => m.lt.forEach((t) => ks.add(t.slice(0, 13)))); return [...ks].sort() }
 
-async function captureComparison(models, mastH) {
+async function captureComparison(models, mastH, day) {
   if (!window.Plotly || !models.length) return [null, null]
   const div = offDiv(); const keys = keyGrid(models); const xs = keys.map((k) => new Date(`${k}:00`)); const out = []
-  const today = keys[0]?.slice(0, 10)
+  // `day` comes from deckDay, NOT from keys[0]: the union grid starts at the
+  // earliest hour any model offers, and SSA-Race's published grid routinely
+  // begins a day before Open-Meteo's. Ranging the x-axis on keys[0] put the
+  // window on a day only SSA-Race covered, so every Open-Meteo model drew its
+  // legend entry and no line, and the +/-1 sigma band disappeared with them.
+  const today = day || keys[0]?.slice(0, 10)
   const xax = { title: 'Time', gridcolor: '#e5e7eb', ...(today ? { range: [new Date(`${today}T08:00`), new Date(`${today}T20:00`)], autorange: false } : {}) }
   const ser = (m, kind) => keys.map((key) => { const i = idxByKey(m, key); if (i < 0) return null; return kind === 'spd' ? mastKn(m.hourly, m.heights, mastH, i, m.mos, m.mosZ) : (dirAt(m, i) ?? null) })
   const spd = models.map((m) => ser(m, 'spd')); const dir = models.map((m) => ser(m, 'dir'))
@@ -322,12 +333,12 @@ export function hpblSeriesAt(point1) {
 }
 
 // boundary-layer-height development (point 1): SSA hpbl if present, else GFS; today 08-20
-async function captureHpbl(point1, tz) {
+async function captureHpbl(point1, tz, day) {
   if (!window.Plotly || !point1) return null
   const src = hpblSeriesAt(point1)
   if (!src) return null
   const h = src.hourly; const label = src.label
-  const lt = localTimes(h, tz); const today = lt[0]?.slice(0, 10)
+  const lt = localTimes(h, tz); const today = day || lt[0]?.slice(0, 10)
   const xs = lt.map((t) => new Date(`${t.slice(0, 16)}`)); const ys = h.boundary_layer_height
   const div = offDiv()
   const xr = today ? [new Date(`${today}T08:00`), new Date(`${today}T20:00`)] : undefined
@@ -1199,7 +1210,16 @@ function summaryNotesBlock(typeOfDay, ai, dayLabel) {
 }
 
 // ── Crew kit / apparel guide ─────────────────────────────────────────────────
-// Wind-first tiers (you dress for the GUSTS); air temp + cloud only modify it.
+// Wind-first tiers (you dress for the GUSTS), but temperature and rain set a
+// FLOOR under the answer — they do not merely annotate it.
+//
+// They used to only annotate it, and the result was wrong in the way that
+// matters: a 6 kn day at 10-12 C came out as "Light · Shorts · Technical tee",
+// with the two caveats bolted underneath and the photographs still showing
+// short sleeves. Wind chill is a correction to how cold you feel; the air
+// temperature is what you are actually sitting in for five hours, and at 12 C
+// in drizzle nobody is racing in a tee whatever the breeze is doing. Being
+// over-dressed costs a layer in the bag. Being under-dressed ends the day.
 // NOTE: North Sails MODEL PHOTOGRAPHY is intentionally NOT embedded (their IP).
 // We link to their gear and leave a hook (d.apparel.images) for licensed assets.
 const KIT_TIERS = [
@@ -1210,25 +1230,66 @@ const KIT_TIERS = [
   { key: 'heavy',  name: 'Heavy',      wind: '> 20 kn',      chip: 'EF4444', items: ['Full foul-weather smock / jacket', 'Salopettes', 'Warm mid-layer', 'Gloves, beanie, boots'] },
 ]
 
+// Coldest-first ordering of KIT_TIERS, so "at least this much kit" is a
+// comparison rather than a pile of branches.
+const TIER_RANK = ['beach', 'light', 'medium', 'fresh', 'heavy']
+const warmer = (a, b) => (TIER_RANK.indexOf(a) >= TIER_RANK.indexOf(b) ? a : b)
+
+/**
+ * The least kit the AIR TEMPERATURE justifies, whatever the wind is doing.
+ * Boundaries are the day's maximum, i.e. the warmest it will get:
+ *   >= 18   nothing imposed, wind decides
+ *   14-18   Medium   — long sleeves and a gilet
+ *    9-14   Fresh    — trousers, mid-layer, spray top
+ *   <  9    Heavy    — full foul-weather kit
+ */
+export function tempFloorTier(tMaxC) {
+  if (tMaxC == null || !Number.isFinite(tMaxC)) return null
+  if (tMaxC >= 18) return null
+  if (tMaxC >= 14) return 'medium'
+  if (tMaxC >= 9) return 'fresh'
+  return 'heavy'
+}
+
+/** The least kit the SKY justifies. Rain means a spray top, in any breeze. */
+export function skyFloorTier(sky) {
+  if (sky === 'rain') return 'fresh'
+  if (sky === 'showers') return 'medium'
+  return null
+}
+
 function apparelKit(a) {
   const w = a?.windMean ?? a?.windPeak ?? null      // tier keys on the representative TWS
   const tMax = a?.tMaxC, tMorn = a?.tMornC
   const hot = tMax != null && tMax >= 25
-  const cool = tMax != null && tMax < 15
   const coldMorn = tMorn != null && tMorn < 14
   const sunny = a?.cloudPct != null ? a.cloudPct < 40 : null
-  let key
-  if (w == null) key = 'medium'
-  else if (w < 6 && hot) key = 'beach'
-  else if (w < 9) key = 'light'
-  else if (w < 15) key = 'medium'
-  else if (w < 20) key = 'fresh'
-  else key = 'heavy'
+  let windKey
+  if (w == null) windKey = 'medium'
+  else if (w < 6 && hot) windKey = 'beach'
+  else if (w < 9) windKey = 'light'
+  else if (w < 15) windKey = 'medium'
+  else if (w < 20) windKey = 'fresh'
+  else windKey = 'heavy'
+  // Raise to whichever floor is highest; never lower. A hot, still day keeps
+  // 'beach' because tempFloorTier returns null above 18 C.
+  const tFloor = tempFloorTier(tMax)
+  const sFloor = skyFloorTier(a?.sky)
+  let key = windKey
+  if (tFloor) key = warmer(key, tFloor)
+  if (sFloor) key = warmer(key, sFloor)
   const tier = KIT_TIERS.find((t) => t.key === key) || KIT_TIERS[2]
   const extras = []
   if (coldMorn && key !== 'beach') extras.push('Wooly hat for the morning')
-  if (cool && (key === 'light' || key === 'medium')) extras.push('Extra mid-layer — cooler than the wind suggests')
-  return { tier, key, extras, w, sunny, coolMorn: coldMorn }
+  // Say WHY the kit is heavier than the breeze implies, or the page reads as
+  // if it has ignored the wind it prints two lines above.
+  if (key !== windKey) {
+    const why = []
+    if (tFloor && TIER_RANK.indexOf(tFloor) > TIER_RANK.indexOf(windKey)) why.push(`only ${Math.round(tMax)} °C`)
+    if (sFloor && TIER_RANK.indexOf(sFloor) > TIER_RANK.indexOf(windKey)) why.push(a?.sky === 'rain' ? 'rain' : 'showers')
+    extras.push(`Dressed up from "${KIT_TIERS.find((t) => t.key === windKey)?.name || windKey}" — ${why.join(' and ')}, not the breeze`)
+  }
+  return { tier, key, windKey, extras, w, sunny, coolMorn: coldMorn }
 }
 
 function venueRegion(lat, lon) {
@@ -1240,13 +1301,18 @@ function venueRegion(lat, lon) {
 
 // Best-effort daytime weather at point 1: air temp (morning min / day max), cloud,
 // a sky class (sunny/cloud/overcast/showers/rain from precip + WMO code) and SST.
-async function fetchApparelWx(lat, lon, tz) {
+// `day` is the deck's day. Open-Meteo anchors forecast_days on the UTC date,
+// which is not always the venue's, so asking for one day and trusting it gave
+// the kit guidance a different day from every other slide. Ask for three and
+// keep the rows whose own local date matches.
+async function fetchApparelWx(lat, lon, tz, day) {
   try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,cloud_cover,precipitation,weather_code&timezone=${encodeURIComponent(tz)}&forecast_days=1`
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,cloud_cover,precipitation,weather_code&timezone=${encodeURIComponent(tz)}&forecast_days=3`
     const res = await fetch(url, { signal: AbortSignal.timeout?.(6000) }); if (!res.ok) return null
     const j = await res.json(); const h = j.hourly; if (!h?.time) return null
     let tMorn = null, tMax = null, cSum = 0, cN = 0, pSum = 0, wcMax = 0
     for (let i = 0; i < h.time.length; i++) {
+      if (day && h.time[i].slice(0, 10) !== day) continue
       const hr = Number(h.time[i].slice(11, 13)); const t = h.temperature_2m?.[i]; const c = h.cloud_cover?.[i]
       if (t != null) { if (hr >= 6 && hr <= 10) tMorn = tMorn == null ? t : Math.min(tMorn, t); if (hr >= 11 && hr <= 18) tMax = tMax == null ? t : Math.max(tMax, t) }
       if (hr >= 10 && hr <= 16) {
@@ -1264,9 +1330,13 @@ async function fetchApparelWx(lat, lon, tz) {
     else if (cloudMean != null) sky = 'sunny'
     let seaC = null
     try {
-      const mu = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&hourly=sea_surface_temperature&timezone=${encodeURIComponent(tz)}&forecast_days=1`
+      const mu = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&hourly=sea_surface_temperature&timezone=${encodeURIComponent(tz)}&forecast_days=3`
       const mr = await fetch(mu, { signal: AbortSignal.timeout?.(6000) })
-      if (mr.ok) { const mj = await mr.json(); const arr = (mj.hourly?.sea_surface_temperature || []).filter((x) => x != null); if (arr.length) seaC = arr.reduce((x, y) => x + y, 0) / arr.length }
+      if (mr.ok) {
+        const mj = await mr.json(); const mt = mj.hourly?.time || []
+        const arr = (mj.hourly?.sea_surface_temperature || []).filter((x, i) => x != null && (!day || mt[i]?.slice(0, 10) === day))
+        if (arr.length) seaC = arr.reduce((x, y) => x + y, 0) / arr.length
+      }
     } catch { /* */ }
     return { tMornC: tMorn, tMaxC: tMax, cloudPct: cloudMean, sky, seaC }
   } catch { return null }
@@ -1660,7 +1730,10 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const mk = (k, hourly, heights, w) => ({ key: k, hourly, lt: localTimes(hourly, tz), heights: heights || MODELS[k]?.heights || [10], mos: mosFor(k, hourly), mosZ, weight: w != null ? w : wOf(k) })
       const todayModels = presentToday.map((k) => mk(k, sb[k].hourly))
       const short = mk(shortSel, sb[shortSel].hourly)
-      const dailyRows = buildDaily(short, mastHeight, todayModels.filter((m) => m.key !== shortSel))
+      // One definition of the day, shared by the table, the charts and the
+      // confidence numbers, so they can no longer be built from different ones.
+      const dayISO = deckDay(todayModels, tz)
+      const dailyRows = buildDaily(short, mastHeight, todayModels.filter((m) => m.key !== shortSel), dayISO)
 
       // The same table for points 2 and 3, built from THEIR OWN series — not
       // point 1's. Each point has its own surfaceByModel, so the mean and the
@@ -1685,7 +1758,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         const pW = weightsFor(venueKey, pPresent, { prefer: pKey })
         const pShort = mk(pKey, psb[pKey].hourly, undefined, pW[pKey])
         const pBand = pPresent.filter((k) => k !== pKey).map((k) => mk(k, psb[k].hourly, undefined, pW[k]))
-        const rows = buildDaily(pShort, mastHeight, pBand)
+        const rows = buildDaily(pShort, mastHeight, pBand, dayISO)
         if (rows.length) extraDaily.push({ key, rows, coords: pt?.coords || null, fallbackModel: pKey !== shortSel ? (MODELS[pKey]?.label || pKey) : null })
       }
 
@@ -1697,9 +1770,9 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const outlookRows = buildOutlook(dates, (di) => (di < 2 ? [...todayModels, ...globals] : globals), mastHeight)
 
       let cmp = [null, null]; let longRange = null; let windfieldImg = null; let hpblImg = null; let soundingImg = null
-      try { cmp = await captureComparison(todayModels, mastHeight) } catch { /* */ }
+      try { cmp = await captureComparison(todayModels, mastHeight, dayISO) } catch { /* */ }
       try { longRange = await captureLongRange(globals, mastHeight) } catch { /* */ }
-      try { hpblImg = await captureHpbl(point1, tz) } catch { /* */ }
+      try { hpblImg = await captureHpbl(point1, tz, dayISO) } catch { /* */ }
       let snd = null
       try { snd = await captureSounding(p1lat, p1lon, point1, tz); soundingImg = snd?.png } catch { /* */ }
 
@@ -1707,7 +1780,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       // without a published windweight.json just get placeholders on the slide.
       let wwRows = []; let wwProfileImg = null
       try {
-        const todayLocal = short.lt[0]?.slice(0, 10)
+        const todayLocal = dayISO || short.lt[0]?.slice(0, 10)
         const r = await withTimeout(fetchWindweightNearest(p1lat, p1lon), 8000, null)
         if (r?.data && todayLocal) {
           wwRows = wwRowsFor(r.data, tz, todayLocal)
@@ -1826,8 +1899,9 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const morn = dailyRows.find((r) => r.time === '09:00') || dailyRows[0]
       const aftn = dailyRows.find((r) => r.time === '15:00') || dailyRows[dailyRows.length - 1]
       // Apparel-guide inputs: air temp (morning min / day max) + cloud at point 1,
-      // best-effort; the kit tier keys mainly on wind, temp/cloud only modify it.
-      const apparelWx = await withTimeout(fetchApparelWx(p1lat, p1lon, tz), 6000, null)
+      // best-effort. The tier keys on wind, but temperature and rain set a FLOOR
+      // under it — see apparelKit.
+      const apparelWx = await withTimeout(fetchApparelWx(p1lat, p1lon, tz, dayISO), 6000, null)
       const _kn = dailyRows.map((r) => r.kn).filter((x) => x != null)
       const _hi = dailyRows.map((r) => r.hi).filter((x) => x != null)
       const apparel = {
@@ -1850,7 +1924,10 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const typeHeur = (morn && aftn && aftn.kn - morn.kn >= 3) ? 'Sea-breeze day' : 'Gradient day'
       const aiPayload = {
         venue: venueName,
-        date: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', timeZone: tz }),
+        // The day the deck is ABOUT (deckDay), not the day it was generated:
+        // a brief built late in the evening is for tomorrow's racing, and a
+        // title naming today would contradict every table under it.
+        date: new Date(`${dayISO}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', timeZone: 'UTC' }),
         outlook: outlookRows.map((r) => ({ day: r.day, morning: r.mor && { twd: r.mor.twd, tws: r.mor.tws }, midday: r.mid && { twd: r.mid.twd, tws: r.mid.tws }, afternoon: r.aft && { twd: r.aft.twd, tws: r.aft.tws } })),
         today: dailyRows.map((r) => ({ time: r.time, twd: r.twd, twsKn: r.kn, range: `${r.lo}-${r.hi}kn`, trend: r.trend })),
         diagnostics: diag,
@@ -1888,7 +1965,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze through the racing window — edit', 'Racing window 10:00–16:00 — edit', 'Local effects — edit'],
       })
-      await deck.writeFile({ fileName: `forecast_${venueName.replace(/\s+/g, '_')}_${new Date().toLocaleDateString('en-CA', { timeZone: tz })}.pptx` })
+      await deck.writeFile({ fileName: `forecast_${venueName.replace(/\s+/g, '_')}_${dayISO}.pptx` })
 
       // Prepend the Summary text into the campaign day's Weather -> Notes (top,
       // editable). Best-effort: never block the deck. De-dupes a prior auto block.

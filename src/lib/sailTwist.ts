@@ -18,9 +18,29 @@
 // TWO ASSUMPTIONS, both worth knowing:
 //
 //  1. The width is measured from the leech point to the NEAREST point on the
-//     luff, which is roughly perpendicular to the luff rather than horizontal.
-//     With a raked mast the two differ by a few degrees of rake, and the error
-//     is second-order in that angle. Ignored here, and small.
+//     luff — so PERPENDICULAR TO THE LUFF, under ORR as under IRC — while the
+//     chord this file measures runs horizontally, luff to leech at one height.
+//     Those are two different lines, and the angle between them is the luff's
+//     rake.
+//
+//     FOR THE MAIN that is the mast's rake, 2-4°, and the error is second-order
+//     in it: 0.14 % at 3°. Genuinely negligible, which is what this note used
+//     to say about both sails.
+//
+//     FOR THE JIB IT IS NOT. The jib's luff is the FORESTAY, and
+//     `jibGeometry.forestayAngleDeg` already computes its rake as asin(J/HLU):
+//     13.5° on Ryujin, 16.8° on Northstar 76, 17.0° on Baraka GP. Second-order
+//     in 17° is 4.4 %, not 0.14 %. So the justification written here was the
+//     MAST's and was applied to a sail whose luff is raked five times as far.
+//
+//     NOT CORRECTED YET, and deliberately not guessed at: the factor is not
+//     simply cos(rake), because it depends on the LEECH's angle too — a line
+//     from the luff to the leech is longer or shorter than the perpendicular
+//     width according to both. On a genoa, whose clew is well aft of the
+//     masthead, the leech is raked the other way and the two partly cancel. It
+//     wants deriving properly and checking against the lidar, which is the one
+//     measurement that could settle it — and KND reports jib twist on 28 and
+//     29 Sept, which no photographed frame has yet been matched to.
 //
 //  2. Widths exist at 1/2, 3/4 and 7/8 only. The 50 % and 75 % stripes land on
 //     MHW and MTW exactly. The 25 % stripe has NO certificate width and has to
@@ -71,6 +91,18 @@ export const STATION_FRACTION: Record<TwistTag, number | null> = {
 export interface SailWidths {
   /** The foot — E for the main, HLP for the headsail. The width at fraction 0. */
   foot: number | null
+  /**
+   * At 1/4 of the hoist: MQW / HQW — and ONLY an ORR certificate has it.
+   *
+   * This is the station `widthAt` otherwise has to interpolate, and the note on
+   * that function says what it costs: fitting a quadratic through the three
+   * upper stations and asking it for the FOOT, where the answer is known, comes
+   * back 0.7 % out on a jib and 10 % out on a MAIN, because a mainsail's
+   * planform bends hard near the foot and a fit from above cannot see it. The
+   * 25 % stripe is right in that bend. So where a boat is measured under ORR,
+   * this replaces the worst interpolation the twist pipeline does.
+   */
+  quarter?: number | null
   /** At 1/2 the hoist: MHW / HHW. */
   half: number | null
   /** At 3/4: MTW / HTW. */
@@ -105,6 +137,9 @@ export interface WidthAt {
 export function widthAt(w: SailWidths, fraction: number): WidthAt | null {
   const pts: [number, number][] = []
   if (w.foot != null) pts.push([0, w.foot])
+  // ORR only. An IRC boat has nothing here and the 25 % station interpolates
+  // between the foot and the half width, as it always did.
+  if (w.quarter != null) pts.push([0.25, w.quarter])
   if (w.half != null) pts.push([0.5, w.half])
   if (w.threeQuarter != null) pts.push([0.75, w.threeQuarter])
   if (w.upper != null) pts.push([0.875, w.upper])

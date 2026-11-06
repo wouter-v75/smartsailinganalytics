@@ -182,6 +182,38 @@ stamped on every annotation, and `staleFrames` compares it, so the Photos tab's
 redo panel offers the affected frames by itself. It used to look only for a
 moved DATUM, so a maths change left it reporting that everything was current.
 
+**The forecast deck had no definition of "today", so it built one from
+whichever model's data started earliest — and that is yesterday.** Two readers
+each took day 0 for themselves: `buildDaily` from `lt[0]` (the primary model)
+and `captureComparison` from `keys[0]` (the union grid). The deck mixes two
+families whose series do NOT begin at the same place. SSA-Race is published UTC
+and converted to venue-local, so its grid starts at its cycle — on the 6 Nov
+San Juan deck, `2026-11-05T16:00Z` = **08:00 PST on the 5th**. Open-Meteo is
+asked with `timezone=<venue>` and anchors `forecast_days` on the **UTC** date,
+so every one of its models began `2026-11-06T00:00`. Zero overlap. The grid
+therefore started on the 5th, both readers called the 5th "today", and:
+the comparison charts were ranged `[Nov 5 08:00, Nov 5 20:00]`, where only
+SSA-Race has data — **six models in the legend, one line drawn**, and no ±1σ
+band, because a band needs two models at the same hour; "Details for today" was
+yesterday, off one model, with `weightedBand`'s 1 kn floor manufacturing a
+±1 kn range that reads as agreement; and the confidence slide compared SSA-Race
+on the 5th (5.3 kn) with HRRR on the 6th (22.7 kn) and called the difference
+7.6 kn of model spread. It was not spread, it was a day. The Outlook slide
+reads Open-Meteo and was right, which is how one deck came to say **4-10 kn for
+today and 22-31 kn for Friday — the same day**. `deckDay()` now picks the day
+the MOST models cover among those not yet past at the venue, and the table,
+the charts, the hpbl slide, the wind weight, the title and the filename all
+take it. Note this is NOT the Plotly-`Date` bug above: the deck's axis values
+were fine, it was the WINDOW that was on the wrong day.
+
+**The crew-kit tier keyed on wind alone.** 6 kn at 10-12 °C with rain came out
+"Light · Shorts · Technical tee", photographs included, with the temperature
+reduced to a caption underneath. Wind chill is a correction to how cold you
+feel; the air temperature is what you sit in for five hours. `tempFloorTier`
+and `skyFloorTier` now set a floor the wind can raise but not lower (<18 °C
+medium, <14 fresh, <9 heavy; rain fresh, showers medium), and the slide says
+which input dressed it up. Being over-dressed costs a layer in the bag.
+
 **A date and a log are two arguments, and nothing used to tie them together.**
 `uploadSessionStats(date, rows, xml)` filed whatever log was in memory under
 whatever date was on screen. Both callers hold the two apart for a moment:
@@ -375,6 +407,17 @@ The shell is `components/SSAApp.jsx`, composing hooks in `components/ssa/`
 (`useCloudSync`, `useBatchActions`, `useClipPlayback`, `useClipMetadata`,
 `useWorkspaceIdentity`). Components live in `components/{video,sync,charts,mobile}/`
 and pure logic in `lib/`. Import from a component's own file, not the barrel.
+
+**The app is at `/`, behind the login** — `src/app/page.tsx` is
+`user ? <AppHome /> : <Home />`, so signed out you get the marketing page and
+signed in you get the tabs (`ssa/LazyTabs.jsx` loads each one). So the Weather
+tab is `/` → Weather, not a route of its own, and there is no dev route that
+mounts it: verifying a weather change means signing in.
+
+**`/admin/weather` is NOT the Weather tab.** It is an admin-gated iframe of
+`weather.wvsailing.co.uk`, a self-contained app in its own repo, so it looks
+nothing like SSA and nothing in `src/components/weather/` affects it. Matching
+on the filename sent two sessions to the wrong page.
 
 ## Bunny credentials
 

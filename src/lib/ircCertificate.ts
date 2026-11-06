@@ -277,7 +277,10 @@ export interface JibGeometry {
  * 0.10–0.22 spread is a maxi jib; the spread is what the sigma is made of.
  */
 export function jibGeometry(
-  rig: IrcRig,
+  // Only J, HLU and HLP are read, and an ORR certificate carries all three
+  // under the same names — so the ORR parser reuses this rather than growing a
+  // second implementation of the same trigonometry.
+  rig: Pick<IrcRig, 'j' | 'hlu' | 'hlp' | 'p'>,
   opts: { clewFrac?: number; clewFracSpread?: number; spreaderHeightM?: number } = {},
 ): JibGeometry | null {
   const { j, hlu, hlp } = rig
