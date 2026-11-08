@@ -123,11 +123,12 @@ export default function FeaturesPage() {
       >
         <div className="mb-4 rounded-xl border border-accent bg-surface-1 p-5">
           <h3 className="text-[15px] font-bold">
-            The goal: everyone arrives at the debrief having already done their own digging
+            Come prepared to the debrief
           </h3>
           <p className="mt-2 max-w-3xl text-[14px] leading-relaxed text-secondary">
-            The usual shape of a debrief is one person presenting and everyone else receiving.
-            That wastes the crew. When the day reaches every member the moment it is uploaded,
+            Turn the debrief from watching videos together into digging deeper into the stuff
+            that really matters. The usual shape is one person presenting and everyone else
+            receiving, which wastes the crew. When the day reaches every member as it lands,
             the trimmer has already looked at their own leg, the helm has already found the
             two tacks that cost something, and the meeting starts from four opinions instead
             of one. SSA is built for that: the tools are pointed at the people doing the
