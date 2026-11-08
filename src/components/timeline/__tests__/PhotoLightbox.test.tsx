@@ -34,7 +34,7 @@ vi.mock('@/lib/favourites', async (orig) => {
 
 vi.mock('@/lib/cdnScript', () => ({
   heicToJpeg: (f: File) => Promise.resolve(f),
-  loadExifr: () => Promise.resolve({ parse: () => Promise.resolve({}) }),
+  parseExif: () => Promise.resolve({}),
   loadJsPdf: () => Promise.resolve(function () { /* unused */ }),
 }))
 

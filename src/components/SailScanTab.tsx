@@ -32,7 +32,7 @@ import {
   loadGroundTruth, findSessionByFilename, compareToReference,
   type ReferenceSession, type BenchmarkReport,
 } from '../lib/sailscan-bench';
-import { heicToJpeg } from '@/lib/cdnScript';
+import { heicToJpeg, parseExif } from '@/lib/cdnScript';
 
 type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
 interface P { x: number; y: number; }
@@ -900,30 +900,22 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
   };
 
   // ── EXIF timestamp extraction (matches SquashShotsApp) ───────────────────
-  const loadExifr = (): Promise<any> => new Promise((resolve, reject) => {
-    if ((window as any).exifr) { resolve((window as any).exifr); return; }
-    const s = document.createElement('script');
-    s.src = 'https://unpkg.com/exifr@7.1.3/dist/full.umd.js';
-    s.onload = () => resolve((window as any).exifr);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-
+  // parseExif, not a hand-rolled exifr loader: exifr refuses a newer iPhone's
+  // HEIC on the size of its ftyp box, and the fallback below is `new Date()` —
+  // so a scan off a current phone would be stamped with the moment it was
+  // imported rather than the moment it was shot.
   const extractTimestamp = useCallback(async () => {
     if (!imageSrc) return;
     try {
       const blob = originalFile.current
         ? originalFile.current
         : await fetch(imageSrc).then(r => r.blob());
-      const exifr = await loadExifr();
-      if (exifr) {
-        const data = await exifr.parse(blob, { tiff: true, exif: true });
-        const dt = data?.DateTimeOriginal || data?.DateTime;
-        if (dt instanceof Date) {
-          setExifTimestamp(dt.getTime());
-          setPhotoTimestamp(dt.toISOString().slice(0, 16));
-          return;
-        }
+      const data = await parseExif(blob, { tiff: true, exif: true });
+      const dt = data?.DateTimeOriginal || data?.DateTime;
+      if (dt instanceof Date) {
+        setExifTimestamp(dt.getTime());
+        setPhotoTimestamp(dt.toISOString().slice(0, 16));
+        return;
       }
     } catch {}
     setExifTimestamp(null);

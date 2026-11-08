@@ -22,7 +22,7 @@ import { upsertPhotoCloud } from './cloud-photos'
 import { getBrowserSupabase } from './supabase/browser'
 import { getActiveMembership } from './active-membership'
 import { goodForOriginals, onConnectionChange } from './netAware'
-import { heicToJpeg } from './cdnScript'
+import { heicToJpeg, parseExif } from './cdnScript'
 import { writeKey, photoLeaves, SESSION_LEAVES } from './storageKeys'
 
 const DB_NAME = 'ssa-db'
@@ -204,23 +204,24 @@ function generateLqip(blob, size = 20, quality = 0.4) {
   })
 }
 
-function loadExifr() {
-  return new Promise((resolve, reject) => {
-    if (window.exifr) return resolve(window.exifr)
-    const s = document.createElement('script')
-    s.src = 'https://unpkg.com/exifr@7.1.3/dist/full.umd.js'
-    s.onload = () => resolve(window.exifr)
-    s.onerror = reject
-    document.head.appendChild(s)
-  })
-}
+// `parseExif` reads the EXIF a newer iPhone's HEIC hides from exifr; see
+// cdnScript.ts. Without it `utc` comes back null for those files and `dateOf`
+// files the photo under TODAY rather than the day it was shot — and the lens
+// fields below, which SailTrim needs to correct for depth at all, are empty.
 async function readExif(file) {
   try {
-    const exifr = await loadExifr()
-    const data = await exifr.parse(file, { tiff: true, exif: true, gps: true, ifd0: true })
+    const data = await parseExif(file)
     const dt = data?.DateTimeOriginal || data?.DateTime
     const utc = dt instanceof Date ? dt.getTime() : null
-    return { utc, lat: data?.latitude || null, lon: data?.longitude || null, camera: data?.Model || null }
+    return {
+      utc,
+      lat: data?.latitude || null,
+      lon: data?.longitude || null,
+      camera: data?.Model || null,
+      lensModel: data?.LensModel || null,
+      focalMm: Number.isFinite(data?.FocalLength) ? data.FocalLength : null,
+      focal35Mm: Number.isFinite(data?.FocalLengthIn35mmFormat) ? data.FocalLengthIn35mmFormat : null,
+    }
   } catch { return { utc: null, lat: null, lon: null, camera: null } }
 }
 async function convertToJpeg(file) {
@@ -383,8 +384,12 @@ export async function importFiles(files, { onLog, onError, scope = null } = {}) 
   for (const file of imgs) {
     try {
       const exif = await readExif(file)
-      let jpeg
-      try { jpeg = await convertToJpeg(file) } catch { jpeg = file }
+      // NOT caught. Keeping the undecodable original here is what turned a
+      // decoder failure into "thumb load failed" from uploadThumb minutes later
+      // — a message about the wrong thing, in the wrong place, on a photo the
+      // import had already reported with a tick. A photo that cannot be decoded
+      // fails here, by name, with the reason.
+      const jpeg = await convertToJpeg(file)
       const id = `p_${Date.now()}_${Math.random().toString(36).slice(2)}`
       await idbPutPhoto(id, jpeg)
       const sessionDate = dateOf(exif.utc)

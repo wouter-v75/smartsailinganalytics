@@ -158,11 +158,6 @@ async function idbDeletePhoto(id) {
 }
 
 
-// ── EXIF parser ───────────────────────────────────────────────────────────────
-
-// Load exifr from CDN for robust EXIF extraction (JPEG, HEIC, TIFF)
-
-
 function nearestLogRow(rows,utc,maxMs=300000){
   if(!rows?.length||!utc)return null;
   let lo=0,hi=rows.length-1;

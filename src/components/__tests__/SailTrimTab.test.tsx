@@ -28,13 +28,11 @@ import type { Px } from '../../lib/sailTrim'
 // The CDN-loaded libraries are the only thing this component reaches out for.
 vi.mock('@/lib/cdnScript', () => ({
   heicToJpeg: (f: File) => Promise.resolve(f),
-  loadExifr: () => Promise.resolve({
-    parse: () => Promise.resolve({
-      DateTimeOriginal: new Date('2026-09-05T11:53:00Z'),
-      FocalLength: RIG.focalMm,
-      Model: 'Canon EOS R6m2',
-      LensModel: 'RF100-500mm F4.5-7.1 L IS USM',
-    }),
+  parseExif: () => Promise.resolve({
+    DateTimeOriginal: new Date('2026-09-05T11:53:00Z'),
+    FocalLength: RIG.focalMm,
+    Model: 'Canon EOS R6m2',
+    LensModel: 'RF100-500mm F4.5-7.1 L IS USM',
   }),
 }))
 

@@ -228,6 +228,47 @@ is how three `session_phase_stats` rows came to hold a neighbouring day's phases
 `rows[0].utc` so the refused upload is retried once the right log lands. ANY phase
 starting on the date passes, which keeps a session through local midnight legal.
 
+**A newer iPhone's HEIC defeated BOTH of the libraries that read a photo, and
+each failure was reported as something else.** Two iPhone 16 Pro frames would
+not import: *"IMG_2559.HEIC: thumb load failed"*. Nothing was wrong with the
+thumbnail.
+
+- **heic2any could not decode them at all** — `ERR_LIBHEIF format not
+  supported`, thrown in **18 ms**, i.e. before it touched a pixel. 0.0.4 is from
+  2021 and is the last release. Replaced with **libheif-js 1.19.8**
+  (`cdn.jsdelivr.net/npm/libheif-js@1.19.8/libheif-wasm/libheif-bundle.js`),
+  which does all of them and is *faster* on the ones heic2any could do (830 ms
+  against 1854 ms on a 12 MP iPhone 12 frame; ~2-4 s for a 24 MP one), for the
+  same bundle size. One call site, `heicToJpeg` in `cdnScript.ts`.
+- **exifr cannot read their EXIF either**, and this is the worse half.
+  `canHandle` does `if (file.getUint16(2) > 50) return false` — the size of the
+  **`ftyp` box** — before it looks at a single brand. An iPhone 12 declares six
+  compatible brands in **40** bytes and passes; an iPhone 16 Pro declares nine —
+  Apple added `MiHA`, `heix` and `tmap` for the HDR gain map — in **52**, and
+  gets *"Unknown file format"*. 7.1.3 is the last release, so there is nothing to
+  upgrade to. `heifExif.ts` lifts the EXIF out of the container by hand
+  (`meta` → `iinf` for the `Exif` item, `iloc` for where it is) and hands exifr
+  the bare TIFF block, which it parses perfectly well — the sniff was the only
+  problem. `parseExif` in `cdnScript.ts` is the entry point and **every** caller
+  goes through it. Checked against `exiftool`: identical time, model, lens,
+  24 mm equivalent, orientation and position, and on a file exifr DOES accept
+  the two routes agree field for field.
+
+Why the EXIF half matters more: every caller falls back to **now** when the
+parse fails. `readExif` returns `utc: null`, `dateOf(null)` is today, and the
+photo is **filed under the day it was imported** — silently, and
+indistinguishably from a photo that really was shot today, which is how it hid.
+It also arrives with no focal length, which makes SailTrim **skip** the depth
+correction and ψ's effective separation rather than approximate them.
+
+And the reason it surfaced as a thumbnail error: `importFiles` had
+`try { jpeg = await convertToJpeg(file) } catch { jpeg = file }`, so the
+undecodable original was stored, the import logged a **tick**, and the failure
+came out of `uploadThumb` → `generateThumbnail` → `new Image()` minutes later,
+naming the wrong step. That catch is gone. A photo that cannot be decoded now
+fails at import, by name, with the reason — which also means IndexedDB can no
+longer hold HEIC bytes that `uploadPhotoToCloud` would PUT as `image/jpeg`.
+
 **A PDF's JPEGs are not always in the file as JPEGs.** `pdfImageExtract`
 scans the raw bytes for `FF D8 FF … FF D9`, which works because North writes
 `/Filter /DCTDecode` and the JPEG sits verbatim. Baraka's Sail Vision reports

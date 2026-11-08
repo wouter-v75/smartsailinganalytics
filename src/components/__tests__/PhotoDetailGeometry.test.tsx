@@ -12,7 +12,10 @@ import React from 'react'
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 
-vi.mock('@/lib/cdnScript', () => ({ heicToJpeg: (f: File) => Promise.resolve(f) }))
+vi.mock('@/lib/cdnScript', () => ({
+  heicToJpeg: (f: File) => Promise.resolve(f),
+  parseExif: () => Promise.resolve({}),
+}))
 
 import { PhotoDetail } from '../PhotosTab'
 import { drawSailTrimAnnotation } from '../../lib/sailTrimOverlay'

@@ -18,7 +18,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 // The digitiser pulls CDN libraries and a canvas; none of that is under test here.
 vi.mock('@/lib/cdnScript', () => ({
   heicToJpeg: (f: File) => Promise.resolve(f),
-  loadExifr: () => Promise.resolve({ parse: () => Promise.resolve({}) }),
+  parseExif: () => Promise.resolve({}),
   loadJsPdf: () => Promise.resolve(function () { /* unused */ }),
 }))
 vi.mock('next/dynamic', () => ({

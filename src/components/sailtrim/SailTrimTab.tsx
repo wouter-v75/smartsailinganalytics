@@ -52,7 +52,7 @@ import { loadLenses, rememberLens, forgetLens, lensLabel, isZoomLabel, type Lens
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
-import { heicToJpeg, loadExifr, loadJsPdf } from '@/lib/cdnScript';
+import { heicToJpeg, parseExif, loadJsPdf } from '@/lib/cdnScript';
 
 // ── the marks the operator places ───────────────────────────────────────────
 interface StepDef {
@@ -655,8 +655,10 @@ export default function SailTrimTab(
     };
 
     try {
-      const exifr = await loadExifr();
-      const d = await exifr.parse(file, { tiff: true, exif: true, ifd0: true });
+      // parseExif, not exifr directly: exifr refuses a newer iPhone's HEIC on
+      // the size of its ftyp box alone, which would send a frame that HAS a
+      // focal length down the "no focal length" path below.
+      const d = await parseExif(file, { tiff: true, exif: true, ifd0: true });
       const dt = d?.DateTimeOriginal || d?.DateTime;
       // EXIF stamps carry no zone and are venue-LOCAL wall clock — shown as
       // written, never converted here.

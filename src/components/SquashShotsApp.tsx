@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { parseExif } from '@/lib/cdnScript';
 
 type Step = 'camera' | 'points' | 'crop' | 'squash' | 'export';
 
@@ -1112,33 +1113,21 @@ export default function SquashShotsApp() {
   // Extract timestamp from original image EXIF when loaded
   const [exifTimestamp, setExifTimestamp] = useState<number | null>(null);
 
-  const loadExifr = (): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      if ((window as any).exifr) { resolve((window as any).exifr); return; }
-      const s = document.createElement('script');
-      s.src = 'https://unpkg.com/exifr@7.1.3/dist/full.umd.js';
-      s.onload = () => resolve((window as any).exifr);
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  };
-
+  // parseExif rather than exifr directly — see cdnScript.ts. The fallback below
+  // is "now", so a HEIC exifr will not open is stamped with the import time.
   const extractTimestamp = useCallback(async () => {
     try {
       // Use original file for EXIF (has metadata), fall back to blob URL fetch
       const blob = originalFile.current
         ? originalFile.current
         : await fetch(imageSrc).then(r => r.blob());
-      const exifr = await loadExifr();
-      if (exifr) {
-        const data = await exifr.parse(blob, { tiff: true, exif: true });
-        const dt = data?.DateTimeOriginal || data?.DateTime;
-        if (dt instanceof Date) {
-          setExifTimestamp(dt.getTime());
-          const iso = dt.toISOString().slice(0, 16);
-          setPhotoTimestamp(iso);
-          return;
-        }
+      const data = await parseExif(blob, { tiff: true, exif: true });
+      const dt = data?.DateTimeOriginal || data?.DateTime;
+      if (dt instanceof Date) {
+        setExifTimestamp(dt.getTime());
+        const iso = dt.toISOString().slice(0, 16);
+        setPhotoTimestamp(iso);
+        return;
       }
     } catch {}
     setExifTimestamp(null);
