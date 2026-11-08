@@ -9,6 +9,9 @@
 
 const OUT_RATE = 16000
 const FRAME = 1152
+// One number, used by the chunker AND by the gap report, so a part index can be
+// turned back into a position in the recording without the two disagreeing.
+export const CHUNK_SECONDS = 300
 
 // ── WAV: parse RIFF, expose a mono int16-scaled sample reader (no full decode) ──
 function parseWav(buf) {
@@ -66,7 +69,7 @@ function loadLame() {
 }
 
 // ── Resample to 16 kHz mono + MP3-encode, split into ≤ chunkSeconds pieces ──
-async function compressToMp3Chunks(file, { kbps = 48, chunkSeconds = 300, onProgress } = {}) {
+async function compressToMp3Chunks(file, { kbps = 48, chunkSeconds = CHUNK_SECONDS, onProgress } = {}) {
   const lamejs = await loadLame()
   const Mp3Encoder = lamejs.Mp3Encoder
   if (!Mp3Encoder) throw new Error('MP3 encoder unavailable')
@@ -160,8 +163,16 @@ export async function postChunk(chunk, index, prompt) { // exported for tests
   throw lastErr
 }
 
-async function transcribeChunks(chunks, onProgress) {
+// A chunk that comes back with NO WORDS used to be joined in silently, and that
+// is one of the ways a transcript ends mid-sentence with nothing to say why: the
+// last five minutes transcribed to '' and the text simply stopped at the part
+// boundary before it. An empty part can be legitimate — someone stopped talking,
+// or the final part is ten seconds of room noise — so this reports rather than
+// raises, and names WHICH parts, because that is what makes it checkable against
+// the recording instead of a feeling about the box.
+export async function transcribeChunks(chunks, onProgress) { // exported for tests
   const texts = []
+  const silent = []
   for (let i = 0; i < chunks.length; i++) {
     // No language hint — let Whisper auto-detect (debriefs may be Dutch, English, …).
     // Forcing 'en' on a non-English recording makes it mis-hear the whole thing.
@@ -173,9 +184,33 @@ async function transcribeChunks(chunks, onProgress) {
     // vocabulary is applied by the summariser instead (glossaryBlock).
     const text = await postChunk(chunks[i], i, '')
     texts.push(text)
+    if (!text.trim()) silent.push(i)
     if (onProgress) onProgress((i + 1) / chunks.length)
   }
-  return texts.join('\n')
+  return { text: texts.join('\n'), parts: chunks.length, silent }
+}
+
+const mmss = (sec) => {
+  const s = Math.max(0, Math.round(sec))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/**
+ * One sentence naming the parts that produced no words, and where they sit in
+ * the recording. Null when every part produced something.
+ *
+ * The LAST part's end is clamped to the real duration: a 61-minute recording's
+ * thirteenth part is one minute long, and reporting it as 60:00-65:00 invites
+ * someone to go looking in the recording for audio that was never there.
+ */
+export function describeSilentParts(silent, parts, durationSec, chunkSeconds = CHUNK_SECONDS) {
+  if (!silent || !silent.length) return null
+  const end = (i) => (Number.isFinite(durationSec) && durationSec > 0
+    ? Math.min((i + 1) * chunkSeconds, durationSec)
+    : (i + 1) * chunkSeconds)
+  const spans = silent.map((i) => `${mmss(i * chunkSeconds)}–${mmss(end(i))}`).join(', ')
+  const which = silent.length === 1 ? `Part ${silent[0] + 1} of ${parts}` : `${silent.length} of ${parts} parts`
+  return `${which} came back with no words (${spans}). Either nobody was talking then, or that stretch was lost — the transcript has a gap there, so the summary cannot cover it.`
 }
 
 // The display going to sleep is exactly what suspends the network mid-upload, so
@@ -224,19 +259,25 @@ export async function runAudioBrief(file, mode, { onStage, glossaryExtra } = {})
   const releaseWakeLock = await holdWakeLock()
   try {
     stage('compress', 0)
-    const { chunks } = await compressToMp3Chunks(file, { onProgress: (p) => stage('compress', p) })
+    const { chunks, durationSec } = await compressToMp3Chunks(file, { onProgress: (p) => stage('compress', p) })
     if (!chunks.length) throw new Error('no audio decoded from that file')
     stage('transcribe', 0)
-    const transcript = await transcribeChunks(chunks, (p) => stage('transcribe', p))
+    const { text: transcript, parts, silent } = await transcribeChunks(chunks, (p) => stage('transcribe', p))
     if (!transcript.trim()) throw new Error('transcript came back empty — was anything recorded?')
     stage('summarise', 0)
     const fields = await summarise(transcript, mode, glossaryExtra)
     // Not a field — the route's flag that the model stopped because it ran out
     // of room. It has to travel separately or it would be saved as a note.
     const truncated = !!fields._truncated
+    const cutSignals = fields._cut_signals || null
     delete fields._truncated
+    delete fields._cut_signals
     stage('done', 1)
-    return { fields, transcript, truncated }
+    // durationSec, parts and the gap report travel with the transcript so the
+    // panel can state its SIZE. "Is this cut short?" was being judged from the
+    // bottom edge of a box, which is what made the same question come back
+    // three times; a character count and a part count answer it outright.
+    return { fields, transcript, truncated, cutSignals, durationSec, parts, gap: describeSilentParts(silent, parts, durationSec) }
   } finally { releaseWakeLock() }
 }
 
@@ -254,10 +295,10 @@ export async function runAudioNote(file, { onStage, glossaryExtra } = {}) {
   const releaseWakeLock = await holdWakeLock()
   try {
     stage('compress', 0)
-    const { chunks } = await compressToMp3Chunks(file, { onProgress: (p) => stage('compress', p) })
+    const { chunks, durationSec } = await compressToMp3Chunks(file, { onProgress: (p) => stage('compress', p) })
     if (!chunks.length) throw new Error('no audio decoded from that recording')
     stage('transcribe', 0)
-    const transcript = await transcribeChunks(chunks, (p) => stage('transcribe', p))
+    const { text: transcript, parts, silent } = await transcribeChunks(chunks, (p) => stage('transcribe', p))
     if (!transcript.trim()) throw new Error('transcript came back empty — was anything recorded?')
     stage('summarise', 0)
     let note = ''
@@ -266,6 +307,12 @@ export async function runAudioNote(file, { onStage, glossaryExtra } = {}) {
       note = (fields && fields.note) || ''
     } catch { /* fall through to the raw transcript */ }
     stage('done', 1)
-    return { note: note.trim() || transcript.trim(), transcript }
+    return {
+      note: note.trim() || transcript.trim(),
+      transcript,
+      durationSec,
+      parts,
+      gap: describeSilentParts(silent, parts, durationSec),
+    }
   } finally { releaseWakeLock() }
 }

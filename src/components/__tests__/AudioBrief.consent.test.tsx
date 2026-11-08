@@ -27,18 +27,31 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// Vocab load + consent fetch share one mock, keyed by URL.
-function mockFetch(consent: Record<string, unknown>) {
-  return vi.fn(async (url: string) => {
+// Vocab load + consent fetch share one mock, keyed by URL. A second argument
+// means the POST that writes the caller's own consent; it answers with `after`,
+// standing in for the route's recomputed gate.
+function mockFetch(consent: Record<string, unknown>, after?: Record<string, unknown>) {
+  // Stateful on purpose: a POST changes what the next GET says, exactly as the
+  // database does. A mock that forgot the write would hide the re-check on the
+  // second press, which is the half that matters.
+  let state = consent
+  return vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     if (String(url).includes('recording-consent')) {
-      return { ok: true, json: async () => consent }
+      if (init?.method === 'POST') {
+        state = after ?? state
+        return { ok: true, json: async () => state }
+      }
+      return { ok: true, json: async () => state }
     }
     return { ok: true, json: async () => ({ sails: [], boats: [] }) }
   })
 }
 
-async function renderBrief(consent: Record<string, unknown>) {
-  vi.stubGlobal('fetch', mockFetch(consent))
+async function renderBrief(
+  consent: Record<string, unknown>,
+  after?: Record<string, unknown>,
+) {
+  vi.stubGlobal('fetch', mockFetch(consent, after))
   const { default: AudioBrief } = await import('../AudioBrief')
   render(
     <AudioBrief
@@ -118,5 +131,110 @@ describe('AudioBrief consent gate', () => {
     const btn = await screen.findByRole('button', { name: /Summarise from a recording/i })
     fireEvent.click(btn)
     await waitFor(() => expect(clickSpy).toHaveBeenCalled())
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wouter, 8 Nov 2026. A team he had just created, of which he was the only
+// member, refused the recorder and named nobody — and the profile box it sent
+// him to was already ticked. Two things were wrong: the gate did not count the
+// person pressing the button (migration 0105), and when the person still to
+// agree IS you, being sent to another page to find a checkbox is not a next
+// step. The box is offered here.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('AudioBrief consent gate — when the missing agreement is yours', () => {
+  it('offers the box instead of sending you to your profile', async () => {
+    const btn = await renderBrief({
+      total: 1, consented: 0, pending: [], youConsented: false, allConsented: false,
+    })
+    fireEvent.click(btn)
+
+    await screen.findByText(/You have not agreed to be recorded/i)
+    expect(screen.getByRole('checkbox')).toBeTruthy()
+    // Not the other-people wording: there are no other people.
+    expect(screen.queryByText(/Not all of your team have agreed/i)).toBeNull()
+    expect(screen.queryByText(/Still to agree/i)).toBeNull()
+    expect(clickSpy).not.toHaveBeenCalled()
+  })
+
+  it('ticking it saves, re-checks, and unblocks', async () => {
+    const btn = await renderBrief(
+      { total: 1, consented: 0, pending: [], youConsented: false, allConsented: false },
+      { total: 1, consented: 1, pending: [], youConsented: true, allConsented: true },
+    )
+    fireEvent.click(btn)
+    const box = await screen.findByRole('checkbox')
+
+    fireEvent.click(box)
+
+    // The POST carried an explicit boolean, not an empty body.
+    await waitFor(() => {
+      const posted = (fetch as unknown as { mock: { calls: [string, { method?: string; body?: string }?][] } })
+        .mock.calls.find((c) => c[1]?.method === 'POST')
+      expect(posted).toBeTruthy()
+      expect(JSON.parse(posted![1]!.body!)).toEqual({ consent: true })
+    })
+
+    // Blocked panel gone, and it says what to do next rather than vanishing in
+    // silence — the file picker is deliberately NOT opened, because the await
+    // has broken the user-gesture chain.
+    await screen.findByText(/Press the button again/i)
+    expect(screen.queryByText(/You have not agreed to be recorded/i)).toBeNull()
+    expect(clickSpy).not.toHaveBeenCalled()
+
+    // …and now it does open.
+    fireEvent.click(screen.getByRole('button', { name: /Summarise from a recording/i }))
+    await waitFor(() => expect(clickSpy).toHaveBeenCalled())
+  })
+
+  it('stays blocked, with the names, when agreeing was not enough', async () => {
+    const btn = await renderBrief(
+      { total: 3, consented: 1, pending: ['Ada Byron'], youConsented: false, allConsented: false },
+      { total: 3, consented: 2, pending: ['Ada Byron'], youConsented: true, allConsented: false },
+    )
+    fireEvent.click(btn)
+    fireEvent.click(await screen.findByRole('checkbox'))
+
+    // Your half is done, so the panel switches to the other half.
+    await screen.findByText(/Not all of your team have agreed to team recording/i)
+    expect(screen.getByText(/Ada Byron/)).toBeTruthy()
+    expect(clickSpy).not.toHaveBeenCalled()
+  })
+
+  it('says so rather than claiming a consent the database refused', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { method?: string }) => {
+      if (String(url).includes('recording-consent')) {
+        if (init?.method === 'POST') return { ok: false, json: async () => ({ error: 'nope' }) }
+        return {
+          ok: true,
+          json: async () => ({ total: 1, consented: 0, pending: [], youConsented: false, allConsented: false }),
+        }
+      }
+      return { ok: true, json: async () => ({ sails: [], boats: [] }) }
+    }))
+    const { default: AudioBrief } = await import('../AudioBrief')
+    render(
+      <AudioBrief
+        mode="debrief" fields={[{ key: 'what', label: 'What' }]}
+        onSaved={async () => {}} canEdit isMobile={false}
+        teamId="team-1" boatId="boat-1"
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Summarise from a recording/i }))
+    fireEvent.click(await screen.findByRole('checkbox'))
+
+    await screen.findByText(/could not save your agreement/i)
+    expect(screen.queryByText(/Press the button again/i)).toBeNull()
+    expect(clickSpy).not.toHaveBeenCalled()
+  })
+
+  it('shows the other-people wording when your own answer is unknown', async () => {
+    // A stale bundle, or a route that could not say: fall back to the message
+    // that at least points somewhere, never to offering a box that writes
+    // consent on a guess.
+    const btn = await renderBrief({ total: 2, consented: 1, pending: ['Sam Weller'], allConsented: false })
+    fireEvent.click(btn)
+    await screen.findByText(/Not all of your team have agreed/i)
+    expect(screen.queryByRole('checkbox')).toBeNull()
   })
 })

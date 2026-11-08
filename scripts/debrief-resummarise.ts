@@ -100,8 +100,12 @@ async function main() {
   }
 
   const text = mode.keys.map((k) => `## ${k}\n\n${out.result[k] || '(empty)'}`).join('\n\n')
+  // WHICH signal, not just whether. The three have different next steps: a
+  // provider cut means ask again, a mid-sentence end that the provider called
+  // 'stop' means the metadata is lying and only the text can be trusted.
+  const fired = Object.entries(out.signals).filter(([, v]) => v).map(([k]) => k)
   console.log(`\n${Date.now() - t0} ms · ${out.rounds} continuation(s) · `
-    + (out.truncated ? 'STILL SHORT — see the last section' : 'complete'))
+    + (out.truncated ? `STILL SHORT (${fired.join(' + ')}) — see the last section` : 'complete'))
   for (const k of mode.keys) console.log(`  ${k}: ${(out.result[k] || '').length} chars`)
 
   if (OUT) { writeFileSync(OUT, `${text}\n`); console.log(`\n→ ${OUT}`) }

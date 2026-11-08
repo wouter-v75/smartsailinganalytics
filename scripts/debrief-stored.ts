@@ -26,6 +26,14 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 
+// The test this script has used to diagnose a cut by hand since it was written.
+// It is now the summariser's THIRD truncation signal as well (src/lib/
+// debriefJson.ts) — imported rather than copied, so what the script calls cut
+// and what the pipeline refuses to save as finished are the same sentence.
+// NOTE it is applied here to stored text that may have been TYPED, where ending
+// on a bare header or a "#actions" tag is normal and not a fault.
+import { endsMidSentence } from '../src/lib/debriefJson'
+
 const args = process.argv.slice(2)
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
 const DATE = flag('--date')
@@ -45,12 +53,6 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE
 
 const FIELDS = ['learnings', 'next_focus', 'speed_learnings', 'speed_focus_today', 'speed_long_term'] as const
 
-/** A sentence that stops mid-flow is the signature of a cut. */
-function endsMidSentence(s: string): boolean {
-  const tail = s.trimEnd()
-  if (!tail) return false
-  return !/[.!?:)\]"'`»]$/.test(tail)
-}
 
 async function main() {
   let boatId: string | null = null

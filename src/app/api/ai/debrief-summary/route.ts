@@ -98,6 +98,10 @@ export async function POST(req: NextRequest) {
       budgetMs: ABORT_MS,
       startedAt: t0,
       log,
+      // Not for a dictated note — see contentSignal. A one-line note that ends
+      // without a full stop is finished, and an extra round trip for it lands on
+      // somebody holding a phone on the dock.
+      contentSignal: (data?.mode || 'speedteam') !== 'note',
     })
 
     if (out.error?.kind === 'call') {
@@ -109,11 +113,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'could not parse model JSON', ...(debug ? { _raw: out.firstContent } : {}), ms: Date.now() - t0 }, { status: 502 })
     }
 
-    if (out.truncated) log('TRUNCATED — still incomplete after', out.rounds, 'continuation(s)')
+    if (out.truncated) {
+      log('TRUNCATED — still incomplete after', out.rounds, 'continuation(s)',
+          Object.entries(out.signals).filter(([, v]) => v).map(([k]) => k).join('+') || '(none)')
+    }
     log('ok', Date.now() - t0, 'ms', 'filled:', mode.keys.filter((k) => out.result[k]).length)
     return NextResponse.json({
       ...out.result,
-      ...(out.truncated ? { _truncated: true } : {}),
+      ...(out.truncated ? { _truncated: true, _cut_signals: out.signals } : {}),
       ...(out.rounds ? { _continued: out.rounds } : {}),
       ...(debug ? { _raw: out.firstContent } : {}),
       _ms: Date.now() - t0,

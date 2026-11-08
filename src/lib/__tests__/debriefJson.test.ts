@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest'
-import { extractJson, stoppedCleanly } from '../debriefJson'
+import { extractJson, stoppedCleanly, endsMidSentence } from '../debriefJson'
 
 describe('extractJson — a clean parse says so', () => {
   it('reads a plain object without claiming repair', () => {
@@ -85,5 +85,45 @@ describe('stoppedCleanly — the enum is not dependable, so lean safe', () => {
     expect(stoppedCleanly(null)).toBe(true)
     expect(stoppedCleanly(undefined)).toBe(true)
     expect(stoppedCleanly('')).toBe(true)
+  })
+})
+
+// The third signal. Cases taken from real stored debriefs: the clean ones from
+// notes nobody complained about, the cut ones from notes that were short.
+describe('endsMidSentence', () => {
+  it.each([
+    'Team talk scheduled for 6 PM to discuss next year’s plans.',
+    'Consider adding 100 kg of weight (A1.5, J1.5, A2, J2).',
+    'Open question: who owns the drone?',
+    'He said "go".',
+    'Set the runner to 12:',
+    'tighter mark-rounding communication.',
+  ])('calls a finished note finished: %s', (s) => {
+    expect(endsMidSentence(s)).toBe(false)
+  })
+
+  it.each([
+    // Ryujin, 7 Nov — the exact tail that was saved as a whole note.
+    '- Packing the A1.5 in phases (tack zipped first, head optional) allowed for a quick ',
+    '- Ease the cable, so the sail projects more to windward until it gets',
+    '- Nick; to help Peter with rotation speed\n- Gabri to help with landing angle',
+    'BRO to MHO cross-over and MHO to A sail have the focus\n',
+  ])('calls a cut note cut: %s', (s) => {
+    expect(endsMidSentence(s)).toBe(true)
+  })
+
+  it('is not fooled by trailing whitespace either way', () => {
+    expect(endsMidSentence('finished.   \n\n')).toBe(false)
+    expect(endsMidSentence('not finished   \n\n')).toBe(true)
+  })
+
+  it('says nothing about empty or missing text', () => {
+    // An empty key is a key the model never reached, which the merge handles.
+    // Reporting it as mid-sentence would fire the warning on every run that had
+    // a key left over.
+    expect(endsMidSentence('')).toBe(false)
+    expect(endsMidSentence('   ')).toBe(false)
+    expect(endsMidSentence(null)).toBe(false)
+    expect(endsMidSentence(undefined)).toBe(false)
   })
 })

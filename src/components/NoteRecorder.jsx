@@ -46,6 +46,7 @@ export default function NoteRecorder({ value, onCommit, canEdit, label, teamId, 
   const [draft, setDraft] = useState(null)
   const [transcript, setTranscript] = useState('')
   const [showTx, setShowTx] = useState(false)
+  const [gap, setGap] = useState(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [vocab, setVocab] = useState(null)
@@ -75,11 +76,11 @@ export default function NoteRecorder({ value, onCommit, canEdit, label, teamId, 
     if (!blob || blob.size < 2000) { setErr('nothing was recorded'); return }
     setBusy(true); setStage('compress'); setPct(0)
     try {
-      const { note, transcript: tx } = await runAudioNote(blob, {
+      const { note, transcript: tx, gap: gapNote } = await runAudioNote(blob, {
         onStage: (s, p) => { setStage(s); setPct(p || 0) },
         glossaryExtra: vocab,
       })
-      setDraft(note); setTranscript(tx)
+      setDraft(note); setTranscript(tx); setGap(gapNote || null)
     } catch (e) {
       setErr((e && e.message) || String(e))
     } finally { setBusy(false); setStage(null) }
@@ -160,11 +161,24 @@ export default function NoteRecorder({ value, onCommit, canEdit, label, teamId, 
         {(value || '').trim() && (
           <button onClick={() => commit('replace')} disabled={saving} style={btn}>Replace note</button>
         )}
-        <button onClick={() => { setDraft(null); setTranscript(''); setShowTx(false) }} style={btn}>Discard</button>
+        <button onClick={() => { setDraft(null); setTranscript(''); setShowTx(false); setGap(null) }} style={btn}>Discard</button>
         <button onClick={() => setShowTx((s) => !s)} style={btn}>{showTx ? 'Hide' : 'Show'} transcript</button>
       </div>
       {err && <div style={{ color: '#EF4444', fontSize: 11, marginTop: 6 }}>✕ {err}</div>}
-      {showTx && <AutoTextarea readOnly value={transcript} minRows={6} style={{ ...ta, marginTop: 8, fontFamily: 'monospace', fontSize: 11, color: '#8a97a9' }} />}
+      {gap && <div style={{ color: '#F59E0B', fontSize: 11, marginTop: 6, lineHeight: 1.6 }}>⚠ {gap}</div>}
+      {showTx && (
+        <>
+          <div style={{ fontSize: 11, color: '#64748B', marginTop: 8 }}>
+            Raw transcript — {transcript.length.toLocaleString()} characters. All of it is below.
+          </div>
+          {/* maxHeight NONE, and last in the panel so it cannot push the buttons
+              away — see the note on the same box in AudioBrief. A box that stops
+              mid-sentence at its own bottom edge is indistinguishable from a
+              transcription that stopped. */}
+          <AutoTextarea readOnly value={transcript} minRows={6} maxHeight="none"
+            style={{ ...ta, marginTop: 4, fontFamily: 'monospace', fontSize: 11, color: '#8a97a9' }} />
+        </>
+      )}
     </div>
   )
 }

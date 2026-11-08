@@ -72,3 +72,38 @@ export function stoppedCleanly(finishReason: string | null | undefined): boolean
   if (finishReason == null || finishReason === '') return true
   return finishReason === 'stop' || finishReason === 'tool_calls'
 }
+
+/**
+ * Does this text stop mid-sentence?
+ *
+ * THE THIRD SIGNAL, and the one that catches what the other two cannot.
+ *
+ * `repaired` was added because finish_reason is metadata the provider may get
+ * wrong. It is better evidence — but it only fires when the JSON did not close.
+ * On Ryujin's 7 Nov debrief (17:52 of audio, a complete 13,870-character
+ * transcript) Mistral returned a **valid, closed** JSON object whose single
+ * value stopped at "…allowed for a quick ", and reported
+ * `finish_reason: "stop"`. Both signals said finished, the continuation loop
+ * never ran, no warning was shown, and 1,151 characters were saved as a whole
+ * note. Re-running it stops in the SAME sentence, so it is reproducible and not
+ * a one-off.
+ *
+ * Nothing about the metadata or the shape of the payload can see that. The
+ * CONTENT can: a working note that ends without so much as a full stop was cut,
+ * whoever says otherwise. `scripts/debrief-stored.ts` has diagnosed this by hand
+ * with exactly this test since it was written — it just had no way to tell the
+ * summariser, which is why both live here now.
+ *
+ * It errs toward flagging, deliberately and for the reason given above: a
+ * warning on a finished note costs a second's reading; a missing warning saves a
+ * note with its last point gone. The cost of a false positive is bounded — the
+ * continuation loop stops as soon as a round adds nothing.
+ *
+ * Only ever applied to MODEL output. A hand-typed note very often ends on a bare
+ * header or a "#actions" tag, and that is not a fault.
+ */
+export function endsMidSentence(s: string | null | undefined): boolean {
+  const tail = (s ?? '').trimEnd()
+  if (!tail) return false
+  return !/[.!?:)\]"'`\u00bb]$/.test(tail)
+}

@@ -269,6 +269,103 @@ naming the wrong step. That catch is gone. A photo that cannot be decoded now
 fails at import, by name, with the reason — which also means IndexedDB can no
 longer hold HEIC bytes that `uploadPhotoToCloud` would PUT as `image/jpeg`.
 
+**"The debrief transcription is cut short" has been FIVE different things.**
+Asked again on 8 Nov 2026, and the honest answer each time was somewhere else:
+
+| round | it was | fix |
+|---|---|---|
+| 1 | the BOX — `rows={5}` scrolling, content stopping at a bottom edge | `bd975f6`, `c0cc5b1` → `AutoTextarea` |
+| 2 | the MODEL running out of room, unflagged | `a0f2698`, `4a89f15` |
+| 3 | raising `max_tokens` would have 504'd — the ceiling is a TIME budget | `01a5516`, `3a2ed63`, `4fa4600` → `summariseWithContinuation`, 3 rounds |
+| 4 | the box again, in the ONE box round 1 missed | below |
+| 5 | **the real one**: a reply that stops mid-sentence and reports itself COMPLETE | below |
+
+**Round 5 is the one that was actually happening**, and it is worth knowing how
+it was pinned down, because rounds 1 and 4 were me guessing at a screen again.
+Ryujin's 7 Nov debrief stored **1,151 characters** ending
+`"…allowed for a quick "`. The input was still in `~/Downloads`
+(`Record-42.wav`, 48 kHz mono, **17:52**), so the whole pipeline could be
+re-run on the laptop rather than reasoned about:
+
+- `ffmpeg -ac 1 -ar 16000 -b:a 48k -f segment -segment_time 300` reproduces the
+  browser's chunking exactly → 4 chunks, 1.8 MB each;
+- each posted to Scaleway whisper → **13,870 chars, no empty part**. The
+  transcription was never the problem;
+- `collapseRepeats` removed **0** chars — no whisper loop either;
+- `debrief-resummarise.ts` on that transcript → **`finish_reason: "stop"`, JSON
+  valid and closed, 0 continuations, "complete"** — and the text stopped in the
+  SAME sentence. Reproducible, so not a one-off.
+
+So Mistral returns a **properly closed JSON object around an unfinished
+sentence** and calls it a clean stop. `stoppedCleanly` said finished;
+`repaired` said finished; the continuation loop — which works — never ran; no
+warning was shown; 1,151 characters were saved as a whole note. Nothing in the
+metadata or the shape of the payload can see this. **Only the content can**:
+`endsMidSentence()` is now the THIRD signal (`src/lib/debriefJson.ts`), and it
+is the same function `debrief-stored.ts` has used to diagnose this by hand since
+it was written — imported, not copied. With it: one continuation round, +2,365
+chars, **5,657 chars and nine sub-headers instead of 1,151 and five.**
+
+It errs toward flagging on purpose (a warning on a finished note costs a
+second's reading; a missing warning saves a note with its last point gone), and
+the cost is bounded — the loop already stops as soon as a round adds nothing, so
+a false positive is ONE extra call. It is applied only to MODEL output: **20 of
+38 stored debrief fields end without terminal punctuation, but most of those are
+HAND-TYPED** notes ending on a bare header or `#actions`, which is normal.
+`max_tokens` is irrelevant here — 1,151 chars is nowhere near 8,000 tokens; the
+model just stopped. And it is OFF for `note` mode (`contentSignal: false`): one
+dictated line, tidied, legitimately ends without a full stop, so the signal
+would fire on an ordinary note and charge a round trip to somebody holding a
+phone on the dock — to guard a 40-second recording against an 8,000-token
+ceiling it cannot reach. The other two signals stay on in every mode.
+
+Round 1 gave every NOTE box `maxHeight="none"` and left the **transcript** box at
+the 60vh default — the one box that holds forty minutes of speech, in 11px
+monospace grey on navy where the scrollbar is nearly invisible. The cap was there
+so a long transcript could not push the Save button off the page, and in both
+panels that box is the LAST element, BELOW the buttons, so it never could.
+
+And round 4 found the quiet one underneath: `transcribeChunks` joined an **empty
+chunk** in without a word. A recording whose last 5-minute part transcribed to
+`''` produced a transcript that stopped at the part boundary before it, and the
+summariser faithfully summarised the stretch it was given. It now returns
+`{ text, parts, silent }` and `describeSilentParts()` names which part and where
+it sits in the recording, clamped to the real duration. An empty part can be
+legitimate (nobody talking, or a 10-second final part), so it reports rather than
+raises.
+
+The general lesson, and the reason this keeps recurring: **"looks cut short" is
+not a measurement.** `scripts/debrief-stored.ts` exists because the last 200
+characters settle it in one go. The panel now states the transcript's own size —
+characters, parts, minutes of audio — so a short note can be attributed without a
+script: full transcript + short note is the model (`debrief-resummarise.ts`,
+which needs the transcript, hence the **Copy transcript** button, since the
+transcript is discarded the moment the draft is saved).
+
+**The consent gate counted the room by ROLE and never counted the person
+pressing the button.** `team_recording_consent()` (0078) counts only
+coach/tl1/tl3 — rightly, so an owner who never opens their profile cannot stop a
+coach debriefing. But `POST /api/admin/teams` auto-grants the CREATOR a
+`team_manager` membership, so **a team you make and are the only member of comes
+out `total = 0`**, and the route reads `total > 0 AND consented = total` as its
+answer. A team of one consenting person was told its team had not consented, by a
+panel that could name nobody — and the profile box it sent him to was already
+ticked. Three dead ends in one message. The general error is bigger than the
+one-person case: a `team_manager` or consultant who runs the debrief themselves
+was gated on everyone else's consent and never on their own, while their voice is
+on the recording. 0105 counts the caller alongside the sailing roles — pressing
+the button IS being in the room — and returns `you_consented` separately so the
+recorder can offer the tick box **on the spot** rather than sending the only
+member of a team to look for it. One real consequence to expect: a non-sailing
+member who had never ticked can now be refused where they were not before
+(peter.greenhalgh@doylesails.com on Baraka GP, 8 Nov 2026), which is the point.
+Two smaller things it clears up: consent **has always been retroactive** —
+nothing anywhere compares `recording_consent_at` to a recording's date, so
+ticking it today lets last month's debrief be summarised, which neither the page
+nor the panel used to say — and the profile page has **no save button** because
+it writes on change, which reads as broken when the only confirmation is a grey
+"· Saved." in small print.
+
 **A PDF's JPEGs are not always in the file as JPEGs.** `pdfImageExtract`
 scans the raw bytes for `FF D8 FF … FF D9`, which works because North writes
 `/Filter /DCTDecode` and the JPEG sits verbatim. Baraka's Sail Vision reports

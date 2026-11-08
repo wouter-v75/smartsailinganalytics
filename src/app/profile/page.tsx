@@ -15,9 +15,12 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { getBrowserSupabase } from '../../lib/supabase/browser'
 
-// The roles that are actually in a debrief. An owner (team_manager), a
-// consultant on a date-boxed window and a guest are not, so their answer
-// gates nobody — mirrors team_recording_consent() in migration 0078.
+// The roles that are in a debrief by virtue of sailing the boat. An owner
+// (team_manager), a consultant on a date-boxed window and a guest are not, so
+// their answer gates nobody ELSE — but since migration 0105 it still gates
+// THEM, because whoever presses record is in the room. Mirrors
+// team_recording_consent(). No tl2: migration 0083 removed that role and
+// promoted every holder to tl3.
 const DEBRIEF_ROLES = new Set(['coach', 'tl1', 'tl3'])
 
 interface Me {
@@ -101,6 +104,11 @@ export default function ProfilePage() {
           person reviews the draft before anything is saved.{' '}
           <Link href="/privacy" className="text-blue-600 hover:underline">How SSA handles data</Link>.
         </p>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600">
+          Your answer is a standing one, not a per-recording one: agreeing covers debriefs
+          already recorded as well as future ones, and withdrawing stops all of them. It is
+          saved the moment you tick the box — there is no save button.
+        </p>
 
         <label className="mt-5 flex cursor-pointer gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
           <input
@@ -113,25 +121,33 @@ export default function ProfilePage() {
           <span className="text-sm leading-relaxed text-slate-800">
             <strong>I agree to be recorded in team debriefs.</strong>
             <span className="mt-1 block text-xs text-slate-600">
-              You can withdraw this at any time by unticking it. Doing so stops the team
-              recorder for everyone until you agree again, so tell your coach if you turn it off.
+              Saved as soon as you tick it. You can withdraw it at any time by unticking,
+              which stops the team recorder for everyone until you agree again — so tell your
+              coach if you turn it off.
             </span>
           </span>
         </label>
 
-        <div className="mt-3 text-xs text-slate-500">
-          {me.recording_consent
-            ? <>Agreed{me.recording_consent_at ? ` on ${new Date(me.recording_consent_at).toLocaleDateString()}` : ''}.</>
-            : <>Not agreed. Your team&rsquo;s debrief recorder will not run until you do.</>}
-          {saving && ' · Saving…'}
-          {saved && !saving && ' · Saved.'}
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+          <span>
+            {me.recording_consent
+              ? <>Agreed{me.recording_consent_at ? ` on ${new Date(me.recording_consent_at).toLocaleDateString()}` : ''}, including debriefs recorded before that date.</>
+              : <>Not agreed. Your team&rsquo;s debrief recorder will not run until you do.</>}
+          </span>
+          {saving && <span className="text-slate-600">Saving…</span>}
+          {saved && !saving && (
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+              ✓ Saved
+            </span>
+          )}
         </div>
 
         {!inDebriefRole && (
           <p className="mt-4 border-l-2 border-slate-300 pl-3 text-xs leading-relaxed text-slate-500">
             Your roles are owner, consultant or guest, which are not counted as being in the
-            debrief — your answer here does not block anyone&rsquo;s recorder. It is kept in case
-            your role changes.
+            debrief — so your answer here does not block anyone else&rsquo;s recorder. It does
+            gate your own: if you are the one who records a debrief, your voice is on it, and
+            the recorder will not run until you have agreed.
           </p>
         )}
 
