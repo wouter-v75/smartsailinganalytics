@@ -152,9 +152,10 @@ What these change in the method:
   and *NW-morning* (210 → 280–290°). Each gets its own direction track and its own masthead distribution
   as far as the 12 days allow; with few days per sub-regime the speed distribution may have to stay
   pooled and only the direction split.
-- **A kill rule** in the classifier: strong E–SE gradient → no sea breeze; low-level inversion (1000/925 hPa
-  lapse at 08–14 local) → suppressed. The rule is calibrated on the station archive, then counted in the
-  window's 21 summers: *how many race days a year are lost to it* is one of the most useful single
+- **A kill rule** in the classifier: an offshore low-level flow → no sea breeze, unless the land–sea
+  contrast is strong; low-level inversion (1000/925 hPa) → flagged. As built (v2, 24 Nov 2026) in §5.3:
+  the strength of the E–SE flow alone turned out NOT to separate the days. The rule is to be confirmed on
+  the station archive, then counted in the window's 21 summers: *how many race days a year are lost to it* is one of the most useful single
   numbers the study can give a tactician.
 - **Timing**: model onset is shifted **30–60 min earlier** on sea-breeze days, so any timing product is
   built from the masthead and stations and only the regime comes from the model.
@@ -324,6 +325,55 @@ checked against the stations' diurnal turn:
 Cross-checked with an unsupervised k-means on the hourly CERRA wind at the course (Di Bernardino et al.
 2022 method) — two independent labellings that agree are worth more than one tuned one.
 
+#### As built — v2, 24 Nov 2026 (`scripts/naples-study/classify_regimes.py`)
+
+The classifier runs on **ERA5 alone**, so the same rule can label the 19 Northstar 72 days and all 21
+summers. It uses nothing the archive does not have, in particular not the boat's own direction. The
+10 / 12 kn gate thresholds and the sectors are taken as given; nothing is fitted to the 19 days, which
+are the check.
+
+| Input (ERA5, local = UTC + 2) | Used for |
+|---|---|
+| 850 hPa wind over the bay at 14 local | the synoptic gradient: ≥ 12 kn gradient, < 10 kn breeze possible |
+| 100 m wind at the course at 15 local | "onshore" = 150–300°. 150, not 180, because an SE-morning breeze starts at ~160° (S4) and ERA5 runs late |
+| 925 hPa wind at 08 local | the sea-breeze sub-regime: SE-morning (90–200°), NW-morning (250–20°), other |
+| 925 hPa wind at 14 local | the kill rule (below) |
+| land 2 m T − bay SST at 14 local (dT) | the breeze's engine, in the kill rule |
+| θ925 − θ1000 at 14 local | the stable-lid flag (above the window's 75th percentile, 3.9 K) |
+
+**The kill rule.** A 925 hPa flow of ≥ 8 kn from **off the land** as seen from the course (55–185°,
+Castellammare round to Punta Campanella) kills the breeze, **unless dT is above the window's median**
+(2.9 K). The first version, "E–SE at ≥ 8 kn", cost the check a day and caught none, and the reason
+is instructive. ERA5's offshore flow is *stronger* on 2024-05-15, when the breeze won (11 kn; the
+masthead had 207°), than on 2025-05-20, when it never came (8 kn; masthead 118°). No flow threshold
+can separate them. What does is the land–sea contrast, 5.5 K against 1.9 K: a breeze beats an
+opposing flow when its engine is strong enough.
+
+Only two check days exercise the rule, so it is **plausible, not validated**. Confirming it is a job
+for the station archive.
+
+**Check: 18 of the 19 Northstar 72 days agree** with the label the gate gave them using the boat's own
+direction. The miss, 2026-05-25, is a 6 kn day on which ERA5 has NNW at 15 local and the masthead had
+272°.
+
+**First results — provisional, 13 full summers** (2006–2015 and 2024–2026; 2016–2023 still downloading):
+
+| | sea breeze | sea breeze on a gradient | gradient | no breeze |
+|---|---|---|---|---|
+| Study window, 30 May – 2 Aug | 62 % | 8 % | 27 % (S–SW 13, NW 7, N–NE 6) | 3 % — ~2 days a summer |
+| Regatta week, 29 Jun – 3 Jul | 71 % | 5 % | 22 % | 3 % |
+| May 10–31 (the N72 season) | 43 % | 8 % | 40 % | 8 % |
+
+Among sea-breeze days in the window, a NW morning is the most common (36 % of all days), then other
+mornings (21 %), then SE mornings (5 %).
+
+**May is not July.** May has half as many gradient days again and nearly three times the lost days.
+Any May-calibrated correction must therefore be applied per regime, never to the pooled distribution,
+which is the premise of §5.4.
+
+Each summer sees 42–49 sea-breeze days out of 65 and 1–4 lost days. An earlier run, made while 2014's files
+were still arriving, showed it with 45 gradient days; with the summer complete it reads 19.
+
 ### 5.4 Build the 30 m wind per regime (revised 24 Nov 2026 after the 5.2 result)
 
 1. **Classify every day 2006–2026** (§5.3) from ERA5 alone, so the same rule applies to the N72 days and
@@ -417,7 +467,7 @@ May and hurts in July is exactly what the `seasonal` mechanism exists for.
 | 7 | Report, brief, data products | 5, 6 | here + `docs:pdf` |
 | opt | MERIDA / Parthenope WRF / ISPRA spatial layer | deferred: Copernicus first | laptop |
 
-WP1 is the long pole: CDS queue time for ~40 summers of CERRA is days, not hours — **measured on
+WP1 is the long pole: CDS queue time for 21 summers of CERRA is days, not hours — **measured on
 23 Nov 2026, one CERRA height-level request waited ~1 h 40 min in the queue** where the ERA5 and
 CERRA single-level ones ran in minutes. **Pilot first on
 2024–2026** — those are also the N72 summers, so the validation gate (5.2) can run on the pilot alone
