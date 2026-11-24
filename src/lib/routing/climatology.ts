@@ -125,3 +125,29 @@ export function bootstrap(values: number[], n = 4000, seed = 1): { median: [numb
   const q = (a: number[], p: number) => { a.sort((p1, q1) => p1 - q1); return a[Math.min(a.length - 1, Math.floor(p * a.length))] }
   return { median: [q(meds, 0.05), q(meds, 0.95)], mean: [q(means, 0.05), q(means, 0.95)] }
 }
+
+/**
+ * The same interval, resampling whole GROUPS (years) rather than values. With
+ * several starts a year the routes inside one year share its weather regimes,
+ * so they are not independent draws; resampling them one by one treats 320
+ * correlated routes as 320 samples and makes the interval far too narrow.
+ * Resampling years keeps each year's starts together, which is the honest unit.
+ */
+export function bootstrapBlocks(groups: number[][], n = 4000, seed = 1): { median: [number, number]; mean: [number, number] } {
+  const g = groups.map(x => x.filter(Number.isFinite)).filter(x => x.length)
+  if (g.length < 3) return { median: [NaN, NaN], mean: [NaN, NaN] }
+  if (g.every(x => x.length === 1)) return bootstrap(g.map(x => x[0]), n, seed)
+  let s = seed >>> 0
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
+  const meds: number[] = [], means: number[] = []
+  for (let b = 0; b < n; b++) {
+    const x: number[] = []
+    for (let i = 0; i < g.length; i++) for (const v of g[Math.floor(rnd() * g.length)]) x.push(v)
+    x.sort((p, q) => p - q)
+    const m = x.length
+    meds.push(m % 2 ? x[(m - 1) / 2] : (x[m / 2 - 1] + x[m / 2]) / 2)
+    means.push(x.reduce((p, q) => p + q, 0) / m)
+  }
+  const q = (a: number[], p: number) => { a.sort((p1, q1) => p1 - q1); return a[Math.min(a.length - 1, Math.floor(p * a.length))] }
+  return { median: [q(meds, 0.05), q(meds, 0.95)], mean: [q(means, 0.05), q(means, 0.95)] }
+}

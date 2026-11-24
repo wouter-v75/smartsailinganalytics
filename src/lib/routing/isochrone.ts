@@ -164,6 +164,7 @@ function routeLeg(
   let t = startMs
   for (let step = 0; step < maxSteps; step++) {
     if (box.best && t >= box.best.arrive) break
+    const base = store.length
     const next: number[] = []
     for (const id of front) {
       const n = store[id]
@@ -232,6 +233,20 @@ function routeLeg(
     }
     front = []
     for (let s = 0; s < nSec; s++) if (keep[s] >= 0) { front.push(keep[s]); prevReach[s] = far[s] }
+    // Drop what the pruning discarded. Only the front is ever a parent, and the
+    // best arrival so far is the only other node a walk back can start from, so
+    // everything else this step made is garbage. Keeping it is ~30 candidates
+    // per front point per step: on a 2,200 nm ocean leg that was ~35 million
+    // nodes and the heap ran out before the first year finished.
+    const survivors = front.map(id => store[id])
+    const remap = new Map<number, number>()
+    front.forEach((id, k) => remap.set(id, base + k))
+    const bb = box.best
+    if (bb && bb.node >= base && !remap.has(bb.node)) { remap.set(bb.node, base + survivors.length); survivors.push(store[bb.node]) }
+    if (bb && bb.node >= base) bb.node = remap.get(bb.node)!
+    store.length = base
+    for (const n of survivors) store.push(n)
+    front = front.map(id => remap.get(id)!)
     if (!front.length) break
   }
 

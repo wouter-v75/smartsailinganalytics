@@ -19,20 +19,24 @@ has been checked; section 9 says what it needs.
 ## 1. How to run it
 
 ```bash
-cd /Users/wouterverbraak/Code/ssa && pip install -r scripts/routing/requirements.txt
+cd /Users/wouterverbraak/Code/ssa && python3 -m venv .venv && .venv/bin/pip install -r scripts/routing/requirements.txt
 ```
 
 ```bash
-cd /Users/wouterverbraak/Code/ssa && python3 scripts/routing/era5_fetch.py --gpx ~/Downloads/course.gpx --start 2026-10-17 --days 6 --years 2006-2025 --out ~/routing/msr --write
+cd /Users/wouterverbraak/Code/ssa && .venv/bin/python scripts/routing/era5_fetch.py --gpx ~/Downloads/course.gpx --start 2026-10-17 --days 6 --window 15 --years 2006-2025 --out ~/routing/msr --write
 ```
 
 ```bash
-cd /Users/wouterverbraak/Code/ssa && npx vite-node scripts/route-climatology.ts -- --data ~/routing/msr --gpx ~/Downloads/course.gpx --polar ~/Downloads/boat.pol --start "2026-10-17 11:00" --mast 35 --convergence
+cd /Users/wouterverbraak/Code/ssa && npx vite-node scripts/route-climatology.ts -- --data ~/routing/msr --gpx ~/Downloads/course.gpx --polar ~/Downloads/boat.pol --start "2026-10-17 11:00" --mast 35 --window 15 --every 48 --convergence
 ```
 
 The fetch is dry-run without `--write` and prints the box, the cell count and the
 size. `--days` is the longest race to allow for; a year whose route has not
-finished when the wind runs out is reported as failed, never as a time. Results
+finished when the wind runs out is reported as failed, never as a time.
+`--window 15` on both commands starts the race every `--every 48` hours from 15
+days before the date to 15 days after: 16 starts a year, ~320 over twenty years
+(§7). Homebrew's Python has no `pip` and refuses global installs (PEP 668), hence
+the venv; `.venv/` is gitignored. Results
 land in `~/routing/msr/results`: `report.html`, `summary.json`, `elapsed.csv`,
 `table-iso-pct.csv`, `table-grid-pct.csv` (and `-hours`), `routes.geojson`.
 
@@ -44,7 +48,9 @@ land in `~/routing/msr/results`: `report.html`, `summary.json`, `elapsed.csv`,
 | `--radius` | 0.25 nm | mark rounding radius |
 | `--step` | 30 min | isochrone time step |
 | `--sector-nm` | 0.5 nm | isochrone pruning resolution (§3.4) |
+| `--window` / `--every` | 0 d / 48 h | extra starts either side of the date, and their spacing |
 | `--cell` / `--stencil` | 2 nm / 32 | grid lattice spacing and directions |
+| `--max-nodes` | 400,000 | grid lattice cap; an ocean leg needs a coarser `--cell` or more (Transpac: `--cell 4 --max-nodes 1500000`) |
 | `--method` | both | `iso`, `grid` or both |
 | `--convergence` | off | re-route the first year finer and report the change |
 
@@ -386,10 +392,21 @@ ERA5's Mediterranean sea-breeze cycle was found.
 
 ## 7. Results, as reported
 
-- **Elapsed time:** min, max, mean, median, 1σ (sample), plus a 90 % bootstrap interval
-  on the median. Twenty years is a small sample of a climate, its tails most of
-  all, and the interval says how much of a difference between two studies is the
-  sample.
+- **Elapsed time:** min, max, mean, median, 1σ (sample) over every route, plus 90 %
+  bootstrap intervals on the median and the mean. Twenty years is a small sample of
+  a climate, its tails most of all, and the interval says how much of a difference
+  between two studies is the sample.
+- **Several starts a year.** `--window 15 --every 48` routes 16 starts a year at the
+  same local clock time, which is how these studies are usually run: twenty single
+  starts are twenty samples, and a window round the date multiplies that without
+  leaving the season. The starts inside one year are **not** independent — a
+  regime can sit over the course for a fortnight — so the interval resamples whole
+  YEARS (a block bootstrap, `bootstrapBlocks`), not routes. Resampling 320 routes
+  one by one would treat them as 320 independent draws and give an interval
+  several times too narrow (the test pins it at more than 2× on a year-correlated
+  set). The report also breaks the result down **by start offset**, so a trend
+  through the window (the Pacific High strengthening into July, say) shows rather
+  than being averaged away.
 - **Time on each point of sail:** upwind (< 70°), reaching (70–120°), downwind (> 120°),
   and on starboard.
 - **The TWA × TWS table:** mean hours per race and % of sailing time.
@@ -397,11 +414,21 @@ ERA5's Mediterranean sea-breeze cycle was found.
   - There is an under and an over bin on each axis, so no hour silently drops out:
     a 28° beat and a 170° run are still time sailed.
   - TWS is the wind at the polar's height.
-- **Per year:** start in UTC, elapsed time, time per leg, sailed distance, tacks and gybes.
+- **Per year:** mean, min and max over that year's starts; per route in `elapsed.csv`:
+  local and UTC start, elapsed time, time per leg, sailed distance, tacks and gybes.
 - **Routes** as GeoJSON and on the report's chart.
 
-A year whose route does not finish inside the fetched window is counted as failed
-and reported separately. It is never turned into a number.
+A route that does not finish inside the fetched window is counted as failed and
+reported separately. It is never turned into a number. Each route may run for as
+long as its year's data lasts — the isochrone router's own default cap is 240 h,
+which on a 2,200 nm ocean course would fail exactly the slow starts and bias the
+mean fast, so the runner lifts it to the data's end.
+
+**Memory on an ocean leg.** The isochrone router used to keep every candidate it
+generated, including the ~95 % the pruning discards. On a 330 nm course that is
+harmless; on Transpac it was ~35 million nodes and the heap ran out before the
+first route finished. Only the surviving front and the best arrival can ever be
+walked back from, so the rest is dropped after each step.
 
 ## 8. Limitations of the first build
 
@@ -411,9 +438,8 @@ and reported separately. It is never turned into a number.
   iterated so COG points at the target. CMEMS currents would slot into `advance()`.
 - **No waiting** in a calm that fills (§3.5).
 - **ERA5's strong-wind and stable-layer biases** (§6) are inherited, not corrected.
-- **The same calendar date each year.** Adrena and PredictWind also shift the start
-  ±1–3 days to separate a weather window's luck from the season. That is a loop in
-  the runner, not new code, and worth adding.
+- **Runtime.** A 2,200 nm leg is ~20 s per route for the isochrone and ~12 s for a
+  4 nm grid; 320 starts with both methods is ~3 h. `--method iso` halves it.
 
 ## 9. The web tab, when it comes
 

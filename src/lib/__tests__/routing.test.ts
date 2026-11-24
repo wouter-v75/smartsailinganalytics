@@ -5,7 +5,7 @@ import { routeIsochrone } from '../routing/isochrone'
 import { routeGrid } from '../routing/gridRouter'
 import { parseCourseGpx, type Course } from '../routing/course'
 import { distNm, destination } from '../routing/geo'
-import { elapsedStats, twaTwsTable, localStartToUtc } from '../routing/climatology'
+import { elapsedStats, twaTwsTable, localStartToUtc, bootstrap, bootstrapBlocks } from '../routing/climatology'
 import type { Env } from '../routing/motion'
 import type { LandMask } from '../routing/land'
 
@@ -179,6 +179,18 @@ describe('climatology', () => {
     const off = (ms: number) => (ms < Date.UTC(2025, 9, 26, 1) ? 120 : 60)
     expect(new Date(localStartToUtc(2025, 10, 18, 11, 0, off)).toISOString()).toBe('2025-10-18T09:00:00.000Z')
     expect(new Date(localStartToUtc(2025, 10, 27, 11, 0, off)).toISOString()).toBe('2025-10-27T10:00:00.000Z')
+  })
+  it('starts within a year are resampled together, which widens the interval', () => {
+    // 20 years x 16 starts; each year's starts sit close to that year's own level.
+    const groups = Array.from({ length: 20 }, (_, y) => Array.from({ length: 16 }, (_, k) => 200 + 30 * Math.sin(y * 1.7) + (k % 4)))
+    const flat = bootstrap(groups.flat()), blocks = bootstrapBlocks(groups)
+    const w = (ci: [number, number]) => ci[1] - ci[0]
+    expect(w(blocks.mean)).toBeGreaterThan(2 * w(flat.mean))
+    expect(blocks.mean[0]).toBeLessThan(200 + 1); expect(blocks.mean[1]).toBeGreaterThan(200 - 1 - 30)
+  })
+  it('one start a year reduces to the ordinary bootstrap', () => {
+    const v = [5, 9, 7, 12, 3, 8]
+    expect(bootstrapBlocks(v.map(x => [x]))).toEqual(bootstrap(v))
   })
   it('a far destination point stays on the sphere', () => {
     const p = destination(36, 14, 45, 100)

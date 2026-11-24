@@ -3,7 +3,9 @@
 ERA5 for a weather-routing climatology: one race window, N years, one box.
 
 For every year in --years, fetches the hourly ERA5 single-level fields from
-(start date - 1 day) to (start date + --days) over the course's box, and writes
+(start date - --window - 1 day) to (start date + --window + --days) over the
+course's box — --window is for a study that starts the race on several dates
+round the real one (every 48 h from -15 to +15 days is ~16 starts a year) — and writes
 them as a flat float32 file the TypeScript router reads directly:
 
     <out>/era5/<YYYY>.json   header: grid, times, variable order
@@ -105,14 +107,14 @@ def gpx_box(path: Path, pad_deg: float | None):
             snap(min(lats) - pad, math.floor), snap(max(lons) + pad, math.ceil)]
 
 
-def windows(start: dt.date, days: int, years: list[int]):
-    """Per year: the dates from start-1 to start+days, grouped by month."""
+def windows(start: dt.date, days: int, years: list[int], window: int = 0):
+    """Per year: the dates from start-window-1 to start+window+days, grouped by month."""
     for y in years:
         try:
             s = start.replace(year=y)
         except ValueError:  # 29 Feb
             s = start.replace(year=y, day=28)
-        dates = [s + dt.timedelta(days=d) for d in range(-1, days + 1)]
+        dates = [s + dt.timedelta(days=d) for d in range(-1 - window, days + window + 1)]
         by_month: dict[tuple[int, int], list[int]] = {}
         for d in dates:
             by_month.setdefault((d.year, d.month), []).append(d.day)
@@ -216,6 +218,8 @@ def main():
     ap.add_argument("--pad", type=float, default=None, help="deg round the course (default max(1, 25%% of extent))")
     ap.add_argument("--start", required=True, help="race start date, YYYY-MM-DD (the year is ignored)")
     ap.add_argument("--days", type=int, required=True, help="longest race to allow for, days")
+    ap.add_argument("--window", type=int, default=0,
+                    help="days EITHER SIDE of --start to allow starts on (e.g. 15 for starts every 48 h from -15 to +15 d)")
     ap.add_argument("--years", default="2006-2025")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--minimal", action="store_true", help="wind + t2m + sst only")
@@ -232,21 +236,21 @@ def main():
     varset = MINIMAL if a.minimal else {v[2] for v in VARS}
     nlat = round((area[0] - area[2]) / 0.25) + 1
     nlon = round((area[3] - area[1]) / 0.25) + 1
-    hours = 24 * (a.days + 2)
+    hours = 24 * (a.days + 2 + 2 * a.window)
     mb = nlat * nlon * hours * len(varset) * 4 / 1e6
     print(f"area N{area[0]} W{area[1]} S{area[2]} E{area[3]}: {nlat}x{nlon} cells, "
           f"{hours} h/yr, {len(varset)} fields -> {mb:.0f} MB/yr, {mb * len(years) / 1e3:.2f} GB for {len(years)} years")
 
     out = a.out.expanduser()
     era = out / "era5"
-    todo = [w for w in windows(start, a.days, years) if not (era / f"{w[0]}.bin").exists()]
+    todo = [w for w in windows(start, a.days, years, a.window) if not (era / f"{w[0]}.bin").exists()]
     for y, dates, by_month in todo:
         print(f"  {y}: {dates[0]} .. {dates[-1]}  ({len(by_month)} request{'s' if len(by_month) > 1 else ''})")
     if not a.write:
         print("dry run -- add --write to fetch")
         return
     era.mkdir(parents=True, exist_ok=True)
-    (out / "fetch.json").write_text(json.dumps({"area": area, "start": a.start, "days": a.days, "years": years,
+    (out / "fetch.json").write_text(json.dumps({"area": area, "start": a.start, "days": a.days, "window": a.window, "years": years,
                                                  "vars": sorted(varset)}, indent=1))
     if not (out / "land.bin").exists():
         write_land(out, area, a.land_res)
