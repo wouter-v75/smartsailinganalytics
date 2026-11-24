@@ -29,8 +29,8 @@ fitted to the 19 days, which are the check:
   g850 < 10 and the afternoon onshore -> SEA BREEZE, sub-labelled by the morning 925 hPa direction:
                                          SE-morning (90-200), NW-morning (250-20), other-morning
   g850 < 10, NOT onshore, or onshore
-  but 925 hPa E-SE >= 8 kn at 14 local -> NO BREEZE (a lost race day for a sea-breeze venue), with the
-                                         reason it most likely failed: E-SE low-level flow (S6), a stable
+  but killed by an offshore flow (S6)  -> NO BREEZE (a lost race day for a sea-breeze venue), with the
+                                         reason it most likely failed: offshore low-level flow, a stable
                                          lid (stab above the window's p75), or neither
   10 <= g850 < 12                     -> SB on a gradient if onshore, else gradient by direction
 'Onshore' = the 15-local 100 m direction in 150-300 deg at the course. 150, not 180, because of S4:
@@ -39,10 +39,16 @@ local it can still be on the first half of that track -- 2024-05-14 and -15, bot
 the masthead (obs 236 and 207 deg), read 179.5 and 150.5 in ERA5. Set from the site answer, not fitted;
 without the 925 hPa data the check agreed on 16 of 19 days at 180 and 17 at 150.
 
-With the 2024-26 925 hPa data in (24 Nov) it agrees on 16 of 19, and the E-SE kill rule is the reason:
-it KILLS 2024-05-15 (a sea breeze at the masthead, 207 deg 9.4 kn) and still does not catch 2025-05-20,
-the E-SE day (obs 118 deg) it was written for. The third miss, 2026-05-25, is a 6 kn day ERA5 has
-NNW. The kill rule is v1 and unvalidated; read 'no breeze / E-SE low-level flow' with that in mind.
+The kill rule (S6, v2, 24 Nov): a 925 hPa flow at 14 local of >= 8 kn from OFF the land -- 55-185 deg,
+Castellammare round to Punta Campanella as seen from the course -- kills the breeze UNLESS the land-sea
+contrast dT is above the window's median (2.9 K over 14 summers). v1 was 'E-SE 60-170 at >= 8 kn' and
+cost the check a day while catching none: it killed 2024-05-15 (sea breeze at the masthead, 207 deg) and
+missed 2025-05-20 (the breeze never came, obs 118 deg), whose 925 flow is from 178. ERA5's offshore flow
+is STRONGER on the day the breeze won (11 kn against 8), so no flow threshold separates them; dT does
+(5.5 K against 1.9), which is the textbook picture -- a breeze beats an opposing flow when its engine is
+strong. Nothing here is fitted: the sector is the coastline and the threshold is the window's median.
+But only TWO check days exercise it, so it is plausible, not validated. Check: 18 of 19. The miss,
+2026-05-25, is a 6 kn day ERA5 has NNW at 15 local (masthead 272).
 
 Flags, not labels, until the station archive can calibrate them: lid = stab above the window's p75,
 heat = t850 above the window's p90.
@@ -69,6 +75,8 @@ SEA = dict(lat=(40.5, 40.8), lon=(14.0, 14.5))         # the bay itself
 WINDOW = ((5, 30), (8, 2))                  # regatta 29 Jun - 3 Jul +/- 30 days
 REGATTA = ((6, 29), (7, 3))
 MAY = ((5, 10), (5, 31))
+# the land seen from the course: Castellammare 57 deg (16 km) round to Punta Campanella 176 (6 km)
+OFF_LAND = (55, 185)
 
 
 def wdir(u, v):
@@ -156,19 +164,24 @@ def sector(d):
                      ["NW", "N-NE", "E-SE"], "S-SW")
 
 
-def classify(f: pd.DataFrame, lid_kelvin: float) -> pd.DataFrame:
+def classify(f: pd.DataFrame, lid_kelvin: float, engine_kelvin: float) -> pd.DataFrame:
     f = f.copy()
     onshore = between_deg(f.dpm100, 150, 300)
     strong, weak = f.g850 >= 12, f.g850 < 10
     morning = np.select([between_deg(f.get("dm925", pd.Series(np.nan, f.index)), 90, 200),
                          between_deg(f.get("dm925", pd.Series(np.nan, f.index)), 250, 20)],
                         ["SE-morning", "NW-morning"], "other-morning")
-    ese_low = between_deg(f.get("da925", pd.Series(np.nan, f.index)), 60, 170) & (f.get("a925", 0) >= 8)
+    # S6, v2: an OFFSHORE low-level flow kills the breeze unless the breeze's engine is strong.
+    # Offshore = 925 hPa at 14 local from OFF_LAND, the land seen from the course; strong = dT above
+    # the window's median. Flow strength alone cannot do it: ERA5's 925 flow is STRONGER on
+    # 2024-05-15 (11 kn, a sea breeze at the masthead) than on 2025-05-20 (8 kn, the breeze never
+    # came) -- what differs is dT, 5.5 K against 1.9 K.
+    offshore = between_deg(f.get("da925", pd.Series(np.nan, f.index)), *OFF_LAND) & (f.get("a925", 0) >= 8)
+    ese_low = offshore & (f.dT < engine_kelvin)
     lid = f.get("stab", pd.Series(np.nan, f.index)) > lid_kelvin
-    why = np.select([ese_low, lid], ["E-SE low-level flow", "stable lid"], "neither")
-    # S6 first: a strong E-SE low-level flow kills the breeze even when ERA5's afternoon reads
-    # 'onshore' -- at 150-170 deg an SE gradient and the start of an SE-morning breeze look alike at
-    # 100 m, and only the flow above the breeze (925 hPa at 14 local) tells them apart.
+    why = np.select([ese_low, lid], ["offshore low-level flow", "stable lid"], "neither")
+    # applied first: at 150-180 deg an SE gradient and the start of an SE-morning breeze look alike
+    # at 100 m, and only the flow above the breeze (925 hPa at 14 local) tells them apart.
     onshore = onshore & ~ese_low
     f["regime"] = np.select(
         [strong, weak & onshore, weak & ~onshore, onshore],
@@ -237,7 +250,9 @@ def main():
     win = f[in_range(f.index, WINDOW)]
     lid_k = float(win.stab.quantile(0.75)) if "stab" in win and win.stab.notna().any() else np.inf
     print(f"lid threshold (window p75 of theta925 - theta1000 at 14 local): {lid_k:.1f} K\n")
-    f = classify(f, lid_k)
+    eng_k = float(win.dT.median())
+    print(f"offshore-flow kill unless dT above the window median: {eng_k:.1f} K\n")
+    f = classify(f, lid_k, eng_k)
 
     check_n72(f)
     table(f, WINDOW, "STUDY WINDOW 30 May - 2 Aug")
