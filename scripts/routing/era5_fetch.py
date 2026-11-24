@@ -24,7 +24,9 @@ costs the same as asking for less of it.
 
 ONE REQUEST PER (YEAR, MONTH): a window that crosses a month end becomes two
 requests, because the CDS takes year/month/day as a cartesian product and one
-request for 28 Oct - 3 Nov would fetch 28-31 AND 1-3 of BOTH months.
+request for 28 Oct - 3 Nov would fetch 28-31 AND 1-3 of BOTH months. --parallel
+of them (default 6) sit in the CDS queue at once, because the queue is where the
+time goes; see run().
 
 Dry run by default (prints the plan); --write fetches. A year whose .bin exists is
 skipped, so an interrupted run restarts where it stopped. Key: CDSAPI_KEY in the
@@ -41,8 +43,12 @@ import json
 import os
 import re
 import sys
+import shutil
 import tempfile
+import threading
+import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -121,27 +127,23 @@ def windows(start: dt.date, days: int, years: list[int], window: int = 0):
         yield y, dates, by_month
 
 
-def fetch_year(c, year, by_month, area, varset, tmp: Path) -> list[list[Path]]:
-    """One list of files per month: a month may come back as several streams."""
-    months = []
-    for (yy, mm), dd in sorted(by_month.items()):
-        target = tmp / f"{yy}-{mm:02d}.dl"
-        c.retrieve("reanalysis-era5-single-levels", {
-            "product_type": ["reanalysis"],
-            "variable": [v[0] for v in VARS if v[2] in varset],
-            "year": [str(yy)], "month": [f"{mm:02d}"], "day": [f"{d:02d}" for d in dd],
-            "time": [f"{h:02d}:00" for h in range(24)],
-            "area": area, "data_format": "netcdf", "download_format": "unarchived",
-        }).download(str(target))
-        with open(target, "rb") as f:
-            magic = f.read(2)
-        if magic == b"PK":
-            with zipfile.ZipFile(target) as z:
-                z.extractall(tmp / f"{yy}-{mm:02d}")
-                months.append([tmp / f"{yy}-{mm:02d}" / n for n in z.namelist() if n.endswith(".nc")])
-        else:
-            months.append([target])
-    return months
+def fetch_month(c, yy, mm, dd, area, varset, tmp: Path) -> list[Path]:
+    """One month's request; the files it came back as (a month may be several streams)."""
+    target = tmp / f"{yy}-{mm:02d}.dl"
+    c.retrieve("reanalysis-era5-single-levels", {
+        "product_type": ["reanalysis"],
+        "variable": [v[0] for v in VARS if v[2] in varset],
+        "year": [str(yy)], "month": [f"{mm:02d}"], "day": [f"{d:02d}" for d in dd],
+        "time": [f"{h:02d}:00" for h in range(24)],
+        "area": area, "data_format": "netcdf", "download_format": "unarchived",
+    }).download(str(target))
+    with open(target, "rb") as f:
+        magic = f.read(2)
+    if magic == b"PK":
+        with zipfile.ZipFile(target) as z:
+            z.extractall(tmp / f"{yy}-{mm:02d}")
+            return [tmp / f"{yy}-{mm:02d}" / n for n in z.namelist() if n.endswith(".nc")]
+    return [target]
 
 
 def write_year(months: list[list[Path]], out: Path, year: int, varset):
@@ -187,8 +189,15 @@ def write_year(months: list[list[Path]], out: Path, year: int, varset):
         "t0": int(times[0]), "dtMs": 3600_000, "nT": int(len(times)),
         "source": "ERA5 single levels (C3S CDS)",
     }
-    (out / f"{year}.bin").write_bytes(b"".join(a.tobytes() for a in arrays))
+    # The .bin is what marks a year DONE (a rerun skips it), so it appears last
+    # and whole: written under another name and renamed. A run killed mid-write
+    # used to leave a truncated .bin that every later run skipped.
     (out / f"{year}.json").write_text(json.dumps(hdr, indent=1))
+    part = out / f"{year}.bin.part"
+    with open(part, "wb") as f:
+        for a in arrays:
+            f.write(a.tobytes())
+    os.replace(part, out / f"{year}.bin")
     for d in dss:
         d.close()
 
@@ -224,6 +233,9 @@ def main():
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--minimal", action="store_true", help="wind + t2m + sst only")
     ap.add_argument("--land-res", type=float, default=0.01)
+    ap.add_argument("--parallel", type=int, default=6,
+                    help="requests kept in the CDS queue at once (default 6). The wait is the queue, not the "
+                         "download, so sending them one at a time spends most of a run waiting")
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args()
 
@@ -254,12 +266,64 @@ def main():
                                                  "vars": sorted(varset)}, indent=1))
     if not (out / "land.bin").exists():
         write_land(out, area, a.land_res)
-    c = cds_client()
+    run(todo, area, varset, era, max(1, a.parallel))
+
+
+def run(todo, area, varset, era: Path, parallel: int):
+    """
+    Every (year, month) request is its own job, `parallel` of them in the CDS
+    queue at once; a year is written the moment its last month is in. Measured
+    on the Transpac fetch with one request at a time: 4-6 min queued and 1-2 min
+    downloading per request, so ~27 min a year and ~9 h for twenty — almost all
+    of it waiting. Each worker thread has its own client. Writing a year holds
+    ~1-2 GB, so writes take turns rather than running side by side.
+    """
+    local = threading.local()
+    write_lock, state_lock = threading.Lock(), threading.Lock()
+    pending: dict[int, dict] = {}
     for y, _, by_month in todo:
-        with tempfile.TemporaryDirectory() as td:
-            files = fetch_year(c, y, by_month, area, varset, Path(td))
-            write_year(files, era, y, varset)
-        print(f"  {y}: written")
+        pending[y] = {"left": len(by_month), "files": {}, "tmp": Path(tempfile.mkdtemp(prefix=f"era5-{y}-"))}
+    jobs = [(y, yy, mm, dd) for y, _, by_month in todo for (yy, mm), dd in sorted(by_month.items())]
+    failed: dict[int, str] = {}
+    t0 = time.time()
+    done_years = 0
+
+    def one(job):
+        y, yy, mm, dd = job
+        if y in failed:
+            return y, None
+        if not hasattr(local, "c"):
+            local.c = cds_client()
+        files = fetch_month(local.c, yy, mm, dd, area, varset, pending[y]["tmp"])
+        with state_lock:
+            st = pending[y]
+            st["files"][(yy, mm)] = files
+            st["left"] -= 1
+            last = st["left"] == 0
+        if last:
+            with write_lock:
+                write_year([st["files"][k] for k in sorted(st["files"])], era, y, varset)
+            shutil.rmtree(st["tmp"], ignore_errors=True)
+        return y, last
+
+    print(f"{len(jobs)} requests, {parallel} at a time")
+    with ThreadPoolExecutor(max_workers=parallel) as ex:
+        futs = {ex.submit(one, j): j for j in jobs}
+        for f in as_completed(futs):
+            y, yy, mm, _ = futs[f]
+            try:
+                _, last = f.result()
+            except (Exception, SystemExit) as e:  # noqa: BLE001 -- one bad request must not stop the other years
+                failed[y] = f"{yy}-{mm:02d}: {e}"
+                print(f"  {y}: FAILED {failed[y]}", file=sys.stderr)
+                continue
+            if last:
+                done_years += 1
+                print(f"  {y}: written  ({done_years}/{len(pending)} years, {(time.time() - t0) / 60:.0f} min)", flush=True)
+    for y in failed:
+        shutil.rmtree(pending[y]["tmp"], ignore_errors=True)
+    if failed:
+        raise SystemExit(f"{len(failed)} year(s) failed: {', '.join(map(str, sorted(failed)))} -- rerun the same command to retry them")
 
 
 if __name__ == "__main__":

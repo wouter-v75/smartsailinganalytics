@@ -278,6 +278,16 @@ The four wind fields are about 105 MB and all fourteen about 360 MB as float32.
 does not reduce it. One request per year-month is about 2,700 items, well inside
 the cap.
 
+**The time is the queue, not the download.** Measured on the Transpac fetch
+(46 days a year over 91 × 199 cells, three monthly requests a year): each request
+waited 4–6 min in the CDS queue and downloaded in 1–2 min, so one request at a
+time was ~27 min a year and ~9 h for twenty. The fetcher now keeps `--parallel 6`
+requests in the queue at once and writes each year the moment its last month is
+in. The CDS caps how many of one account's jobs RUN at a time, and another study
+on the same key competes for those slots, so the gain is a few times, not six.
+A year's `.bin` is written under another name and renamed, so a run killed
+mid-write never leaves a truncated year that the next run would skip.
+
 **The cloud copies are a trap from a laptop.** Google's ARCO-ERA5 Zarr is chunked
 one global field per hour, so a small box costs a full field per hour read:
 70–150 GB of reads for one study.
