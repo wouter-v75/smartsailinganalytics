@@ -19,7 +19,17 @@ export interface Env {
   polar: RoutingPolar
   wind: WindGrid
   land: LandMask | null
+  /**
+   * Share of the polar sailed at (lat, lon, t), e.g. 0.95 by day and 0.90 by
+   * night (daylight.ts). Absent = the polar as it stands. It scales SPEED only:
+   * the VMG angles and the no-go edge are the polar's shape, which a uniform
+   * factor does not move.
+   */
+  perf?: (lat: number, lon: number, tMs: number) => number
 }
+
+/** The performance factor at a point, 1 when none is set. */
+export const perfAt = (env: Env, lat: number, lon: number, tMs: number) => (env.perf ? env.perf(lat, lon, tMs) : 1)
 
 export interface Leg {
   lat: number; lon: number
@@ -40,12 +50,12 @@ export const signedTwa = (heading: number, twd: number) => norm180(twd - heading
 export function advance(env: Env, p: LatLon, t: number, heading: number, sec: number): Leg | null {
   if (!sampleWind(env.wind, p.lat, p.lon, t, scratch)) return null
   const twa0 = signedTwa(heading, scratch.twd)
-  const s0 = env.polar.speed(scratch.tws, twa0)
+  const s0 = env.polar.speed(scratch.tws, twa0) * perfAt(env, p.lat, p.lon, t)
   if (!(s0 > 0)) return null
   const mid = destination(p.lat, p.lon, heading, (s0 * sec) / 7200)
   if (!sampleWind(env.wind, mid.lat, mid.lon, t + sec * 500, scratch)) return null
   const twa = signedTwa(heading, scratch.twd)
-  const s = env.polar.speed(scratch.tws, twa)
+  const s = env.polar.speed(scratch.tws, twa) * perfAt(env, mid.lat, mid.lon, t + sec * 500)
   if (!(s > 0)) return null
   const end = destination(p.lat, p.lon, heading, (s * sec) / 3600)
   if (stepHitsLand(env.land, p, end)) return null
@@ -97,17 +107,22 @@ export function approach(
   // better of straight and VMG.
   const a0 = Math.abs(signedTwa(brg, scratch.twd))
   const v0 = env.polar.vmg(twsA)
-  const est = Math.max(env.polar.speed(twsA, a0), v0.upVmg, v0.dnVmg, 0.5)
-  if (!sampleWind(env.wind, midP.lat, midP.lon, t + 0.5 * (run / est) * 3600e3, scratch)) return null
+  const est = Math.max(env.polar.speed(twsA, a0), v0.upVmg, v0.dnVmg, 0.5) * perfAt(env, p.lat, p.lon, t)
+  const tMid = t + 0.5 * (run / Math.max(est, 0.25)) * 3600e3
+  if (!sampleWind(env.wind, midP.lat, midP.lon, tMid, scratch)) return null
   const tws = 0.5 * (twsA + scratch.tws), twd = scratch.twd
   const twa = signedTwa(brg, twd)
   const a = Math.abs(twa)
   const polar = env.polar
+  // The closed forms below use ONE wind and ONE performance factor for the
+  // whole approach, both read at its midpoint in space and time.
+  const fMid = perfAt(env, midP.lat, midP.lon, tMid)
   const vm = polar.vmg(tws)
-  const straight = polar.speed(tws, a)
+  const upVmg = vm.upVmg * fMid, dnVmg = vm.dnVmg * fMid
+  const straight = polar.speed(tws, a) * fMid
   const thetaUp = a, thetaDn = 180 - a
-  const twoUp = a < vm.upTwa && vm.upVmg > 0 ? (run * Math.cos(thetaUp * Math.PI / 180)) / vm.upVmg * 3600 + polar.tackSec : Infinity
-  const twoDn = a > vm.dnTwa && vm.dnVmg > 0 ? (run * Math.cos(thetaDn * Math.PI / 180)) / vm.dnVmg * 3600 + polar.gybeSec : Infinity
+  const twoUp = a < vm.upTwa && upVmg > 0 ? (run * Math.cos(thetaUp * Math.PI / 180)) / upVmg * 3600 + polar.tackSec : Infinity
+  const twoDn = a > vm.dnTwa && dnVmg > 0 ? (run * Math.cos(thetaDn * Math.PI / 180)) / dnVmg * 3600 + polar.gybeSec : Infinity
   const straightSec = straight > 0 ? (run / straight) * 3600 : Infinity
   const best = Math.min(straightSec, twoUp, twoDn)
   if (!Number.isFinite(best) || best > maxSec * 1.5) return null
@@ -123,7 +138,7 @@ export function approach(
       if (!sampleWind(env.wind, q.lat, q.lon, tt, scratch)) return null
       const h = bearingDeg(q.lat, q.lon, mark.lat, mark.lon)
       const ta = signedTwa(h, scratch.twd)
-      const s = polar.speed(scratch.tws, ta)
+      const s = polar.speed(scratch.tws, ta) * perfAt(env, q.lat, q.lon, tt)
       if (!(s > 0)) return null
       const sub = Math.min(300, (left / s) * 3600)
       const nm = (s * sub) / 3600
@@ -158,7 +173,7 @@ export function approach(
   if (!(L1 >= -1e-6 && L2 >= -1e-6)) return null
   const corner = destination(p.lat, p.lon, h1, Math.max(0, L1))
   if (stepHitsLand(env.land, p, corner) || stepHitsLand(env.land, corner, endPt)) return null
-  const s = polar.speed(tws, ang)
+  const s = polar.speed(tws, ang) * fMid
   const t1 = (Math.max(0, L1) / s) * 3600
   const segs: ApproachSeg[] = [
     { lat: p.lat, lon: p.lon, t, twa: first * ang, tws, bsp: s },

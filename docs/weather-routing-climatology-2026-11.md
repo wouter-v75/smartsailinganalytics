@@ -45,6 +45,8 @@ land in `~/routing/msr/results`: `report.html`, `summary.json`, `elapsed.csv`,
 | `--mast` | 10 | height (m) the polar's TWS is defined at |
 | `--lift` | `power` (`none` at 10 m) | how ERA5 is brought to that height (§5.3) |
 | `--tack` / `--gybe` | 60 / 45 s | time lost per manoeuvre |
+| `--day-factor` / `--night-factor` | 0.95 / 0.90 | share of the polar sailed in daylight / darkness (§4) |
+| `--dark-below` | −0.833° | sun altitude below which it is dark (sunset; −6 = civil dusk) |
 | `--radius` | 0.25 nm | mark rounding radius |
 | `--step` | 30 min | isochrone time step |
 | `--sector-nm` | 0.5 nm | isochrone pruning resolution (§3.4) |
@@ -253,6 +255,22 @@ designers' polars are scaled to a 10 m wind. A polar built from a boat's own
 masthead instruments is at the masthead. 10 m → 32 m is +9 % in neutral air and
 +20–30 % on a stable morning (`windProfile.ts`). Getting `--mast` wrong is a
 larger error than anything in section 3.
+
+**Day and night.** A crew sails less of its polar in the dark: nobody can see
+the sails or the waves, the helm steers to instruments, and half the crew is
+below. The routers therefore sail **95 % of the polar in daylight and 90 % in
+darkness** by default (`--day-factor`, `--night-factor`; both 1 routes the raw
+polar). Darkness is decided by the sun's altitude **at the boat's position and
+time** (`daylight.ts`, the Astronomical Almanac's low-precision solar position,
+~0.01° — far finer than a 30 min step), not by the clock at the start line: on
+Transpac the boat sails five time zones west, so each night falls later than
+the one before. The default boundary is sunset/sunrise (−0.833°); `--dark-below
+-6` moves it to civil twilight. The factor scales SPEED only: the VMG angles and
+the no-go edge are the polar's shape, which a uniform factor does not move. It is
+applied inside the propagation (`advance`, the grid's `traverse`, and the exact
+arrival), so a route can trade a longer daylight leg against a shorter night
+one. The report states the set-up and the share of sailing time spent in the
+dark.
 
 ## 5. The wind
 

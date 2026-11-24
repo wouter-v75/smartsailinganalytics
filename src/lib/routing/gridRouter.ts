@@ -28,7 +28,7 @@
 //     search ends once the queue's earliest time passes it.
 
 import { bearingDeg, destination, distNm, type LatLon } from './geo'
-import { approach, signedTwa, type Env } from './motion'
+import { approach, perfAt, signedTwa, type Env } from './motion'
 import { sampleWind, type WindSample } from './windField'
 import { stepHitsLand } from './land'
 import { chainLegs, type LegOut, type RouteResult } from './isochrone'
@@ -62,12 +62,12 @@ function traverse(env: Env, a: LatLon, b: LatLon, t: number): { sec: number; twa
   const L = distNm(a.lat, a.lon, b.lat, b.lon)
   const h = bearingDeg(a.lat, a.lon, b.lat, b.lon)
   if (!sampleWind(env.wind, a.lat, a.lon, t, ws)) return null
-  const s0 = env.polar.speed(ws.tws, signedTwa(h, ws.twd))
+  const s0 = env.polar.speed(ws.tws, signedTwa(h, ws.twd)) * perfAt(env, a.lat, a.lon, t)
   if (!(s0 > 0)) return null
   const mid = destination(a.lat, a.lon, h, L / 2)
   if (!sampleWind(env.wind, mid.lat, mid.lon, t + (L / s0) * 1800e3, ws)) return null
   const twa = signedTwa(h, ws.twd)
-  const s = env.polar.speed(ws.tws, twa)
+  const s = env.polar.speed(ws.tws, twa) * perfAt(env, mid.lat, mid.lon, t + (L / s0) * 1800e3)
   if (!(s > 0)) return null
   if (stepHitsLand(env.land, a, b)) return null
   return { sec: (L / s) * 3600, twa, tws: ws.tws, bsp: s }

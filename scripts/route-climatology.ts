@@ -47,6 +47,7 @@ import { routeIsochrone, type RouteResult } from '../src/lib/routing/isochrone'
 import { routeGrid } from '../src/lib/routing/gridRouter'
 import { elapsedStats, twaTwsTable, tableCsv, localStartToUtc, pointOfSail, bootstrapBlocks } from '../src/lib/routing/climatology'
 import { offsetFromCoords } from '../src/lib/tzFromCoords'
+import { makePerf, isDark } from '../src/lib/routing/daylight'
 import type { LandMask } from '../src/lib/routing/land'
 import type { Env } from '../src/lib/routing/motion'
 
@@ -65,7 +66,10 @@ if (flag('help') || !arg('data') || !arg('gpx') || !arg('polar') || !arg('start'
   --mast M               polar reference height, m (default 10)
   --lift power|mo|neutral|none   default power (none when --mast 10)
   --tack S --gybe S      manoeuvre losses, seconds (default 60 / 45)
-  --factor F             polar multiplier (default 1)
+  --factor F             polar multiplier (default 1), applied under the day/night factors
+  --day-factor F         share of the polar sailed in daylight (default 0.95)
+  --night-factor F       share of the polar sailed in darkness (default 0.90)
+  --dark-below DEG       sun altitude below which it is dark (default -0.833 = sunset; -6 = civil dusk)
   --radius NM            mark rounding radius (default 0.25)
   --step MIN             isochrone step (default 30)
   --sector-nm NM         isochrone pruning resolution (default 0.5)
@@ -91,6 +95,12 @@ const polar = parseRoutingPolar(fs.readFileSync(home(arg('polar')!), 'utf8'), {
 })
 const course = parseCourseGpx(fs.readFileSync(home(arg('gpx')!), 'utf8'), { radiusNm: Number(arg('radius', '0.25')) })
 const isoOpts = { stepMin: Number(arg('step', '30')), sectorNm: Number(arg('sector-nm', '0.5')) }
+// Day/night performance: the share of the polar the crew sails, switched on the
+// sun's altitude at the BOAT (daylight.ts). 95 % by day and 90 % by night is the
+// standard offshore set-up here; --day-factor 1 --night-factor 1 routes the raw polar.
+const dayNight = { dayFactor: Number(arg('day-factor', '0.95')), nightFactor: Number(arg('night-factor', '0.90')), darkBelowDeg: Number(arg('dark-below', '-0.833')) }
+if (![dayNight.dayFactor, dayNight.nightFactor].every(f => f > 0 && f <= 1.2)) throw new Error('--day-factor / --night-factor must be in (0, 1.2]')
+const perf = makePerf(dayNight)
 const gridOpts = { cellNm: Number(arg('cell', '2')), stencil: Number(arg('stencil', '32')) as 16 | 32 | 48, maxNodes: Number(arg('max-nodes', '400000')) }
 
 // ── data ────────────────────────────────────────────────────────────────────
@@ -157,7 +167,7 @@ for (const y of years) {
   const raw = loadYear(y)
   const { grid, stats } = liftToHeight(raw, mast, lift)
   liftLog.push({ year: y, ...stats })
-  const env: Env = { polar, wind: grid, land }
+  const env: Env = { polar, wind: grid, land, perf }
   const dataEnd = raw.t0 + (raw.nT - 1) * raw.dtMs
   for (const offH of offsetsH) {
     // The same LOCAL clock time on each start date, so the sea breeze lines up.
@@ -193,7 +203,7 @@ const h = (s: number) => (s / 3600)
 const summary: Record<string, unknown> = {
   course: { name: course.name, marks: course.marks, rhumbNm: course.rhumbNm },
   start: { local: arg('start'), zone, years, windowDays: windowD, everyHours: everyH, offsetsH },
-  polar: { file: path.basename(arg('polar')!), refHeightM: mast, tackSec: polar.tackSec, gybeSec: polar.gybeSec, factor: polar.factor },
+  polar: { file: path.basename(arg('polar')!), refHeightM: mast, tackSec: polar.tackSec, gybeSec: polar.gybeSec, factor: polar.factor, ...dayNight },
   wind: { source: 'ERA5 single levels', lift, liftLog },
   options: { iso: isoOpts, grid: gridOpts, radiusNm: Number(arg('radius', '0.25')) },
   convergence,
@@ -207,6 +217,15 @@ for (const m of methods) {
   const paths = ok.map(x => x.r.path)
   const table = twaTwsTable(paths)
   const pos = pointOfSail(paths)
+  // Share of sailing time in the dark, by the same rule the routers used.
+  let darkH = 0, allH = 0
+  for (const pth of paths) for (let k = 0; k < pth.length - 1; k++) {
+    const hh = (pth[k + 1].t - pth[k].t) / 3600e3
+    if (!(hh > 0)) continue
+    allH += hh
+    if (isDark(pth[k].lat, pth[k].lon, (pth[k].t + pth[k + 1].t) / 2, dayNight.darkBelowDeg)) darkH += hh
+  }
+  const darkShare = allH ? darkH / allH : NaN
   // Resample whole years: the starts inside one year share its weather regimes.
   const byYear = years.map(y => ok.filter(x => x.year === y).map(x => x.r.elapsedSec!)).filter(g => g.length)
   const ci = bootstrapBlocks(byYear)
@@ -224,7 +243,7 @@ for (const m of methods) {
   ;(summary.methods as Record<string, unknown>)[m] = {
     elapsedHours: { n: st.n, failed: st.failed, min: h(st.minSec), max: h(st.maxSec), mean: h(st.meanSec), median: h(st.medianSec), sd: h(st.sdSec),
       medianCI90: ci.median.map(h), meanCI90: ci.mean.map(h) },
-    pointOfSail: pos, table, byOffset: off, byYear: perYear,
+    pointOfSail: pos, darkShare, table, byOffset: off, byYear: perYear,
     routes: rs.map(x => ({ year: x.year, offsetH: x.offsetH, startLocal: x.startLocal, startUtc: x.startUtc, ok: x.r.ok, reason: x.r.reason, elapsedH: x.r.elapsedSec != null ? h(x.r.elapsedSec) : null,
       legH: x.r.legSec.map(h), sailedNm: x.r.sailedNm, tacks: x.r.tacks, gybes: x.r.gybes, runMs: x.ms })),
   }
@@ -232,7 +251,7 @@ for (const m of methods) {
   console.log(`\n${m.toUpperCase()}  n=${st.n}${st.failed ? ` (${st.failed} failed)` : ''}
   elapsed  min ${dh(h(st.minSec))}  max ${dh(h(st.maxSec))}  mean ${dh(h(st.meanSec))}  median ${dh(h(st.medianSec))}  1 sigma ${dh(h(st.sdSec))}
            median 90 % CI ${dh(h(ci.median[0]))}-${dh(h(ci.median[1]))} (bootstrap over whole years)
-  time     upwind ${(100 * pos.upwind).toFixed(0)} %  reaching ${(100 * pos.reach).toFixed(0)} %  downwind ${(100 * pos.downwind).toFixed(0)} %  starboard ${(100 * pos.starboard).toFixed(0)} %`)
+  time     upwind ${(100 * pos.upwind).toFixed(0)} %  reaching ${(100 * pos.reach).toFixed(0)} %  downwind ${(100 * pos.downwind).toFixed(0)} %  starboard ${(100 * pos.starboard).toFixed(0)} %  in the dark ${(100 * darkShare).toFixed(0)} %`)
 }
 fs.writeFileSync(path.join(outDir, 'elapsed.csv'), csvRows.join('\n') + '\n')
 fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 1))
@@ -427,6 +446,7 @@ function report(): string {
     return `<tr><th>${m === 'iso' ? 'Isochrone' : 'Grid'}</th>${[e.min, e.max, e.mean, e.median, e.sd].map((v: number) => `<td>${dh(v)}</td>`).join('')}<td>${dh(e.medianCI90[0])}–${dh(e.medianCI90[1])}</td><td>${dh(e.meanCI90[0])}–${dh(e.meanCI90[1])}</td><td>${e.n}${e.failed ? ` (${e.failed} failed)` : ''}</td></tr>`
   }).join('')
   const f2 = dh
+  const pc = (f: number) => (Number.isFinite(f) ? `${Math.round(100 * f)} %` : '–')
   const multi = offsetsH.length > 1
   // Red -> yellow -> green with the share of time, on a square-root scale so a
   // bin with a fraction of a percent still shows; an empty bin stays blank.
@@ -499,11 +519,11 @@ th{background:#f6f6f6}.heat td,.heat th{min-width:22px;font-size:10.5px;padding:
 .map .sea{fill:#16202a}.map .land{fill:#3a3d40}.map .grat line{stroke:#2c3a46}.map text{fill:#aaa}.map .lbl{fill:#eee}.map .mark{fill:#eee}.map .ink{stroke:#ddd}.map .barb{stroke:#ff8a7a}.map .pennant{fill:#ff8a7a}.map .halo{stroke:#000}}</style>
 <script>function pickYear(sel){var svg=sel.parentNode.nextElementSibling,y=sel.value;svg.querySelectorAll('.rt').forEach(function(g){g.style.display=!y||g.getAttribute('data-year')===y?'':'none'});svg.classList.toggle('showbarbs',!!y||svg.getAttribute('data-many')!=='1')}</script></head><body>
 <h1>${esc(course.name ?? 'Routing climatology')}</h1>
-<p>${esc(course.marks.map(m => m.name).join(' → '))} · ${course.rhumbNm.toFixed(1)} nm rhumb · start ${esc(arg('start')!.slice(5))} local (${esc(zone ?? '')}) · ${years[0]}–${years[years.length - 1]} (${years.length} years${multi ? ` × ${offsetsH.length} starts, ±${windowD} d every ${everyH} h` : ''}) · polar ${esc(path.basename(arg('polar')!))} at ${mast} m, lift “${lift}” · tack ${polar.tackSec}s / gybe ${polar.gybeSec}s</p>
+<p>${esc(course.marks.map(m => m.name).join(' → '))} · ${course.rhumbNm.toFixed(1)} nm rhumb · start ${esc(arg('start')!.slice(5))} local (${esc(zone ?? '')}) · ${years[0]}–${years[years.length - 1]} (${years.length} years${multi ? ` × ${offsetsH.length} starts, ±${windowD} d every ${everyH} h` : ''}) · polar ${esc(path.basename(arg('polar')!))} at ${mast} m, lift “${lift}” · tack ${polar.tackSec}s / gybe ${polar.gybeSec}s · sailed at ${pc(dayNight.dayFactor)} of the polar by day and ${pc(dayNight.nightFactor)} in the dark (sun below ${dayNight.darkBelowDeg}° at the boat)${polar.factor !== 1 ? `, × ${polar.factor} overall` : ''}</p>
 <h2>Elapsed time</h2><table><tr><th></th><th>min</th><th>max</th><th>mean</th><th>median</th><th>1σ</th><th>median 90% CI</th><th>mean 90% CI</th><th>n</th></tr>${statRows}</table>${conv}
 <h2>Routes</h2>${maps}
 <p class="dim">Each line is one start, coloured by its elapsed time. Hover a line for its start date and time. Grey is the land mask the router avoided; dashed is the rhumb line between the marks.</p>
-<h2>Time on each point of sail</h2>${methods.map(heat).join('')}
+<h2>Time on each point of sail</h2><p class="dim">${methods.map(m => `${m === 'iso' ? 'Isochrone' : 'Grid'}: ${pc(ms[m].pointOfSail.upwind)} upwind (&lt;70°), ${pc(ms[m].pointOfSail.reach)} reaching, ${pc(ms[m].pointOfSail.downwind)} downwind (&gt;120°), ${pc(ms[m].pointOfSail.starboard)} on starboard, ${pc(ms[m].darkShare)} in the dark.`).join(' ')}</p>${methods.map(heat).join('')}
 ${offTable}<h2>Per year</h2><p class="dim">Green is fast, red slow, across the whole table.</p><table><tr><th></th>${yearHead}</tr>${yearRows}</table>
 <p class="dim">ERA5 (C3S) hourly 0.25°; wind sampled bilinear in space, linear in time, direction from u/v and speed preserved. Arrival at each mark solved exactly from every front point (no isochrone quantisation). Marks routed leg by leg, which is exact for point marks.</p>
 </body></html>`

@@ -7,6 +7,7 @@ import { parseCourseGpx, type Course } from '../routing/course'
 import { distNm, destination } from '../routing/geo'
 import { elapsedStats, twaTwsTable, localStartToUtc, bootstrap, bootstrapBlocks } from '../routing/climatology'
 import type { Env } from '../routing/motion'
+import { sunAltitudeDeg, isDark, makePerf } from '../routing/daylight'
 import type { LandMask } from '../routing/land'
 
 // A plausible 50-footer: an Expedition-format polar, one TWS row per line.
@@ -201,5 +202,35 @@ describe('climatology', () => {
   it('a far destination point stays on the sphere', () => {
     const p = destination(36, 14, 45, 100)
     expect(distNm(36, 14, p.lat, p.lon)).toBeCloseTo(100, 3)
+  })
+})
+
+describe('day and night', () => {
+  it('puts the sun where the almanac does', () => {
+    // March equinox 2026 (20 Mar 14:46 UTC): local noon on the equator is overhead.
+    expect(sunAltitudeDeg(0, 0, Date.UTC(2026, 2, 20, 12, 7))).toBeGreaterThan(89)
+    // Long Beach, 10 Jul 2026: sunrise 05:51 PDT (12:51 UTC), sunset 20:08 PDT (03:08 UTC on the 11th).
+    const lb = [33.77, -118.19] as const
+    expect(isDark(lb[0], lb[1], Date.UTC(2026, 6, 10, 12, 35))).toBe(true)
+    expect(isDark(lb[0], lb[1], Date.UTC(2026, 6, 10, 13, 5))).toBe(false)
+    expect(isDark(lb[0], lb[1], Date.UTC(2026, 6, 11, 2, 55))).toBe(false)
+    expect(isDark(lb[0], lb[1], Date.UTC(2026, 6, 11, 3, 25))).toBe(true)
+  })
+  it('a constant factor slows a reach by exactly that factor', () => {
+    const c = course([[36, 14], [37.5, 14]])
+    const raw = routeIsochrone(env(270), c, T0).elapsedSec!
+    const slow = routeIsochrone({ ...env(270), perf: () => 0.9 }, c, T0).elapsedSec!
+    expect(slow / raw).toBeCloseTo(1 / 0.9, 2)
+    const g = routeGrid({ ...env(270), perf: () => 0.9 }, c, T0).elapsedSec!
+    expect(Math.abs(g / slow - 1)).toBeLessThan(0.01)
+  })
+  it('day and night factors land between the two constants', () => {
+    const c = course([[36, 14], [37.5, 14]])
+    const perf = makePerf({ dayFactor: 0.95, nightFactor: 0.9, darkBelowDeg: -0.833 })!
+    const day = routeIsochrone({ ...env(270), perf: () => 0.95 }, c, T0).elapsedSec!
+    const night = routeIsochrone({ ...env(270), perf: () => 0.9 }, c, T0).elapsedSec!
+    const both = routeIsochrone({ ...env(270), perf }, c, T0).elapsedSec!
+    expect(both).toBeGreaterThan(day); expect(both).toBeLessThan(night)
+    expect(makePerf({ dayFactor: 1, nightFactor: 1, darkBelowDeg: -0.833 })).toBeUndefined()
   })
 })
