@@ -117,3 +117,7 @@ reports/
 # The durable record is seaNm in src/lib/windObsDavisMap.ts; this is only a
 # local cache so a dry run and the --write run after it do not both pay.
 .coast-cache.json
+
+# Python bytecode (scripts/naples-study)
+__pycache__/
+*.pyc
