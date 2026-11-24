@@ -60,8 +60,7 @@ export function parseCourseGpx(text: string, opts: { radiusNm?: number; finishRa
   }))
   let rhumb = 0
   for (let i = 1; i < marks.length; i++) rhumb += distNm(marks[i - 1].lat, marks[i - 1].lon, marks[i].lat, marks[i].lon)
-  const nm = /<(?:rte|gpx|metadata)\b[^>]*>[\s\S]*?<name\b[^>]*>([^<]*)<\/name>/i.exec(text)
-  return { name: nm ? nm[1].trim() || null : null, marks, rhumbNm: rhumb }
+  return { name: courseName(text), marks, rhumbNm: rhumb }
 }
 
 /** The lat/lon box around the course, padded by `padDeg`. */
@@ -71,4 +70,21 @@ export function courseBox(c: Course, padDeg: number) {
     latMin: Math.min(...la) - padDeg, latMax: Math.max(...la) + padDeg,
     lonMin: Math.min(...lo) - padDeg, lonMax: Math.max(...lo) + padDeg,
   }
+}
+
+/**
+ * The route's OWN name, then the file's metadata name. Not "the first <name>
+ * after <gpx>": Expedition writes the waypoints before the route, so that is the
+ * first MARK's name, and a Transpac study came out titled "Mark100".
+ */
+function courseName(text: string): string | null {
+  const own = (block: string | undefined) => {
+    if (!block) return null
+    const head = block.split(/<(?:rtept|trkseg|trkpt|wpt)\b/i)[0]
+    const nm = /<name\b[^>]*>([^<]*)<\/name>/i.exec(head)
+    return nm ? nm[1].trim() || null : null
+  }
+  return own(/<rte\b[\s\S]*?<\/rte>/i.exec(text)?.[0])
+    ?? own(/<metadata\b[\s\S]*?<\/metadata>/i.exec(text)?.[0])
+    ?? own(/<trk\b[\s\S]*?<\/trk>/i.exec(text)?.[0])
 }

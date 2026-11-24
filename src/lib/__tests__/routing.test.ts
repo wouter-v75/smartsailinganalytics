@@ -157,6 +157,12 @@ describe('courses and land', () => {
     expect(c.marks[2].lat).toBeCloseTo(35.91)
     expect(c.marks[1].kind).toBe('mark')
   })
+  it('names the course after the route, not its first waypoint', () => {
+    // Expedition writes the waypoints before the route.
+    const gpx = `<gpx><metadata><time>2026-11-24T14:35:37Z</time></metadata><wpt lat="33.6" lon="-118.2"><name>Mark100</name></wpt><wpt lat="21.3" lon="-157.3"><name>Mark101</name></wpt><rte><name>Transpac_study</name><rtept lat="33.6" lon="-118.2"><name>Mark100</name></rtept><rtept lat="21.3" lon="-157.3"><name>Mark101</name></rtept></rte></gpx>`
+    expect(parseCourseGpx(gpx).name).toBe('Transpac_study')
+    expect(parseCourseGpx(gpx).marks.map(m => m.name)).toEqual(['Mark100', 'Mark101'])
+  })
 })
 
 describe('climatology', () => {

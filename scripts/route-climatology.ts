@@ -247,6 +247,153 @@ fs.writeFileSync(path.join(outDir, 'routes.geojson'), JSON.stringify({ type: 'Fe
 fs.writeFileSync(path.join(outDir, 'report.html'), report())
 console.log(`\nwritten: ${outDir}/report.html, summary.json, elapsed.csv, table-*.csv, routes.geojson`)
 
+// ── route map ───────────────────────────────────────────────────────────────
+// Equirectangular at the mid latitude (true shape at that latitude, which is
+// what a chart table shows for an ocean this size), land drawn from the SAME
+// mask the router used, so a route that looks like it crosses land is a real
+// fault rather than a coastline that disagrees with the router's.
+/**
+ * A wind barb at (x, y) in SVG pixels. The staff points the way the wind comes
+ * FROM; feathers sit at its outer end on the side 90 deg clockwise of the staff
+ * (northern-hemisphere convention: a westerly's feathers point north). Rounded
+ * to the nearest 5 kn; a pennant is 50, a full feather 10, a half 5, and under
+ * 2.5 kn is drawn as a calm circle.
+ */
+function barb(x: number, y: number, fromDeg: number, kn: number, title: string): string {
+  const r = (fromDeg * Math.PI) / 180
+  const ux = Math.sin(r), uy = -Math.cos(r)          // staff direction in SVG (y down)
+  const px = -uy, py = ux                            // 90 deg clockwise of the staff, on screen
+  const len = 32, fl = 12, gap = 5
+  const t = `<title>${title}</title>`
+  if (kn < 2.5) return `<g><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="none" class="barb"/>${t}</g>`
+  let v = Math.round(kn / 5) * 5
+  const parts: string[] = [`M${x.toFixed(1)},${y.toFixed(1)}L${(x + ux * len).toFixed(1)},${(y + uy * len).toFixed(1)}`]
+  let d = len
+  const at = (k: number) => [x + ux * k, y + uy * k]
+  const fill: string[] = []
+  while (v >= 50) {
+    const [ax, ay] = at(d), [bx, by] = at(d - 6)
+    fill.push(`M${ax.toFixed(1)},${ay.toFixed(1)}L${(ax + px * fl).toFixed(1)},${(ay + py * fl).toFixed(1)}L${bx.toFixed(1)},${by.toFixed(1)}Z`)
+    d -= 8; v -= 50
+  }
+  while (v >= 10) {
+    const [ax, ay] = at(d)
+    parts.push(`M${ax.toFixed(1)},${ay.toFixed(1)}L${(ax + px * fl + ux * 3).toFixed(1)},${(ay + py * fl + uy * 3).toFixed(1)}`)
+    d -= gap; v -= 10
+  }
+  if (v >= 5) {
+    if (d === len) d -= gap                           // a lone half barb sits in from the end
+    const [ax, ay] = at(d)
+    parts.push(`M${ax.toFixed(1)},${ay.toFixed(1)}L${(ax + px * fl * 0.5 + ux * 1.5).toFixed(1)},${(ay + py * fl * 0.5 + uy * 1.5).toFixed(1)}`)
+  }
+  return `<g><path d="${parts.join('')}" fill="none" class="barb"/>${fill.length ? `<path d="${fill.join('')}" class="pennant"/>` : ''}<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="1.8" class="pennant"/>${t}</g>`
+}
+
+function routeMap(m: string): string {
+  const esc = (t: string) => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
+  const ok = results[m].filter(x => x.r.ok)
+  const pts = ok.flatMap(x => x.r.path)
+  const la = [...pts.map(p => p.lat), ...course.marks.map(k => k.lat)], lo = [...pts.map(p => p.lon), ...course.marks.map(k => k.lon)]
+  const pad = Math.max(0.5, 0.06 * Math.max(Math.max(...la) - Math.min(...la), Math.max(...lo) - Math.min(...lo)))
+  const la0 = Math.min(...la) - pad, la1 = Math.max(...la) + pad, lo0 = Math.min(...lo) - pad, lo1 = Math.max(...lo) + pad
+  const k = Math.cos(((la0 + la1) / 2) * Math.PI / 180)
+  const W = 940, L = 34, B = 22, Wp = W - L - 8
+  const Hp = Math.max(160, Math.min(1100, (Wp * (la1 - la0)) / ((lo1 - lo0) * k)))
+  const H = Hp + B + 8
+  const xf = (x: number) => L + ((x - lo0) / (lo1 - lo0)) * Wp, yf = (y: number) => 8 + (1 - (y - la0) / (la1 - la0)) * Hp
+  const X = (x: number) => xf(x).toFixed(1), Y = (y: number) => yf(y).toFixed(1)
+
+  // Land: one rect per horizontal run of land pixels, 2 px cells, each cell
+  // sampled at 3 x 3 points so a small island (Catalina is ~6 px) is not missed.
+  let landSvg = ''
+  if (land) {
+    const cell = 2, nx = Math.ceil(Wp / cell), ny = Math.ceil(Hp / cell)
+    const isL = (lat: number, lon: number) => {
+      const i = Math.round((lat - land.lat0) / land.dLat), j = Math.round((lon - land.lon0) / land.dLon)
+      return i >= 0 && i < land.nLat && j >= 0 && j < land.nLon && land.cells[i * land.nLon + j] === 1
+    }
+    const rects: string[] = []
+    for (let r = 0; r < ny; r++) {
+      let run = -1
+      for (let c = 0; c <= nx; c++) {
+        let hit = false
+        if (c < nx) for (let a = 0; a < 3 && !hit; a++) for (let b = 0; b < 3 && !hit; b++) {
+          const lon = lo0 + ((c + (a + 0.5) / 3) * cell / Wp) * (lo1 - lo0)
+          const lat = la1 - ((r + (b + 0.5) / 3) * cell / Hp) * (la1 - la0)
+          hit = isL(lat, lon)
+        }
+        if (hit && run < 0) run = c
+        if (!hit && run >= 0) { rects.push(`<rect x="${(L + run * cell).toFixed(0)}" y="${(8 + r * cell).toFixed(0)}" width="${(c - run) * cell}" height="${cell}"/>`); run = -1 }
+      }
+    }
+    landSvg = `<g fill="#bdbdb6" class="land">${rects.join('')}</g>`
+  }
+
+  // Graticule: a round step giving 4-10 lines across the longer side.
+  const span = Math.max(la1 - la0, lo1 - lo0)
+  const step = [0.25, 0.5, 1, 2, 5, 10, 20].find(s => span / s <= 10) ?? 20
+  const grat: string[] = []
+  const fmt = (v: number, pos: string, neg: string) => `${Math.abs(v) % 1 ? Math.abs(v).toFixed(2).replace(/0+$/, '') : Math.abs(v)}°${v >= 0 ? pos : neg}`
+  for (let v = Math.ceil(lo0 / step) * step; v <= lo1; v += step) grat.push(`<line x1="${X(v)}" x2="${X(v)}" y1="8" y2="${(8 + Hp).toFixed(1)}"/><text x="${X(v)}" y="${(8 + Hp + 15).toFixed(1)}" text-anchor="middle">${fmt(v, 'E', 'W')}</text>`)
+  for (let v = Math.ceil(la0 / step) * step; v <= la1; v += step) grat.push(`<line x1="${L}" x2="${L + Wp}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 4}" y="${(yf(v) + 4).toFixed(1)}" text-anchor="end">${fmt(v, 'N', 'S')}</text>`)
+
+  // Colour by elapsed time, fast (dark blue) to slow (orange).
+  const ramp = ['#0b3c8c', '#2a6fb8', '#3fa3a8', '#9cbf5a', '#e0a032', '#d9592b']
+  const col = (f: number) => {
+    const x = Math.max(0, Math.min(1, f)) * (ramp.length - 1), i = Math.min(ramp.length - 2, Math.floor(x)), t = x - i
+    const p = (c: string, o: number) => parseInt(c.slice(o, o + 2), 16)
+    const mix = (o: number) => Math.round(p(ramp[i], o) + t * (p(ramp[i + 1], o) - p(ramp[i], o)))
+    return `rgb(${mix(1)},${mix(3)},${mix(5)})`
+  }
+  const es = ok.map(x => x.r.elapsedSec! / 3600)
+  const e0 = Math.min(...es), e1 = Math.max(...es)
+  const op = Math.max(0.25, Math.min(0.85, 3 / Math.sqrt(ok.length || 1)))
+  // Slowest first, so the fast routes are drawn on top.
+  const lines = [...ok].sort((a, b) => b.r.elapsedSec! - a.r.elapsedSec!).map(x => {
+    const e = x.r.elapsedSec! / 3600
+    return `<polyline fill="none" stroke="${col(e1 > e0 ? (e - e0) / (e1 - e0) : 0)}" stroke-opacity="${op.toFixed(2)}" stroke-width="1.4" stroke-linejoin="round" points="${x.r.path.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"><title>${esc(x.startLocal)} local: ${e.toFixed(1)} h (${(e / 24).toFixed(2)} d), ${x.r.sailedNm.toFixed(0)} nm</title></polyline>`
+  }).join('')
+  // The representative course: the start whose elapsed time is the median,
+  // drawn bold with wind barbs of the wind it MET (at the polar's height), at a
+  // round interval chosen so the barbs do not overlap along the line.
+  const byE = [...ok].sort((a, b) => a.r.elapsedSec! - b.r.elapsedSec!)
+  const rep = byE.length ? byE[Math.floor((byE.length - 1) / 2)] : null
+  let repSvg = '', repNote = ''
+  if (rep) {
+    const P = rep.r.path
+    const repLine = `<polyline fill="none" stroke-width="5" class="halo" points="${P.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"/><polyline fill="none" stroke="#111" stroke-width="2.2" class="ink" points="${P.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"/>`
+    let pxLen = 0
+    for (let i = 1; i < P.length; i++) pxLen += Math.hypot(xf(P[i].lon) - xf(P[i - 1].lon), yf(P[i].lat) - yf(P[i - 1].lat))
+    const hours = (P[P.length - 1].t - P[0].t) / 3600e3
+    const every = [1, 2, 3, 6, 12, 24, 48].find(hh => (pxLen / (hours / hh)) >= 40) ?? 48
+    const barbs: string[] = []
+    let seg = 0
+    for (let tt = P[0].t; tt <= P[P.length - 1].t; tt += every * 3600e3) {
+      while (seg < P.length - 2 && P[seg + 1].t <= tt) seg++
+      const a = P[seg], b = P[seg + 1] ?? a
+      const f = b.t > a.t ? (tt - a.t) / (b.t - a.t) : 0
+      const lat = a.lat + f * (b.lat - a.lat), lon = a.lon + f * (b.lon - a.lon)
+      // TWA is signed relative to the heading (+ = starboard): TWD = heading + TWA.
+      const hdg = Math.atan2((b.lon - a.lon) * Math.cos((a.lat * Math.PI) / 180), b.lat - a.lat) * 180 / Math.PI
+      const twd = (((hdg + a.twa) % 360) + 360) % 360
+      barbs.push(barb(xf(lon), yf(lat), twd, a.tws, `${new Date(tt).toISOString().slice(5, 16).replace('T', ' ')} UTC: ${a.tws.toFixed(1)} kn from ${twd.toFixed(0)}°, TWA ${Math.abs(a.twa).toFixed(0)}° ${a.twa >= 0 ? 'stbd' : 'port'}, ${a.bsp.toFixed(1)} kn`))
+    }
+    repSvg = repLine + `<g class="barbs">${barbs.join('')}</g>`
+    const e = rep.r.elapsedSec! / 3600
+    repNote = `<p class="dim">Bold: the median start, ${esc(rep.startLocal)} local, ${e.toFixed(1)} h (${(e / 24).toFixed(2)} d), ${rep.r.sailedNm.toFixed(0)} nm sailed. Barbs every ${every} h show the wind it met at ${mast} m (half barb 5 kn, full 10, pennant 50); hover one for the time, TWA and boat speed.</p>`
+  }
+  const rhumb = `<polyline fill="none" stroke="#111" stroke-dasharray="5 4" stroke-width="1" class="ink" points="${course.marks.map(mk => `${X(mk.lon)},${Y(mk.lat)}`).join(' ')}"/>`
+  const marks = course.marks.map(mk => `<circle cx="${X(mk.lon)}" cy="${Y(mk.lat)}" r="4" class="mark"/><text x="${(xf(mk.lon) + 7).toFixed(1)}" y="${(yf(mk.lat) - 7).toFixed(1)}" class="lbl">${esc(mk.name)}</text>`).join('')
+  // Legend: the ramp with its two ends in hours and days.
+  const lg = Array.from({ length: 40 }, (_, i) => `<rect x="${i * 4}" y="0" width="4" height="10" fill="${col(i / 39)}"/>`).join('')
+  // The legend sits under the map, not on it: on an ocean course the empty
+  // corner is never the same one, and on Transpac it landed on Hawaii.
+  const legend = ok.length > 1 ? `<p class="dim legend">fastest ${e0.toFixed(0)} h (${(e0 / 24).toFixed(1)} d) <svg width="160" height="10" style="vertical-align:middle">${lg}</svg> slowest ${e1.toFixed(0)} h (${(e1 / 24).toFixed(1)} d)</p>` : ''
+  return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — ${ok.length} route${ok.length === 1 ? '' : 's'}</h3>
+<svg viewBox="0 0 ${W} ${H.toFixed(0)}" width="100%" class="map" style="max-width:${W}px">
+<rect x="${L}" y="8" width="${Wp}" height="${Hp.toFixed(1)}" class="sea"/>${landSvg}<g class="grat">${grat.join('')}</g>${rhumb}${lines}${repSvg}${marks}</svg>${legend}${repNote}`
+}
+
 // ── report ──────────────────────────────────────────────────────────────────
 function report(): string {
   const esc = (s: string) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
@@ -283,28 +430,20 @@ function report(): string {
     }).join('')
     return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — % of sailing time (mean ${t.totalHours.toFixed(1)} h per race)</h3><table class="heat">${head}${rows}</table>`
   }
-  // Routes: equirectangular SVG.
-  const all = methods.flatMap(m => results[m].filter(x => x.r.ok).flatMap(x => x.r.path))
-  const la = [...all.map(p => p.lat), ...course.marks.map(k => k.lat)], lo = [...all.map(p => p.lon), ...course.marks.map(k => k.lon)]
-  const la0 = Math.min(...la), la1 = Math.max(...la), lo0 = Math.min(...lo), lo1 = Math.max(...lo)
-  const k = Math.cos(((la0 + la1) / 2) * Math.PI / 180)
-  const W = 640, Hh = Math.max(200, Math.min(900, (W * (la1 - la0)) / ((lo1 - lo0) * k || 1)))
-  const X = (x: number) => (((x - lo0) / (lo1 - lo0 || 1)) * (W - 20) + 10).toFixed(1)
-  const Y = (y: number) => ((1 - (y - la0) / (la1 - la0 || 1)) * (Hh - 20) + 10).toFixed(1)
-  const lines = methods.flatMap(m => results[m].filter(x => x.r.ok).map(x =>
-    `<polyline fill="none" stroke="${m === 'iso' ? '#2563eb' : '#d97706'}" stroke-opacity="${Math.max(0.08, 0.45 / Math.sqrt(offsetsH.length)).toFixed(2)}" stroke-width="1.2" points="${x.r.path.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"><title>${m} ${x.startLocal}: ${h(x.r.elapsedSec!).toFixed(2)} h</title></polyline>`)).join('')
-  const marks = course.marks.map(mk => `<circle cx="${X(mk.lon)}" cy="${Y(mk.lat)}" r="4" fill="#111"/><text x="${Number(X(mk.lon)) + 6}" y="${Number(Y(mk.lat)) - 6}" font-size="11">${esc(mk.name)}</text>`).join('')
+  const maps = methods.map(routeMap).join('')
   const conv = convergence ? `<p class="dim">Convergence (${convergence.year}): isochrone at half step, half sector and a 2.5° fan changed elapsed time by ${convergence.isoChangePct.toFixed(2)} %; the grid at half cell and 48 directions differs from the isochrone by ${convergence.gridFineVsIsoPct.toFixed(2)} %.</p>` : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(course.name ?? 'Routing climatology')}</title>
 <style>body{font:14px/1.45 system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 16px;color:#111}
 table{border-collapse:collapse;margin:8px 0 20px}td,th{border:1px solid #ddd;padding:3px 7px;text-align:right;font-variant-numeric:tabular-nums}
 th{background:#f6f6f6}.heat td{min-width:30px;font-size:12px}.dim{color:#666}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
-@media (prefers-color-scheme:dark){body{background:#111;color:#eee}th{background:#222}td,th{border-color:#333}.dim{color:#999}}</style></head><body>
+.map .sea{fill:#eef4f8}.map .grat line{stroke:#c9d6df;stroke-width:.6}.map text{font-size:11px;fill:#555}.map .lbl{font-size:12px;fill:#111}.map .mark{fill:#111}.map .barb{stroke:#b3121b;stroke-width:1.8;stroke-linecap:round}.legend{margin:4px 0}.map .pennant{fill:#b3121b}.map .halo{stroke:#fff;stroke-opacity:.8}
+@media (prefers-color-scheme:dark){body{background:#111;color:#eee}th{background:#222}td,th{border-color:#333}.dim{color:#999}
+.map .sea{fill:#16202a}.map .land{fill:#3a3d40}.map .grat line{stroke:#2c3a46}.map text{fill:#aaa}.map .lbl{fill:#eee}.map .mark{fill:#eee}.map .ink{stroke:#ddd}.map .barb{stroke:#ff8a7a}.map .pennant{fill:#ff8a7a}.map .halo{stroke:#000}}</style></head><body>
 <h1>${esc(course.name ?? 'Routing climatology')}</h1>
 <p>${esc(course.marks.map(m => m.name).join(' → '))} · ${course.rhumbNm.toFixed(1)} nm rhumb · start ${esc(arg('start')!.slice(5))} local (${esc(zone ?? '')}) · ${years[0]}–${years[years.length - 1]} (${years.length} years${multi ? ` × ${offsetsH.length} starts, ±${windowD} d every ${everyH} h` : ''}) · polar ${esc(path.basename(arg('polar')!))} at ${mast} m, lift “${lift}” · tack ${polar.tackSec}s / gybe ${polar.gybeSec}s</p>
 <h2>Elapsed time, hours</h2><table><tr><th></th><th>min</th><th>max</th><th>mean</th><th>median</th><th>1σ</th><th>median 90% CI</th><th>mean 90% CI</th><th>n</th></tr>${statRows}</table>${conv}
-<h2>Routes</h2><svg viewBox="0 0 ${W} ${Hh.toFixed(0)}" width="100%" style="max-width:${W}px;border:1px solid #ddd">${lines}${marks}</svg>
-<p class="dim">Blue isochrone, orange grid. Hover a line for its start.</p>
+<h2>Routes</h2>${maps}
+<p class="dim">Each line is one start, coloured by its elapsed time. Hover a line for its start date and time. Grey is the land mask the router avoided; dashed is the rhumb line between the marks.</p>
 <h2>Time on each point of sail</h2>${methods.map(heat).join('')}
 ${offTable}<h2>Per year</h2><table><tr><th></th>${yearHead}</tr>${yearRows}</table>
 <p class="dim">ERA5 (C3S) hourly 0.25°; wind sampled bilinear in space, linear in time, direction from u/v and speed preserved. Arrival at each mark solved exactly from every front point (no isochrone quantisation). Marks routed leg by leg, which is exact for point marks.</p>
