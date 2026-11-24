@@ -76,7 +76,7 @@ the obvious shortcut of correcting the reanalysis to Capri.
 
 | Product | Why | Use |
 |---|---|---|
-| **CERRA height levels** (C3S, 5.5 km) | The only open, long, still-updated product that stores wind **at exactly 30 m** (levels 15/30/50/75/100… m). Best of the European reanalyses on the French Med coast (bias within ±10 %, diurnal bias ~−0.5 m/s, Patra et al. 2025). Grid fine enough to put several cells inside the bay | **Backbone, 2006 → latest available** (the last twenty summers; decided 24 Nov 2026). Hourly series from the 3-hourly analyses plus the +1 h and +2 h forecast steps; never leads beyond +6 h. 15 and 50 m too, for the shear |
+| **CERRA height levels** (C3S, 5.5 km) | The only open, long, still-updated product that stores wind **at exactly 30 m** (levels 15/30/50/75/100… m). Best of the European reanalyses on the French Med coast (bias within ±10 %, diurnal bias ~−0.5 m/s, Patra et al. 2025). Grid fine enough to put several cells inside the bay | **Backbone, 2006 → latest available** (the last twenty summers; decided 24 Nov 2026). The 09/12/15 UTC analyses only (forecast steps dropped 24 Nov 2026, see §5.1); its role after the regime split (§5.4) is the spatial pattern across the bay and the gradient-day check. 15 and 50 m too, for the shear |
 | **ERA5** (0.25°), model level **136 = 30.96 m**, plus 10/100 m and 850/700 hPa | Longest, most homogeneous; drives the regime classification; the yardstick for CERRA's added value | Regime classifier input (gradient wind, 850 hPa temperature), cross-check of interannual variability and trend |
 | MERIDA HRES (RSE, WRF on ERA5, 4 km, 1986 →, 10/100 m) | Independent finer model for the spatial pattern (Q6) | Optional, needs registration |
 | Parthenope WRF archive (since 2006, ~1 km over the Gulf) | The only kilometre-scale hindcast of the bay itself — resolves Capri, the Lattari ridge and Bocca Piccola | Optional, by request; best tool for Q6 if granted |
@@ -183,15 +183,23 @@ What these change in the method:
 
 1. Download with `scripts/naples-study/cds_fetch.py` (§8a), **10 May – 2 Aug, 2006–2026, 09–15 UTC
    only**:
-   - **CERRA** wind speed + direction at 15/30/50 m: analyses 09/12/15 UTC plus the +1/+2 h forecasts
-     from 09 and 12 (10, 11, 13, 14 UTC). **Measured on the CDS: CERRA has no area or point option**,
+   - **CERRA** wind speed + direction at 15/30/50 m: **the 09/12/15 UTC analyses
+     only**. **Measured on the CDS: CERRA has no area or point option**,
      so every field arrives for all of Europe. The script requests **one summer of one product** at a
      time (May–Aug, every day, the days outside the window dropped on arrival), crops to the bay box
-     and deletes the full file: ~108,000 fields, **measured at 2.3 MB each in GRIB** (5.3 MB in NetCDF,
-     same values bit for bit, so GRIB it is), ~250 GB passing through, ~7 GB per request on disk,
+     and deletes the full file: ~40,000 fields, **measured at 2.3 MB each in GRIB** (5.3 MB in NetCDF,
+     same values bit for bit, so GRIB it is), ~90 GB passing through, ~5 GB per request on disk,
      a few MB kept. Month-by-month requests were tried first and sat **four hours in the CDS queue
      without starting** (24 Nov 2026); the queue, not the transfer, is the cost, and a summer is
-     ~3,000 fields against the CDS's 90,000-field request limit. ERA5 stays monthly in its own pool — 154 cells over the bay. The CDS catalogue lists
+     ~2,200 fields against the CDS's 90,000-field request limit. ERA5 stays monthly in its own pool.
+     **CERRA comes off ECMWF's tape archive** (MARS), through one queue shared by every CDS user, while
+     ERA5 is served from disk — so ERA5 kept arriving all afternoon while three whole-summer CERRA
+     requests sat three hours unstarted, with the CDS reporting itself DEGRADED (10,350 requests
+     queued). The +1/+2 h forecasts (10, 11, 13, 14 UTC) were therefore **dropped**, halving the tape
+     requests to one per summer: since the regime split, CERRA's job is the spatial pattern across the
+     bay, which three times a day carries, and ERA5 matched N72 better on gradient days anyway (r 0.79
+     against 0.73). `--cerra-fc` puts them back if the queue clears. A restart reattaches to requests
+     already queued rather than resubmitting them — 154 cells over the bay. The CDS catalogue lists
      CERRA **through 31 Aug 2026**, so the 2025 and 2026 summers are in.
    - **ERA5** single levels (10/100 m wind, gust, 2 m T and dewpoint, SST, BLH, MSLP, cloud) and
      850/700 hPa u, v, T — these DO crop server-side (`area`), so they are small and fast. ERA5's

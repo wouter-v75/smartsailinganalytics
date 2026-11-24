@@ -6,9 +6,13 @@ Pulls, for every summer 2006-2026 (the last twenty completed ones plus this one)
 plus the N72 May days for comparison), the RACING WINDOW ONLY: 11:00-17:00 local =
 09-15 UTC (CEST is UTC+2 all summer).
 
-  cerra   CERRA height levels, wind speed + direction at 15 / 30 / 50 m, hourly:
-          analyses 09, 12, 15 UTC + forecasts from 09 and 12 at +1 h, +2 h
-          (10, 11, 13, 14 UTC). Never leads beyond +2 h.
+  cerra   CERRA height levels, wind speed + direction at 15 / 30 / 50 m: the
+          analyses at 09, 12, 15 UTC. --cerra-fc adds the forecasts from 09 and 12
+          at +1 h, +2 h (10, 11, 13, 14 UTC) -- off by default since 24 Nov 2026,
+          because CERRA comes off ECMWF's TAPE archive through one shared queue
+          and the forecasts double the requests, while the regime-split design
+          uses CERRA only for the spatial pattern across the bay (ERA5 beats it
+          on gradient days, N72 replaces both on sea-breeze days).
   lsm     CERRA land-sea mask (once), to keep only sea cells.
   era5    ERA5 single levels (10/100 m wind, 2 m T, SST, BLH, MSLP, gust, cloud),
           09-15 UTC, over a box around the bay -- the regime classifier's surface input.
@@ -97,7 +101,7 @@ def days(month: int) -> list[str]:
 
 
 # ---------------------------------------------------------------- requests
-def cerra_requests(years):
+def cerra_requests(years, fc: bool = False):
     ndays = 31 + 30 + 31 + 31  # what is DOWNLOADED; only DAYS is kept
     for y in years:
         common = {
@@ -112,6 +116,8 @@ def cerra_requests(years):
         yield ("cerra", f"{y}-an", "reanalysis-cerra-height-levels",
                {**common, "product_type": "analysis", "time": ["09:00", "12:00", "15:00"]},
                ndays * 3 * 6)
+        if not fc:
+            continue
         yield ("cerra", f"{y}-fc", "reanalysis-cerra-height-levels",
                {**common, "product_type": "forecast", "time": ["09:00", "12:00"],
                 "leadtime_hour": ["1", "2"]},
@@ -125,6 +131,35 @@ def already_have(out_root: Path, ds_key: str, name: str) -> bool:
         y, prod = name.split("-")
         return all((out_root / "cerra" / f"{y}-{m:02d}-{prod}.csv.gz").exists() for m in DAYS)
     return False
+
+
+def _norm(v):
+    return sorted(map(str, v)) if isinstance(v, (list, tuple)) else [str(v)]
+
+
+def queued_jobs(reqs) -> dict[str, str]:
+    """Requests of ours already sitting in the CDS queue, name -> job id.
+
+    A restart must NOT resubmit them: it would join the back of a tape queue the
+    first copy has already waited hours in, and repeated submit/cancel is what
+    gets a CDS account suspended. A job counts as ours when every field of the
+    request we would send matches it."""
+    from ecmwf.datastores import Client
+
+    cred = cds_credentials()
+    dc = Client(url=cred[0], key=cred[1], progress=False) if cred else Client(progress=False)
+    want = {r[1]: (r[2], r[3]) for r in reqs if r[0] == "cerra"}
+    found = {}
+    for jid in dc.get_jobs(status=["accepted", "running"], limit=100).request_ids:
+        remote = dc.get_remote(jid)
+        if remote.collection_id != "reanalysis-cerra-height-levels":
+            continue
+        got = remote.request
+        for name, (_, body) in want.items():
+            if name not in found and all(_norm(got.get(k)) == _norm(v) for k, v in body.items()):
+                found[name] = jid
+                break
+    return found
 
 
 def lsm_request():
@@ -264,7 +299,7 @@ def process(raw: Path, out: Path, crop: bool):
     return len(df)
 
 
-def fetch_one(req, out_root: Path, write: bool):
+def fetch_one(req, out_root: Path, write: bool, job_id: str | None = None):
     ds_key, name, dataset, body, _ = req
     out = out_root / ds_key / f"{name}.csv.gz"
     if already_have(out_root, ds_key, name):
@@ -273,7 +308,14 @@ def fetch_one(req, out_root: Path, write: bool):
         return f"would {ds_key}/{name}  <- {dataset}"
     out.parent.mkdir(parents=True, exist_ok=True)
     raw = out.parent / f".{name}.download"
-    client().retrieve(dataset, body).download(str(raw))
+    if job_id:  # already queued at the CDS: wait on that job, never resubmit
+        from ecmwf.datastores import Client
+
+        cred = cds_credentials()
+        dc = Client(url=cred[0], key=cred[1], progress=False) if cred else Client(progress=False)
+        dc.get_remote(job_id).download(str(raw))
+    else:
+        client().retrieve(dataset, body).download(str(raw))
     mb = raw.stat().st_size / 1e6
     n = process(raw, out, crop=ds_key in ("cerra", "lsm"))
     return f"done  {ds_key}/{name}: {mb:.0f} MB downloaded -> {n} rows kept"
@@ -293,6 +335,8 @@ def main():
     ap.add_argument("--years", help="e.g. 2024-2026 (default 2006-2026)")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--jobs", type=int, default=3, help="parallel ERA5 requests (default 3)")
+    ap.add_argument("--cerra-fc", action="store_true",
+                    help="also fetch CERRA's +1/+2 h forecasts (doubles the tape requests)")
     ap.add_argument("--cerra-jobs", type=int, default=3, help="parallel CERRA requests (default 3)")
     ap.add_argument("--write", action="store_true", help="actually download")
     a = ap.parse_args()
@@ -312,7 +356,7 @@ def main():
 
     reqs = []
     if a.what in ("cerra", "all", "plan"):
-        reqs += list(lsm_request()) + list(cerra_requests(years))
+        reqs += list(lsm_request()) + list(cerra_requests(years, fc=a.cerra_fc))
     if a.what in ("era5", "all", "plan"):
         reqs += list(era5_requests(years))
 
@@ -336,9 +380,16 @@ def main():
     if free < need:
         sys.exit(f"only {free:.0f} GB free; each CERRA summer passes ~5-7 GB through disk")
     # Two pools, so the minutes-long ERA5 requests never queue behind CERRA's hours.
+    reqs = [r for r in reqs if not already_have(a.out, r[0], r[1])]
+    queued = queued_jobs(reqs)
+    for name, jid in queued.items():
+        print(f"wait  cerra/{name}: already queued at the CDS as {jid}", flush=True)
+    # queued ones first, so their pool slots go to the jobs that have already waited
+    reqs.sort(key=lambda r: r[1] not in queued if r[0] == "cerra" else 0)
     with cf.ThreadPoolExecutor(max_workers=a.cerra_jobs) as cx, \
          cf.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-        futs = {(cx if r[0] in ("cerra", "lsm") else ex).submit(fetch_one, r, a.out, True): r
+        futs = {(cx if r[0] in ("cerra", "lsm") else ex).submit(
+                    fetch_one, r, a.out, True, queued.get(r[1]) if r[0] == "cerra" else None): r
                 for r in reqs}
         for f in cf.as_completed(futs):
             r = futs[f]
