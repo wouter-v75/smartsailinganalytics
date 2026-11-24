@@ -117,15 +117,32 @@ The models' known failure is exactly the regime the regatta is most likely to ge
 observation is a data source here, not colour. It is recorded as numbers with ranges, before the
 CERRA spatial composite is looked at, so the comparison in §5.4 is honest:
 
-| # | Question (classic late-June/July sea-breeze day, 11–17 local) | Answer | Range / confidence |
-|---|---|---|---|
-| S1 | When does the breeze fill on the race area? When does it peak, and does it fade before 17:00? | | |
-| S2 | Typical peak at **masthead** height off Sorrento / mid-bay / Posillipo, in kn | | |
-| S3 | Which zone is strongest, and by how much relative to where N72 sailed in May? | | |
-| S4 | Direction at onset and at peak; how much does it veer through the afternoon? | | |
-| S5 | How does a July sea-breeze day compare with the May ones N72 sailed (stronger, earlier, steadier)? | | |
-| S6 | Which synoptic situations kill it or replace it (scirocco, maestrale, NE gradient), and how often in the window? | | |
-| S7 | Known local features: wind shadows under the peninsula or Vesuvius, acceleration zones, Capri wake | | |
+Answered 24 Nov 2026 (Wouter, from racing and coaching on site). Sorrento is the reference zone.
+
+| # | Question | Answer | Range / confidence | Against the N72 May data |
+|---|---|---|---|---|
+| S1 | Onset, peak, fade | Fills **11:30–12:00**, typically **30–60 min earlier than the models**; lasts until **~18:00** | firm | Agrees: at 11 local the masthead reads 6.4 kn against CERRA's 2.6; CERRA fades from 16 h while the masthead is still building. 18:00 is past the racing data, so not testable on N72 |
+| S2 | Peak at masthead | A good sea breeze reaches **15–18 kn** | firm | Agrees: sea-breeze daily peaks 14–22 kn in 10-min bins (hourly means to 17.4) |
+| S3 | Strongest zone | Strongest **deeper into the bay**: bottom of the bay (Castellammare – Torre Annunziata) = **Sorrento + 2 kn**; Naples = **Sorrento + 1–2 kn** | bottom firm; Naples **less sure** | Not testable from N72 (one zone). Becomes the prior for the zone factors in §5.4.4 |
+| S4 | Direction | Set by the **morning gradient**. SE morning gradient: starts **160°**, veers to **250°**. NW morning gradient: starts **210°**, goes to **280–290°** | firm | Mixed on the 19 May days, but those are race windows only (first and last hour of racing), not onset-to-peak. Tested on the stations' full days instead (§5.3) |
+| S5 | July vs May | *not yet answered* | | |
+| S6 | Killers | **Strong E–SE** gradient; an **inversion** layer | firm | 850 hPa is above the lid, so the proxy available (T850 − SST) does not separate the days. ERA5 1000/925 hPa (06–15 UTC) added to the fetch for this |
+| S7 | Local features | **Capri** casts a big shadow in **SE–SSW**, which does **not** reach Naples. **Vesuvius** shadow in **NE–ESE** | firm | Becomes a direction-conditioned zone factor; CERRA's 5.5 km grid resolves Capri's wake only coarsely, Vesuvius better |
+
+What these change in the method:
+- **Two sea-breeze sub-regimes**, keyed on the morning (08 local) gradient direction: *SE-morning* (160 → 250°)
+  and *NW-morning* (210 → 280–290°). Each gets its own direction track and its own masthead distribution
+  as far as the 12 days allow; with few days per sub-regime the speed distribution may have to stay
+  pooled and only the direction split.
+- **A kill rule** in the classifier: strong E–SE gradient → no sea breeze; low-level inversion (1000/925 hPa
+  lapse at 08–14 local) → suppressed. The rule is calibrated on the station archive, then counted in the
+  window's 42 summers: *how many race days a year are lost to it* is one of the most useful single
+  numbers the study can give a tactician.
+- **Timing**: model onset is shifted **30–60 min earlier** on sea-breeze days, so any timing product is
+  built from the masthead and stations and only the regime comes from the model.
+- **Zone factors (sea-breeze days) — priors**: Sorrento 0, bottom of the bay **+2 kn (±1)**, Naples
+  **+1.5 kn (±1, low confidence)**, Capri-shadow and Vesuvius-shadow sectors as direction-dependent
+  reductions. CERRA's composite is then compared with these, not the other way round.
 
 ## 4. Spatial and temporal frame
 

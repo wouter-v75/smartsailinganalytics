@@ -143,6 +143,18 @@ def era5_requests(years):
                     "time": ["09:00", "12:00", "15:00"],
                     "area": ERA5_AREA, "data_format": "netcdf", "download_format": "unarchived"},
                    0)
+            # The sea-breeze LID: an inversion at a few hundred metres is what stops the breeze
+            # (on-site knowledge, 24 Nov 2026), and 850 hPa (~1.5 km) sits above it. 1000/925 hPa
+            # T and wind put the lid and the low-level gradient in. Its own key, so the 850/700
+            # files already on disk are not re-fetched.
+            yield ("era5low", f"{y}-{m:02d}", "reanalysis-era5-pressure-levels",
+                   {"product_type": ["reanalysis"],
+                    "variable": ["u_component_of_wind", "v_component_of_wind", "temperature"],
+                    "pressure_level": ["1000", "925"],
+                    "year": str(y), "month": f"{m:02d}", "day": days(m),
+                    "time": ["06:00", "09:00", "12:00", "15:00"],
+                    "area": ERA5_AREA, "data_format": "netcdf", "download_format": "unarchived"},
+                   0)
 
 
 # ---------------------------------------------------------------- processing
