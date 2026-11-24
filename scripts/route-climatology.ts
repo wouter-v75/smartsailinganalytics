@@ -428,17 +428,6 @@ function report(): string {
   }).join('')
   const f2 = dh
   const multi = offsetsH.length > 1
-  const yearRows = years.map(y => `<tr><th>${y}</th>${methods.map(m => {
-    const r = ms[m].byYear.find((x: any) => x.year === y)
-    return multi ? `<td>${f2(r.mean)}</td><td>${f2(r.min)}</td><td>${f2(r.max)}</td><td class="dim">${r.n}/${r.of}</td>`
-      : `<td>${r.n ? f2(r.mean) : 'DNF'}</td>`
-  }).join('')}</tr>`).join('')
-  const yearHead = multi ? methods.map(m => `<th>${m} mean</th><th>min</th><th>max</th><th>n</th>`).join('') : methods.map(m => `<th>${m} h</th>`).join('')
-  const offRows = offsetsH.map((o, i) => `<tr><th>${o >= 0 ? '+' : ''}${(o / 24).toFixed(o % 24 ? 1 : 0)} d</th>${methods.map(m => {
-    const r = ms[m].byOffset[i]
-    return `<td>${f2(r.mean)}</td><td>${f2(r.median)}</td><td>${f2(r.min)}</td><td>${f2(r.max)}</td><td class="dim">${r.n}</td>`
-  }).join('')}</tr>`).join('')
-  const offTable = multi ? `<h2>By start date</h2><p class="dim">Each row is one start offset from ${esc(arg('start')!.slice(5, 10))}, over all years.</p><table><tr><th></th>${methods.map(m => `<th>${m} mean</th><th>median</th><th>min</th><th>max</th><th>n</th>`).join('')}</tr>${offRows}</table>` : ''
   // Red -> yellow -> green with the share of time, on a square-root scale so a
   // bin with a fraction of a percent still shows; an empty bin stays blank.
   const rg = (f: number) => {
@@ -447,6 +436,29 @@ function report(): string {
     const c = stops[k].map((v, n) => Math.round(v + u * (stops[k + 1][n] - v)))
     return { bg: `rgb(${c.join(',')})`, fg: f > 0.85 ? '#fff' : '#111' }
   }
+  // Elapsed-time tables filled on the same scale, inverted: green is fast, red
+  // slow, spread over the table's own range (every value but n), so the
+  // fastest and slowest cells in it are the two ends.
+  const eFill = (v: number, lo: number, hi: number) => {
+    if (!Number.isFinite(v)) return ''
+    const { bg, fg } = rg(hi > lo ? 1 - (v - lo) / (hi - lo) : 0.5)
+    return ` style="background:${bg};color:${fg}"`
+  }
+  const range = (vals: number[]) => { const v = vals.filter(Number.isFinite); return [Math.min(...v), Math.max(...v)] as const }
+  const [yLo, yHi] = range(methods.flatMap(m => ms[m].byYear.flatMap((r: any) => [r.mean, r.min, r.max])))
+  const [oLo, oHi] = range(methods.flatMap(m => ms[m].byOffset.flatMap((r: any) => [r.mean, r.median, r.min, r.max])))
+  const ec = (v: number, lo: number, hi: number) => `<td${eFill(v, lo, hi)}>${f2(v)}</td>`
+  const yearRows = years.map(y => `<tr><th>${y}</th>${methods.map(m => {
+    const r = ms[m].byYear.find((x: any) => x.year === y)
+    return multi ? `${ec(r.mean, yLo, yHi)}${ec(r.min, yLo, yHi)}${ec(r.max, yLo, yHi)}<td class="dim">${r.n}/${r.of}</td>`
+      : r.n ? ec(r.mean, yLo, yHi) : '<td>DNF</td>'
+  }).join('')}</tr>`).join('')
+  const yearHead = multi ? methods.map(m => `<th>${m} mean</th><th>min</th><th>max</th><th>n</th>`).join('') : methods.map(m => `<th>${m} h</th>`).join('')
+  const offRows = offsetsH.map((o, i) => `<tr><th>${o >= 0 ? '+' : ''}${(o / 24).toFixed(o % 24 ? 1 : 0)} d</th>${methods.map(m => {
+    const r = ms[m].byOffset[i]
+    return `${ec(r.mean, oLo, oHi)}${ec(r.median, oLo, oHi)}${ec(r.min, oLo, oHi)}${ec(r.max, oLo, oHi)}<td class="dim">${r.n}</td>`
+  }).join('')}</tr>`).join('')
+  const offTable = multi ? `<h2>By start date</h2><p class="dim">Each row is one start offset from ${esc(arg('start')!.slice(5, 10))}, over all years. Green is fast, red slow, across the whole table.</p><table><tr><th></th>${methods.map(m => `<th>${m} mean</th><th>median</th><th>min</th><th>max</th><th>n</th>`).join('')}</tr>${offRows}</table>` : ''
   // TWS down the side, TWA across: one row per 2 kn band reads as "in this
   // breeze, where on the dial was the boat".
   const heat = (m: string) => {
@@ -468,20 +480,20 @@ function report(): string {
       }).join('')
       const rp = t.totalHours ? (100 * rowSum) / t.totalHours : 0
       return `<tr><th>${lab}</th>${cells}<td class="tot">${rp >= 0.05 ? rp.toFixed(1) : ''}</td></tr>`
-    }).join('')
+    }).reverse().join('')   // wind speed UP the page: 0 kn at the bottom, like a chart's y axis
     const colTot = t.twaEdges.map((_: number, r: number) => {
       const v = t.hours[r].reduce((a: number, b: number) => a + b, 0)
       const pct = t.totalHours ? (100 * v) / t.totalHours : 0
       return `<td class="tot">${pct >= 0.05 ? pct.toFixed(1) : ''}</td>`
     }).join('')
-    return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — % of sailing time (mean ${dh(t.totalHours)} per race)</h3><p class="dim">Rows: TWS at ${mast} m in ${twsStep} kn bands. Columns: |TWA| in ${twaStep}° bins, labelled by their lower edge (30 = 30–${30 + twaStep}°). Red is little time, green the most.</p><div class="scroll"><table class="heat">${head}${rows}<tr><th>all</th>${colTot}<td class="tot">100</td></tr></table></div>`
+    return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — % of sailing time (mean ${dh(t.totalHours)} per race)</h3><p class="dim">Rows: TWS at ${mast} m in ${twsStep} kn bands, rising up the page. Columns: |TWA| in ${twaStep}° bins, labelled by their lower edge (30 = 30–${30 + twaStep}°). Red is little time, green the most.</p><div class="scroll"><table class="heat">${head}${rows}<tr class="totrow"><th>all</th>${colTot}<td class="tot">100</td></tr></table></div>`
   }
   const maps = methods.map(routeMap).join('')
   const conv = convergence ? `<p class="dim">Convergence (${convergence.year}): isochrone at half step, half sector and a 2.5° fan changed elapsed time by ${convergence.isoChangePct.toFixed(2)} %; the grid at half cell and 48 directions differs from the isochrone by ${convergence.gridFineVsIsoPct.toFixed(2)} %.</p>` : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(course.name ?? 'Routing climatology')}</title>
 <style>body{font:14px/1.45 system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 16px;color:#111}
 table{border-collapse:collapse;margin:8px 0 20px}td,th{border:1px solid #ddd;padding:3px 7px;text-align:right;font-variant-numeric:tabular-nums}
-th{background:#f6f6f6}.heat td,.heat th{min-width:22px;font-size:10.5px;padding:2px 3px;white-space:nowrap}.heat{margin-top:2px}.heat .tot{font-weight:600}.scroll{overflow-x:auto}.dim{color:#666}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
+th{background:#f6f6f6}.heat td,.heat th{min-width:22px;font-size:10.5px;padding:2px 3px;white-space:nowrap}.heat{margin-top:2px}.heat .tot{font-weight:600}.heat .totrow td,.heat .totrow th{border-top:2px solid #888}.scroll{overflow-x:auto}.dim{color:#666}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
 .map .sea{fill:#eef4f8}.map .grat line{stroke:#c9d6df;stroke-width:.6}.map text{font-size:11px;fill:#555}.map .lbl{font-size:12px;fill:#111}.map .mark{fill:#111}.map .rb{display:none}.map.showbarbs .rb{display:inline}.map .rb .barb{stroke-width:1.1}.map .barb{stroke:#b3121b;stroke-width:1.8;stroke-linecap:round}.legend{margin:4px 0}.map .pennant{fill:#b3121b}.map .halo{stroke:#fff;stroke-opacity:.8}
 @media (prefers-color-scheme:dark){body{background:#111;color:#eee}th{background:#222}td,th{border-color:#333}.dim{color:#999}
 .map .sea{fill:#16202a}.map .land{fill:#3a3d40}.map .grat line{stroke:#2c3a46}.map text{fill:#aaa}.map .lbl{fill:#eee}.map .mark{fill:#eee}.map .ink{stroke:#ddd}.map .barb{stroke:#ff8a7a}.map .pennant{fill:#ff8a7a}.map .halo{stroke:#000}}</style>
@@ -492,7 +504,7 @@ th{background:#f6f6f6}.heat td,.heat th{min-width:22px;font-size:10.5px;padding:
 <h2>Routes</h2>${maps}
 <p class="dim">Each line is one start, coloured by its elapsed time. Hover a line for its start date and time. Grey is the land mask the router avoided; dashed is the rhumb line between the marks.</p>
 <h2>Time on each point of sail</h2>${methods.map(heat).join('')}
-${offTable}<h2>Per year</h2><table><tr><th></th>${yearHead}</tr>${yearRows}</table>
+${offTable}<h2>Per year</h2><p class="dim">Green is fast, red slow, across the whole table.</p><table><tr><th></th>${yearHead}</tr>${yearRows}</table>
 <p class="dim">ERA5 (C3S) hourly 0.25°; wind sampled bilinear in space, linear in time, direction from u/v and speed preserved. Arrival at each mark solved exactly from every front point (no isochrone quantisation). Marks routed leg by leg, which is exact for point marks.</p>
 </body></html>`
 }
