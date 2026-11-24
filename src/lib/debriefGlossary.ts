@@ -32,15 +32,15 @@ export type Glossary = {
 
 // Starter set — refine `sails` and `crew` with the team's actual inventory + names.
 export const DEFAULT_GLOSSARY: Glossary = {
-  sails: ['BRO', 'MH0', 'mo', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'No.1', 'No.3', 'jib top', 'masthead zero', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite'],
+  sails: ['BRO', 'MH0', 'mo', 'J0', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'No.1', 'No.3', 'jib top', 'masthead zero', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite'],
   // Sandukan leads for the same reason the parts list is ordered: manoeuvres get
   // whatever budget is left over, so only the head of this list reaches Whisper —
   // and "Sandukan" is the one term here it has no chance of guessing. The rest are
   // ordinary words it already gets right.
-  manoeuvres: ['Sandukan', 'straight set', 'inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'layline', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
+  manoeuvres: ['Sandukan', 'straight set', 'inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'layline', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'gorilla hoist', 'hatch set', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
   // High-value / most-mangled terms first — whisperPrompt() only takes the leading
   // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
-  parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'winch', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew', 'batten', 'forestay', 'cap shrouds', 'shim', 'wheel'],
+  parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'winch', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew', 'batten', 'forestay', 'cap shrouds', 'shim', 'wheel', 'mast butt'],
   // NO NAMES HERE. Crew and rival boats are TEAM data, and this object is shared by
   // every team in the app: names listed here are fed into every other team's
   // transcription prompt, where Whisper will happily put them into a session those
@@ -71,6 +71,14 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['straight set', 'bear-away set (hoist the spinnaker and carry on — no gybe at the mark)'],
     ['bare-away set', 'bear-away set (hoist the spinnaker and carry on — no gybe at the mark)'],
     ['Sandukan', 'gybe set (gybe immediately at the top mark and set the spinnaker in the gybe)'],
+    // Ryujin, 7 Nov 2026 — confirmed by Wouter as correct terms, NOT mishearings.
+    // "Wind weight" is the strength or pressure of the breeze. It had to be
+    // named here because the `the weight` → AWA fixup below was pointed straight
+    // at it, and a note that reported wind weight as AWA would be reporting a
+    // different quantity.
+    ['wind weight', 'wind weight (the strength or pressure of the breeze — a real term; keep it, do NOT read it as AWA or as crew weight)'],
+    ['cals', 'cals (the instrument wind calibrations — "wind cals")'],
+    ['wind cals', 'wind calibrations'],
   ],
   // Recogniser MISHEARINGS observed in this team's debriefs. These go to the
   // SUMMARISER as context, never as a blind find-and-replace, which is why
@@ -88,7 +96,7 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['window', 'winch (when the sense is a deck fitting, not a computer window)'],
     ['self-tailor', 'self-tailer'], ['self tailor', 'self-tailer'],
     ['windward load', 'windward-leeward'], ['load focus', 'leeward focus'],
-    ['the weight', 'the AWA (when the sense is sail trim, not crew weight)'],
+    ['the weight', 'the AWA (when the sense is sail trim, not crew weight — and NEVER in "wind weight", which is a real term for the strength of the breeze)'],
     ['coaster timing', 'coastal peel curve timing'],
     // Maxi Worlds 2026 meetings, checked against the notes typed up in the room
     ['softer tube', 'softer batten'], ['tube', 'batten (when the sense is sail shape)'],
@@ -107,6 +115,10 @@ export const DEFAULT_GLOSSARY: Glossary = {
     // the usual spelling of the name, so the recogniser will favour both forms.
     ['bare away', 'bear away'], ['bare-away set', 'bear-away set'],
     ['Sandokan', 'Sandukan (the gybe-set manoeuvre)'],
+    // Ryujin, 7 Nov 2026. Spelling, not mishearing: the sail is said "jay zero"
+    // and written J0. The note came back calling it "J-Zero (jib top / masthead
+    // zero)" — a gloss nobody in the room gave it.
+    ['J-Zero', 'J0'], ['J zero', 'J0'], ['jay zero', 'J0'], ['J-zero', 'J0'],
   ],
 }
 
@@ -272,10 +284,106 @@ export function vocabForBoat(boatName?: string | null): Partial<Glossary> | unde
   return key ? TEAM_VOCAB[key] : undefined
 }
 
+// Sail words that belong to no boat in particular. Every other entry in
+// `DEFAULT_GLOSSARY.sails` names ONE boat's sail, and is only safe to offer to a
+// boat that has it — see foreignCodes() below. None of these appears in any
+// wardrobe (checked across all four boats with sails, 8 Nov 2026), so they have
+// to be named here or scoping would strip the ordinary words for "mainsail".
+export const GENERIC_SAILS = [
+  'A-sail', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite', 'jib top',
+]
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** Does `text` name this sail code? Bounded so A2 does not match A2.5, and `mo`
+ *  does not match "more". */
+function mentions(text: string, code: string): boolean {
+  return new RegExp(`(?<![\\w.])${escapeRe(code)}(?![\\w.])`, 'i').test(text)
+}
+
+/**
+ * The shared sail codes this boat does NOT have.
+ *
+ * WHY THIS EXISTS. `DEFAULT_GLOSSARY` is shared by every team, and its sail list
+ * is one squad's: BRO, MH0, mo, masthead zero. Ryujin's 7 Nov debrief came back
+ * naming a sail she does not own — "MH0 (referred to as 'the zero')" and
+ * "J-Zero (jib top / masthead zero)" — when the sail discussed all day was her
+ * J0. Her wardrobe WAS loaded and J0 WAS in the prompt; the shared list and its
+ * mishearing map (`mode zero` → MH0, `mower` → MH0, `raw` → BRO) simply won the
+ * argument. The same mistake as `northstarConditions()` falling back to
+ * Northstar's sailmaker sheet for any boat: one boat's reference leaking into
+ * another's, asserted as fact.
+ *
+ * The direction of the two failures is not equal, which is what settles it. A
+ * MISSING correction leaves a garbled word in the note — visibly odd, and a
+ * reader fixes it. A WRONG correction invents a sail the boat has never owned,
+ * which reads as a finding. So a code the boat cannot be shown to have is
+ * dropped.
+ *
+ * A code also survives if it is only ever a ROUTE to a code the boat has:
+ * Northstar's crew say "mo" for her MH0, and "mo" is in no wardrobe because a
+ * wardrobe lists sails, not slang.
+ */
+export function foreignCodes(base: Glossary, have: string[]): string[] {
+  const generic = new Set(GENERIC_SAILS.map((s) => s.toLowerCase()))
+  const owned = have.map((s) => s.toLowerCase())
+  const codes = base.sails.filter((s) => !generic.has(s.toLowerCase()))
+  const hasCode = (c: string) => owned.some((o) => o === c.toLowerCase() || mentions(o, c))
+  // Round 1: codes the boat plainly has.
+  const kept = new Set(codes.filter(hasCode).map((c) => c.toLowerCase()))
+  // Round 2, BOTH directions along the known nicknames:
+  //   say → kept code : keep `say` too. Northstar's crew call her MH0 "mo", and
+  //     no wardrobe lists slang, so scoping on the wardrobe alone would take the
+  //     nickname off the one boat that uses it.
+  //   wardrobe says `say`, mean is a code : keep the CODE. Northstar's own sail
+  //     list spells the same sail both `MH0 A` and `MHO B` — letter O against
+  //     zero — and a boat that only ever spelled it `MHO` would otherwise lose
+  //     MH0, the canonical form the note should use.
+  for (const [say, mean] of [...base.aliases, ...base.fixups]) {
+    if (!kept.has(say.toLowerCase()) && codes.some((c) => mentions(say, c))
+        && codes.some((c) => kept.has(c.toLowerCase()) && mentions(mean, c))) {
+      kept.add(say.toLowerCase())
+    }
+    if (owned.some((o) => mentions(o, say))) {
+      for (const c of codes) if (mentions(mean, c)) kept.add(c.toLowerCase())
+    }
+  }
+  return codes.filter((c) => !kept.has(c.toLowerCase()))
+}
+
+/** Drop the [say, mean] pairs that would steer the model to a sail this boat has
+ *  not got. Judged on the MEAN side: that is what the model is told to write. */
+function dropForeign(pairs: [string, string][], foreign: string[]): [string, string][] {
+  if (!foreign.length) return pairs
+  return pairs.filter(([, mean]) => !foreign.some((c) => mentions(mean, c)))
+}
+
 // Merge a partial team override onto the defaults (dedup, order preserved).
 export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT_GLOSSARY): Glossary {
   if (!extra) return base
   const uniq = (a: string[] = [], b: string[] = []) => Array.from(new Set([...a, ...b]))
+  // A non-empty `extra.sails` means the boat's own wardrobe reached us, so the
+  // shared codes can be judged against it. Empty means we simply do not know
+  // what this boat owns, and then nothing is dropped — a rival boat, a bench run
+  // and every existing test land here, unchanged.
+  const have = extra.sails || []
+  const foreign = have.length ? foreignCodes(base, have) : []
+  const baseSails = foreign.length
+    ? base.sails.filter((s) => !foreign.some((c) => c.toLowerCase() === s.toLowerCase()))
+    : base.sails
+  // Generics go LAST rather than into the weave. weave() exists so a tight
+  // budget runs out on both HIGH-VALUE lists at once instead of starving
+  // whichever came second — and before scoping, `base.sails` was full of
+  // unguessable codes worth that treatment. Scoping leaves it mostly generics,
+  // and giving "spinnaker" every other slot spends the budget on the one word
+  // Whisper never gets wrong. Measured on a 40-sail wardrobe: the generics took
+  // nine of the first twenty slots and pushed real codes out of the prompt.
+  // Only when the wardrobe is KNOWN, for the same reason nothing is dropped
+  // without it: with no wardrobe there is no weave to protect and no judgement
+  // to make, so that case keeps the order it has always had.
+  const generic = new Set(GENERIC_SAILS.map((g) => g.toLowerCase()))
+  const baseCodes = have.length ? baseSails.filter((x) => !generic.has(x.toLowerCase())) : baseSails
+  const baseGenerics = have.length ? baseSails.filter((x) => generic.has(x.toLowerCase())) : []
   // Sails are INTERLEAVED rather than concatenated, because both lists are
   // high-value and the prompt budget cuts off the tail. Concatenating starves
   // whichever list comes second: wardrobe-first dropped BRO and MH0 — the two terms
@@ -285,15 +393,17 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
     // The team's OWN items lead: a wardrobe code (A1.5-2022) is unguessable, while
     // "mainsail" and "jib" are words Whisper already knows. Under a tight prompt
     // budget the order decides what survives.
-    sails: weave(extra.sails, base.sails),
+    sails: Array.from(new Set([...weave(extra.sails, baseCodes), ...baseGenerics])),
     manoeuvres: uniq(base.manoeuvres, extra.manoeuvres),
     parts: uniq(extra.parts, base.parts),
     crew: uniq(extra.crew, base.crew),
     boats: uniq(extra.boats, base.boats),
     roles: [...base.roles, ...(extra.roles || [])],
     dutch: [...base.dutch, ...(extra.dutch || [])],
-    aliases: [...base.aliases, ...(extra.aliases || [])],
-    fixups: [...base.fixups, ...(extra.fixups || [])],
+    // The boat's OWN pairs are never filtered: if a team types a mapping into
+    // Boat → Debrief words, that is the boat's word on the matter.
+    aliases: [...dropForeign(base.aliases, foreign), ...(extra.aliases || [])],
+    fixups: [...dropForeign(base.fixups, foreign), ...(extra.fixups || [])],
   }
 }
 

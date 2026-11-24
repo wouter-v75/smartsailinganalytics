@@ -269,6 +269,64 @@ naming the wrong step. That catch is gone. A photo that cannot be decoded now
 fails at import, by name, with the reason — which also means IndexedDB can no
 longer hold HEIC bytes that `uploadPhotoToCloud` would PUT as `image/jpeg`.
 
+**The shared debrief glossary is ONE SQUAD'S vocabulary, and it was being sent
+to every boat.** Ryujin's 7 Nov debrief came back naming a sail she does not own
+— *"MH0 (referred to as 'the zero')"* and *"J-Zero (jib top / masthead zero)"* —
+when the sail discussed all day was her **J0**. Her wardrobe **was** loaded and
+J0 **was** in the prompt. What beat it was `DEFAULT_GLOSSARY`: `MH0`, `BRO` and
+`mo` in `sails`, plus a mishearing map pointing `mode zero`, `mower`,
+`emmage zero`, `the mode` → **MH0** and `Brault`, `raw` → **BRO**. Exactly the
+same mistake as `northstarConditions()` falling back to Northstar's sailmaker
+sheet for any boat: one boat's reference leaking into another's and asserted as
+fact.
+
+`foreignCodes()` in `debriefGlossary.ts` now drops a shared sail code the boat
+cannot be shown to have, and `withOverride` drops the alias/fixup pairs that
+point at one. **The two failure directions are not equal, which is what settles
+the design**: a MISSING correction leaves a garbled word a reader spots, a WRONG
+one invents a sail the boat has never owned and reads as a finding.
+
+Three things it has to get right, each learned from the real wardrobes:
+- **generics are not codes.** `mainsail`, `main`, `jib`, `genoa`, `spinnaker`,
+  `kite`, `staysail`, `jib top`, `A-sail` appear in **no** boat's wardrobe, so
+  filtering on the wardrobe alone would strip the ordinary word for a mainsail.
+  `GENERIC_SAILS` names them.
+- **a nickname is in no wardrobe either.** Northstar's crew say "mo" for her
+  MH0; a wardrobe lists sails, not slang. A code survives if it is a route to a
+  code the boat has.
+- **and the wardrobe may spell it the other way.** Northstar's own sail list has
+  both `MH0 A` and `MHO B` — zero and letter O — so the alias is followed in
+  BOTH directions or a boat that only ever spelled it `MHO` loses the canonical
+  form.
+
+Measured on the real transcript, with `--boat Ryujin` (which
+`debrief-resummarise.ts` now accepts, because without a glossary the script was
+reproducing a DIFFERENT prompt from the app's and so could not see this at all):
+MH0 1→**0**, masthead zero 1→**0**, jib top 2→**0**, J0 6→**11**.
+
+Impact on the other boats, checked rather than assumed: **Northstar loses
+nothing** (she owns MH0 and BRO, and keeps `mo` through the alias); Baraka loses
+`BRO` and its two fixups, which she has never owned; Warp loses MH0/BRO/mo. A
+boat with **no** wardrobe — a rival, a bench run, every existing test — is
+untouched, and `withOverride(undefined)` still returns the same object.
+
+**Two terms the model was wrong about, and one it was RIGHT about.** `wind
+weight` is a real term (the strength or pressure of the breeze — Wouter, 8 Nov);
+it is now an alias, and the `['the weight', 'the AWA …']` fixup is explicitly
+scoped away from it, because that fixup was aimed straight at it. `cals` is the
+instrument wind calibrations. **But "more depth in the middle" was faithful** —
+the transcript says *"butt forward a little bit and put some more depth in the
+middle"*, so the hand correction to "bottom-section" is domain knowledge
+overriding the room, and encoding it would teach the summariser to contradict
+its own transcript. A boat fact like that belongs in Boat → Debrief words, not
+in `fixups`.
+
+**An angle is a whole number of degrees** (`QUANTITIES`). The recogniser writes
+"one thirty" as `1.30`, so `1.30–1.35 TWA` is **130–135** and `1.15–1.20` is
+**115–120**. This is the OPPOSITE of the lost-decimal rule above it and the two
+must not be confused: a SPEED of 130 is a lost point (13.0 kn), an ANGLE of 1.30
+is an added one.
+
 **"The debrief transcription is cut short" has been FIVE different things.**
 Asked again on 8 Nov 2026, and the honest answer each time was somewhere else:
 

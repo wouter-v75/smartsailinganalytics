@@ -12,8 +12,14 @@ const CHARS_PER_TOKEN = 2
 const tokens = (s: string) => Math.ceil(s.length / CHARS_PER_TOKEN)
 
 // The boat's live wardrobe, as /api/teams/:id/sails feeds it in.
+// A real wardrobe's shape: dated codes, as the Sails tab stores them. BRO-2024
+// is here because the shared glossary's codes are now scoped to the boat that
+// owns them (foreignCodes, 8 Nov 2026) — before that, every boat was offered
+// Northstar's BRO whether it had one or not, which is how Ryujin's debrief came
+// back naming a sail she does not own. A fixture that leans on that injection is
+// testing the bug.
 const WARDROBE = ['MAIN-2025','J1-2023','J2-2022','J3-2021','A1.5-2022','A1.5-2023',
-  'A2-2024','A3-2022','MH0-2024','SS-2023','C0-2023','JT-2022','A4-2021','J1.5-2024']
+  'A2-2024','A3-2022','MH0-2024','BRO-2024','SS-2023','C0-2023','JT-2022','A4-2021','J1.5-2024']
 
 describe('whisper prompt budget', () => {
   it('pins the regression: the OLD unbudgeted prompt blew past any safe budget', () => {
@@ -127,16 +133,42 @@ describe('whisper prompt budget', () => {
     expect(DEFAULT_GLOSSARY.boats).toHaveLength(0)
   })
 
-  it('carries most of the wardrobe, and drops generic words rather than codes', () => {
-    // A full crew + rival boats + a season's wardrobe genuinely exceed the token
-    // budget, so this asserts the PRIORITY, not that everything fits: unguessable
-    // codes stay, and the words Whisper already knows are what get dropped.
+  it('carries the whole wardrobe, and puts codes before words Whisper knows', () => {
+    // This asserted `not.toContain('spinnaker')` — a proxy for "generics are
+    // sacrificed first" that only held while the budget was tight. Scoping the
+    // shared codes to the boat that owns them freed enough room for all 15 of
+    // this boat's codes AND every generic, so the proxy stopped being observable
+    // while the thing it stood for got better. What the design actually
+    // guarantees is weave(): the two lists ALTERNATE, wardrobe first in each
+    // pair, so a tight budget runs out on both at once rather than starving
+    // whichever came second. So assert that, not an ordering weave never had.
     const p = whisperPrompt(withOverride({ sails: WARDROBE }))
-    const kept = WARDROBE.filter((s) => p.includes(s))
-    expect(kept.length).toBeGreaterThanOrEqual(8)
+    expect(WARDROBE.filter((s) => p.includes(s))).toEqual(WARDROBE)  // all 15, none crowded out
     expect(p).toContain('BRO')          // a real sail read as slang before it was listed
     expect(p).toContain('MH0')          // heard as "the mo"
-    expect(p).not.toContain('spinnaker') // generic: correctly sacrificed first
+    expect(p.indexOf(WARDROBE[0])).toBeLessThan(p.indexOf('BRO'))    // wardrobe leads its pair
+    expect(p.length).toBeLessThanOrEqual(WHISPER_PROMPT_MAX_CHARS)
+  })
+
+  it('sacrifices the generic words when the wardrobe really does overflow', () => {
+    // The rule the assertion above used to stand for, tested under the condition
+    // it needs: a wardrobe big enough to exhaust the budget on its own.
+    const big = Array.from({ length: 40 }, (_, i) => `A${i}.5-202${i % 10}`)
+    const p = whisperPrompt(withOverride({ sails: big }))
+    expect(p.length).toBeLessThanOrEqual(WHISPER_PROMPT_MAX_CHARS)
+    expect(p).not.toContain('spinnaker')
+    expect(p).toContain(big[0])
+  })
+
+  it('does not spend the budget on a sail this boat has not got', () => {
+    // The Ryujin bug, at the transcription end: every boat was offered
+    // Northstar's codes, which both crowded out its own wardrobe AND primed
+    // Whisper for a sail that was never aboard.
+    const p = whisperPrompt(withOverride({ sails: ['J0', 'A2', 'MN 2026'] }))
+    expect(p).toContain('J0')
+    expect(p).not.toContain('MH0')
+    expect(p).not.toContain('BRO')
+    expect(p).toContain('mainsail')     // generics are nobody's code
   })
 
   it('still reaches the most-mangled hardware, which is the whole point', () => {
