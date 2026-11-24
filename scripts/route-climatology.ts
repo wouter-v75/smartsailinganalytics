@@ -174,7 +174,7 @@ for (const y of years) {
       const r = t0 < raw.t0 ? failed(`start ${startLocal} is before the data (fetch with a --window this wide)`)
         : m === 'iso' ? routeIsochrone(env, course, t0, isoY) : routeGrid(env, course, t0, gridOpts)
       results[m].push({ year: y, offsetH: offH, startLocal, startUtc: new Date(t0).toISOString(), r, ms: Date.now() - t })
-      const e = r.ok ? `${(r.elapsedSec! / 3600).toFixed(2)} h` : `FAILED: ${r.reason}`
+      const e = r.ok ? dh(r.elapsedSec! / 3600) : `FAILED: ${r.reason}`
       console.log(`  ${startLocal} ${m.padEnd(4)} ${e}  ${r.ok ? `${r.sailedNm.toFixed(0)} nm sailed, ${r.tacks} tacks, ${r.gybes} gybes` : ''}  (${((Date.now() - t) / 1000).toFixed(1)} s)`)
     }
     if (flag('convergence') && !convergence && methods.includes('iso') && results.iso[results.iso.length - 1].r.ok) {
@@ -230,8 +230,8 @@ for (const m of methods) {
   }
   for (const x of rs) csvRows.push([x.year, x.offsetH, x.startLocal, x.startUtc, m, x.r.ok ? h(x.r.elapsedSec!).toFixed(3) : '', x.r.sailedNm.toFixed(1), x.r.tacks, x.r.gybes, ...x.r.legSec.map(s => h(s).toFixed(3))].join(','))
   console.log(`\n${m.toUpperCase()}  n=${st.n}${st.failed ? ` (${st.failed} failed)` : ''}
-  elapsed  min ${h(st.minSec).toFixed(2)}  max ${h(st.maxSec).toFixed(2)}  mean ${h(st.meanSec).toFixed(2)}  median ${h(st.medianSec).toFixed(2)}  1 sigma ${h(st.sdSec).toFixed(2)} h
-           median 90 % CI ${h(ci.median[0]).toFixed(2)}-${h(ci.median[1]).toFixed(2)} h (bootstrap over whole years)
+  elapsed  min ${dh(h(st.minSec))}  max ${dh(h(st.maxSec))}  mean ${dh(h(st.meanSec))}  median ${dh(h(st.medianSec))}  1 sigma ${dh(h(st.sdSec))}
+           median 90 % CI ${dh(h(ci.median[0]))}-${dh(h(ci.median[1]))} (bootstrap over whole years)
   time     upwind ${(100 * pos.upwind).toFixed(0)} %  reaching ${(100 * pos.reach).toFixed(0)} %  downwind ${(100 * pos.downwind).toFixed(0)} %  starboard ${(100 * pos.starboard).toFixed(0)} %`)
 }
 fs.writeFileSync(path.join(outDir, 'elapsed.csv'), csvRows.join('\n') + '\n')
@@ -247,6 +247,13 @@ fs.writeFileSync(path.join(outDir, 'routes.geojson'), JSON.stringify({ type: 'Fe
 fs.writeFileSync(path.join(outDir, 'report.html'), report())
 console.log(`\nwritten: ${outDir}/report.html, summary.json, elapsed.csv, table-*.csv, routes.geojson`)
 
+/** Hours as days and hours, rounded to the hour: 294.4 -> "12d6h", 14 -> "14h". */
+function dh(hours: number): string {
+  if (!Number.isFinite(hours)) return '–'
+  const t = Math.round(hours), d = Math.floor(t / 24), r = t % 24
+  return d ? `${d}d${r}h` : `${r}h`
+}
+
 // ── route map ───────────────────────────────────────────────────────────────
 // Equirectangular at the mid latitude (true shape at that latitude, which is
 // what a chart table shows for an ocean this size), land drawn from the SAME
@@ -259,22 +266,23 @@ console.log(`\nwritten: ${outDir}/report.html, summary.json, elapsed.csv, table-
  * to the nearest 5 kn; a pennant is 50, a full feather 10, a half 5, and under
  * 2.5 kn is drawn as a calm circle.
  */
-function barb(x: number, y: number, fromDeg: number, kn: number, title: string): string {
+function barb(x: number, y: number, fromDeg: number, kn: number, title: string, o: { len?: number; color?: string } = {}): string {
   const r = (fromDeg * Math.PI) / 180
   const ux = Math.sin(r), uy = -Math.cos(r)          // staff direction in SVG (y down)
   const px = -uy, py = ux                            // 90 deg clockwise of the staff, on screen
-  const len = 32, fl = 12, gap = 5
+  const len = o.len ?? 32, fl = len * 0.375, gap = len * 0.16
+  const st = o.color ? ` style="stroke:${o.color}"` : '', fi = o.color ? ` style="fill:${o.color}"` : ''
   const t = `<title>${title}</title>`
-  if (kn < 2.5) return `<g><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="none" class="barb"/>${t}</g>`
+  if (kn < 2.5) return `<g><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="none" class="barb"${st}/>${t}</g>`
   let v = Math.round(kn / 5) * 5
   const parts: string[] = [`M${x.toFixed(1)},${y.toFixed(1)}L${(x + ux * len).toFixed(1)},${(y + uy * len).toFixed(1)}`]
   let d = len
   const at = (k: number) => [x + ux * k, y + uy * k]
   const fill: string[] = []
   while (v >= 50) {
-    const [ax, ay] = at(d), [bx, by] = at(d - 6)
+    const [ax, ay] = at(d), [bx, by] = at(d - len * 0.19)
     fill.push(`M${ax.toFixed(1)},${ay.toFixed(1)}L${(ax + px * fl).toFixed(1)},${(ay + py * fl).toFixed(1)}L${bx.toFixed(1)},${by.toFixed(1)}Z`)
-    d -= 8; v -= 50
+    d -= len * 0.25; v -= 50
   }
   while (v >= 10) {
     const [ax, ay] = at(d)
@@ -286,7 +294,7 @@ function barb(x: number, y: number, fromDeg: number, kn: number, title: string):
     const [ax, ay] = at(d)
     parts.push(`M${ax.toFixed(1)},${ay.toFixed(1)}L${(ax + px * fl * 0.5 + ux * 1.5).toFixed(1)},${(ay + py * fl * 0.5 + uy * 1.5).toFixed(1)}`)
   }
-  return `<g><path d="${parts.join('')}" fill="none" class="barb"/>${fill.length ? `<path d="${fill.join('')}" class="pennant"/>` : ''}<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="1.8" class="pennant"/>${t}</g>`
+  return `<g><path d="${parts.join('')}" fill="none" class="barb"${st}/>${fill.length ? `<path d="${fill.join('')}" class="pennant"${fi}/>` : ''}<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(len / 18).toFixed(1)}" class="pennant"${fi}/>${t}</g>`
 }
 
 function routeMap(m: string): string {
@@ -348,25 +356,21 @@ function routeMap(m: string): string {
   const es = ok.map(x => x.r.elapsedSec! / 3600)
   const e0 = Math.min(...es), e1 = Math.max(...es)
   const op = Math.max(0.25, Math.min(0.85, 3 / Math.sqrt(ok.length || 1)))
-  // Slowest first, so the fast routes are drawn on top.
-  const lines = [...ok].sort((a, b) => b.r.elapsedSec! - a.r.elapsedSec!).map(x => {
-    const e = x.r.elapsedSec! / 3600
-    return `<polyline fill="none" stroke="${col(e1 > e0 ? (e - e0) / (e1 - e0) : 0)}" stroke-opacity="${op.toFixed(2)}" stroke-width="1.4" stroke-linejoin="round" points="${x.r.path.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"><title>${esc(x.startLocal)} local: ${e.toFixed(1)} h (${(e / 24).toFixed(2)} d), ${x.r.sailedNm.toFixed(0)} nm</title></polyline>`
-  }).join('')
-  // The representative course: the start whose elapsed time is the median,
-  // drawn bold with wind barbs of the wind it MET (at the polar's height), at a
-  // round interval chosen so the barbs do not overlap along the line.
   const byE = [...ok].sort((a, b) => a.r.elapsedSec! - b.r.elapsedSec!)
   const rep = byE.length ? byE[Math.floor((byE.length - 1) / 2)] : null
-  let repSvg = '', repNote = ''
+  // One barb interval for every route, set on the median one so its barbs do
+  // not overlap along the line.
+  let every = 12
   if (rep) {
     const P = rep.r.path
-    const repLine = `<polyline fill="none" stroke-width="5" class="halo" points="${P.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"/><polyline fill="none" stroke="#111" stroke-width="2.2" class="ink" points="${P.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"/>`
     let pxLen = 0
     for (let i = 1; i < P.length; i++) pxLen += Math.hypot(xf(P[i].lon) - xf(P[i - 1].lon), yf(P[i].lat) - yf(P[i - 1].lat))
     const hours = (P[P.length - 1].t - P[0].t) / 3600e3
-    const every = [1, 2, 3, 6, 12, 24, 48].find(hh => (pxLen / (hours / hh)) >= 40) ?? 48
-    const barbs: string[] = []
+    every = [1, 2, 3, 6, 12, 24, 48].find(hh => (pxLen / (hours / hh)) >= 40) ?? 48
+  }
+  // The wind each route MET, at the polar's height, every `every` hours of it.
+  const barbsFor = (P: RouteResult['path'], o: { len?: number; color?: string }) => {
+    const out: string[] = []
     let seg = 0
     for (let tt = P[0].t; tt <= P[P.length - 1].t; tt += every * 3600e3) {
       while (seg < P.length - 2 && P[seg + 1].t <= tt) seg++
@@ -376,11 +380,25 @@ function routeMap(m: string): string {
       // TWA is signed relative to the heading (+ = starboard): TWD = heading + TWA.
       const hdg = Math.atan2((b.lon - a.lon) * Math.cos((a.lat * Math.PI) / 180), b.lat - a.lat) * 180 / Math.PI
       const twd = (((hdg + a.twa) % 360) + 360) % 360
-      barbs.push(barb(xf(lon), yf(lat), twd, a.tws, `${new Date(tt).toISOString().slice(5, 16).replace('T', ' ')} UTC: ${a.tws.toFixed(1)} kn from ${twd.toFixed(0)}°, TWA ${Math.abs(a.twa).toFixed(0)}° ${a.twa >= 0 ? 'stbd' : 'port'}, ${a.bsp.toFixed(1)} kn`))
+      out.push(barb(xf(lon), yf(lat), twd, a.tws, `${new Date(tt).toISOString().slice(5, 16).replace('T', ' ')} UTC: ${a.tws.toFixed(1)} kn from ${twd.toFixed(0)}°, TWA ${Math.abs(a.twa).toFixed(0)}° ${a.twa >= 0 ? 'stbd' : 'port'}, ${a.bsp.toFixed(1)} kn`, o))
     }
-    repSvg = repLine + `<g class="barbs">${barbs.join('')}</g>`
+    return out.join('')
+  }
+  // Every route with its own barbs, in its own colour, slowest first so the
+  // fast routes are drawn on top. A route and its barbs are one group, tagged
+  // with its year, so the year selector shows or hides them together.
+  const lines = [...ok].sort((a, b) => b.r.elapsedSec! - a.r.elapsedSec!).map(x => {
+    const e = x.r.elapsedSec! / 3600
+    const c = col(e1 > e0 ? (e - e0) / (e1 - e0) : 0)
+    return `<g class="rt" data-year="${x.year}"><polyline fill="none" stroke="${c}" stroke-opacity="${op.toFixed(2)}" stroke-width="1.4" stroke-linejoin="round" points="${x.r.path.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')}"><title>${esc(x.startLocal)} local: ${dh(e)}, ${x.r.sailedNm.toFixed(0)} nm</title></polyline><g class="rb">${barbsFor(x.r.path, { len: 22, color: c })}</g></g>`
+  }).join('')
+  let repSvg = '', repNote = ''
+  if (rep) {
+    const P = rep.r.path
+    const pts2 = P.map(p => `${X(p.lon)},${Y(p.lat)}`).join(' ')
+    repSvg = `<g class="rt rep" data-year="${rep.year}"><polyline fill="none" stroke-width="5" class="halo" points="${pts2}"/><polyline fill="none" stroke="#111" stroke-width="2.2" class="ink" points="${pts2}"/><g class="barbs">${barbsFor(P, {})}</g></g>`
     const e = rep.r.elapsedSec! / 3600
-    repNote = `<p class="dim">Bold: the median start, ${esc(rep.startLocal)} local, ${e.toFixed(1)} h (${(e / 24).toFixed(2)} d), ${rep.r.sailedNm.toFixed(0)} nm sailed. Barbs every ${every} h show the wind it met at ${mast} m (half barb 5 kn, full 10, pennant 50); hover one for the time, TWA and boat speed.</p>`
+    repNote = `<p class="dim">Bold: the median start, ${esc(rep.startLocal)} local, ${dh(e)}, ${rep.r.sailedNm.toFixed(0)} nm sailed. Barbs every ${every} h on every route show the wind it met at ${mast} m, in the route's colour (half barb 5 kn, full 10, pennant 50); hover one for the time, TWA and boat speed.${ok.length > 40 ? ' With this many routes the barbs are shown one year at a time: pick a year above the map.' : ''}</p>`
   }
   const rhumb = `<polyline fill="none" stroke="#111" stroke-dasharray="5 4" stroke-width="1" class="ink" points="${course.marks.map(mk => `${X(mk.lon)},${Y(mk.lat)}`).join(' ')}"/>`
   const marks = course.marks.map(mk => `<circle cx="${X(mk.lon)}" cy="${Y(mk.lat)}" r="4" class="mark"/><text x="${(xf(mk.lon) + 7).toFixed(1)}" y="${(yf(mk.lat) - 7).toFixed(1)}" class="lbl">${esc(mk.name)}</text>`).join('')
@@ -388,9 +406,15 @@ function routeMap(m: string): string {
   const lg = Array.from({ length: 40 }, (_, i) => `<rect x="${i * 4}" y="0" width="4" height="10" fill="${col(i / 39)}"/>`).join('')
   // The legend sits under the map, not on it: on an ocean course the empty
   // corner is never the same one, and on Transpac it landed on Hawaii.
-  const legend = ok.length > 1 ? `<p class="dim legend">fastest ${e0.toFixed(0)} h (${(e0 / 24).toFixed(1)} d) <svg width="160" height="10" style="vertical-align:middle">${lg}</svg> slowest ${e1.toFixed(0)} h (${(e1 / 24).toFixed(1)} d)</p>` : ''
+  const legend = ok.length > 1 ? `<p class="dim legend">fastest ${dh(e0)} <svg width="160" height="10" style="vertical-align:middle">${lg}</svg> slowest ${dh(e1)}</p>` : ''
+  // Barbs on every route are readable for a year's worth of starts, not for
+  // twenty years' worth on one chart: past 40 routes they wait for a year to
+  // be picked. The selector filters routes AND their barbs.
+  const yrs = Array.from(new Set(ok.map(x => x.year))).sort()
+  const manyRoutes = ok.length > 40
+  const picker = yrs.length > 1 ? `<p class="dim">Show <select onchange="pickYear(this)"><option value="">all years${manyRoutes ? ' (barbs on the median route only)' : ''}</option>${yrs.map(y => `<option>${y}</option>`).join('')}</select></p>` : ''
   return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — ${ok.length} route${ok.length === 1 ? '' : 's'}</h3>
-<svg viewBox="0 0 ${W} ${H.toFixed(0)}" width="100%" class="map" style="max-width:${W}px">
+${picker}<svg viewBox="0 0 ${W} ${H.toFixed(0)}" width="100%" class="map${manyRoutes ? '' : ' showbarbs'}" data-many="${manyRoutes ? 1 : 0}" style="max-width:${W}px">
 <rect x="${L}" y="8" width="${Wp}" height="${Hp.toFixed(1)}" class="sea"/>${landSvg}<g class="grat">${grat.join('')}</g>${rhumb}${lines}${repSvg}${marks}</svg>${legend}${repNote}`
 }
 
@@ -400,9 +424,9 @@ function report(): string {
   const ms = summary.methods as Record<string, any>
   const statRows = methods.map(m => {
     const e = ms[m].elapsedHours
-    return `<tr><th>${m === 'iso' ? 'Isochrone' : 'Grid'}</th>${[e.min, e.max, e.mean, e.median, e.sd].map((v: number) => `<td>${v.toFixed(2)}</td>`).join('')}<td>${e.medianCI90[0].toFixed(2)}–${e.medianCI90[1].toFixed(2)}</td><td>${e.meanCI90[0].toFixed(2)}–${e.meanCI90[1].toFixed(2)}</td><td>${e.n}${e.failed ? ` (${e.failed} failed)` : ''}</td></tr>`
+    return `<tr><th>${m === 'iso' ? 'Isochrone' : 'Grid'}</th>${[e.min, e.max, e.mean, e.median, e.sd].map((v: number) => `<td>${dh(v)}</td>`).join('')}<td>${dh(e.medianCI90[0])}–${dh(e.medianCI90[1])}</td><td>${dh(e.meanCI90[0])}–${dh(e.meanCI90[1])}</td><td>${e.n}${e.failed ? ` (${e.failed} failed)` : ''}</td></tr>`
   }).join('')
-  const f2 = (v: number) => (Number.isFinite(v) ? v.toFixed(2) : '–')
+  const f2 = dh
   const multi = offsetsH.length > 1
   const yearRows = years.map(y => `<tr><th>${y}</th>${methods.map(m => {
     const r = ms[m].byYear.find((x: any) => x.year === y)
@@ -415,33 +439,56 @@ function report(): string {
     return `<td>${f2(r.mean)}</td><td>${f2(r.median)}</td><td>${f2(r.min)}</td><td>${f2(r.max)}</td><td class="dim">${r.n}</td>`
   }).join('')}</tr>`).join('')
   const offTable = multi ? `<h2>By start date</h2><p class="dim">Each row is one start offset from ${esc(arg('start')!.slice(5, 10))}, over all years.</p><table><tr><th></th>${methods.map(m => `<th>${m} mean</th><th>median</th><th>min</th><th>max</th><th>n</th>`).join('')}</tr>${offRows}</table>` : ''
+  // Red -> yellow -> green with the share of time, on a square-root scale so a
+  // bin with a fraction of a percent still shows; an empty bin stays blank.
+  const rg = (f: number) => {
+    const stops = [[215, 48, 39], [252, 141, 89], [254, 224, 139], [145, 207, 96], [26, 152, 80]]
+    const x = Math.max(0, Math.min(1, f)) * (stops.length - 1), k = Math.min(stops.length - 2, Math.floor(x)), u = x - k
+    const c = stops[k].map((v, n) => Math.round(v + u * (stops[k + 1][n] - v)))
+    return { bg: `rgb(${c.join(',')})`, fg: f > 0.85 ? '#fff' : '#111' }
+  }
+  // TWS down the side, TWA across: one row per 2 kn band reads as "in this
+  // breeze, where on the dial was the boat".
   const heat = (m: string) => {
     const t = ms[m].table
     const max = Math.max(...t.hours.flat())
-    const twsStep = t.twsEdges[1] - t.twsEdges[0]
-    const head = `<tr><th>TWA \\ TWS</th>${t.twsEdges.map((s: number, i: number) => `<th>${i === t.twsEdges.length - 1 ? `≥${s}` : `${s}–${s + twsStep}`}</th>`).join('')}</tr>`
-    const rows = t.hours.map((row: number[], r: number) => {
-      const lab = r === 0 ? `&lt;${t.twaEdges[1]}` : r === t.twaEdges.length - 1 ? `≥${t.twaEdges[r]}` : `${t.twaEdges[r]}–${t.twaEdges[r] + 5}`
-      return `<tr><th>${lab}</th>${row.map(v => {
+    const twsStep = t.twsEdges[1] - t.twsEdges[0], twaStep = t.twaEdges[2] - t.twaEdges[1]
+    // Columns are labelled by their LOWER edge (30 = 30-35 deg) so 29 of them fit a page.
+    const twaLab = (r: number) => r === 0 ? `&lt;${t.twaEdges[1]}` : r === t.twaEdges.length - 1 ? `≥${t.twaEdges[r]}` : `${t.twaEdges[r]}`
+    const head = `<tr><th>kn \\ °</th>${t.twaEdges.map((_: number, r: number) => `<th>${twaLab(r)}</th>`).join('')}<th>all</th></tr>`
+    const rows = t.twsEdges.map((sv: number, c: number) => {
+      const lab = c === t.twsEdges.length - 1 ? `≥${sv}` : `${sv}–${sv + twsStep}`
+      let rowSum = 0
+      const cells = t.hours.map((row: number[]) => {
+        const v = row[c]; rowSum += v
         const pct = t.totalHours ? (100 * v) / t.totalHours : 0
-        const a = max ? Math.sqrt(v / max) : 0
-        return `<td style="background:rgba(37,99,235,${a.toFixed(3)});color:${a > 0.55 ? '#fff' : 'inherit'}">${pct >= 0.05 ? pct.toFixed(1) : ''}</td>`
-      }).join('')}</tr>`
+        if (!(pct >= 0.05)) return '<td></td>'
+        const { bg, fg } = rg(max ? Math.sqrt(v / max) : 0)
+        return `<td style="background:${bg};color:${fg}">${pct.toFixed(1)}</td>`
+      }).join('')
+      const rp = t.totalHours ? (100 * rowSum) / t.totalHours : 0
+      return `<tr><th>${lab}</th>${cells}<td class="tot">${rp >= 0.05 ? rp.toFixed(1) : ''}</td></tr>`
     }).join('')
-    return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — % of sailing time (mean ${t.totalHours.toFixed(1)} h per race)</h3><table class="heat">${head}${rows}</table>`
+    const colTot = t.twaEdges.map((_: number, r: number) => {
+      const v = t.hours[r].reduce((a: number, b: number) => a + b, 0)
+      const pct = t.totalHours ? (100 * v) / t.totalHours : 0
+      return `<td class="tot">${pct >= 0.05 ? pct.toFixed(1) : ''}</td>`
+    }).join('')
+    return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — % of sailing time (mean ${dh(t.totalHours)} per race)</h3><p class="dim">Rows: TWS at ${mast} m in ${twsStep} kn bands. Columns: |TWA| in ${twaStep}° bins, labelled by their lower edge (30 = 30–${30 + twaStep}°). Red is little time, green the most.</p><div class="scroll"><table class="heat">${head}${rows}<tr><th>all</th>${colTot}<td class="tot">100</td></tr></table></div>`
   }
   const maps = methods.map(routeMap).join('')
   const conv = convergence ? `<p class="dim">Convergence (${convergence.year}): isochrone at half step, half sector and a 2.5° fan changed elapsed time by ${convergence.isoChangePct.toFixed(2)} %; the grid at half cell and 48 directions differs from the isochrone by ${convergence.gridFineVsIsoPct.toFixed(2)} %.</p>` : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(course.name ?? 'Routing climatology')}</title>
 <style>body{font:14px/1.45 system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 16px;color:#111}
 table{border-collapse:collapse;margin:8px 0 20px}td,th{border:1px solid #ddd;padding:3px 7px;text-align:right;font-variant-numeric:tabular-nums}
-th{background:#f6f6f6}.heat td{min-width:30px;font-size:12px}.dim{color:#666}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
-.map .sea{fill:#eef4f8}.map .grat line{stroke:#c9d6df;stroke-width:.6}.map text{font-size:11px;fill:#555}.map .lbl{font-size:12px;fill:#111}.map .mark{fill:#111}.map .barb{stroke:#b3121b;stroke-width:1.8;stroke-linecap:round}.legend{margin:4px 0}.map .pennant{fill:#b3121b}.map .halo{stroke:#fff;stroke-opacity:.8}
+th{background:#f6f6f6}.heat td,.heat th{min-width:22px;font-size:10.5px;padding:2px 3px;white-space:nowrap}.heat{margin-top:2px}.heat .tot{font-weight:600}.scroll{overflow-x:auto}.dim{color:#666}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
+.map .sea{fill:#eef4f8}.map .grat line{stroke:#c9d6df;stroke-width:.6}.map text{font-size:11px;fill:#555}.map .lbl{font-size:12px;fill:#111}.map .mark{fill:#111}.map .rb{display:none}.map.showbarbs .rb{display:inline}.map .rb .barb{stroke-width:1.1}.map .barb{stroke:#b3121b;stroke-width:1.8;stroke-linecap:round}.legend{margin:4px 0}.map .pennant{fill:#b3121b}.map .halo{stroke:#fff;stroke-opacity:.8}
 @media (prefers-color-scheme:dark){body{background:#111;color:#eee}th{background:#222}td,th{border-color:#333}.dim{color:#999}
-.map .sea{fill:#16202a}.map .land{fill:#3a3d40}.map .grat line{stroke:#2c3a46}.map text{fill:#aaa}.map .lbl{fill:#eee}.map .mark{fill:#eee}.map .ink{stroke:#ddd}.map .barb{stroke:#ff8a7a}.map .pennant{fill:#ff8a7a}.map .halo{stroke:#000}}</style></head><body>
+.map .sea{fill:#16202a}.map .land{fill:#3a3d40}.map .grat line{stroke:#2c3a46}.map text{fill:#aaa}.map .lbl{fill:#eee}.map .mark{fill:#eee}.map .ink{stroke:#ddd}.map .barb{stroke:#ff8a7a}.map .pennant{fill:#ff8a7a}.map .halo{stroke:#000}}</style>
+<script>function pickYear(sel){var svg=sel.parentNode.nextElementSibling,y=sel.value;svg.querySelectorAll('.rt').forEach(function(g){g.style.display=!y||g.getAttribute('data-year')===y?'':'none'});svg.classList.toggle('showbarbs',!!y||svg.getAttribute('data-many')!=='1')}</script></head><body>
 <h1>${esc(course.name ?? 'Routing climatology')}</h1>
 <p>${esc(course.marks.map(m => m.name).join(' → '))} · ${course.rhumbNm.toFixed(1)} nm rhumb · start ${esc(arg('start')!.slice(5))} local (${esc(zone ?? '')}) · ${years[0]}–${years[years.length - 1]} (${years.length} years${multi ? ` × ${offsetsH.length} starts, ±${windowD} d every ${everyH} h` : ''}) · polar ${esc(path.basename(arg('polar')!))} at ${mast} m, lift “${lift}” · tack ${polar.tackSec}s / gybe ${polar.gybeSec}s</p>
-<h2>Elapsed time, hours</h2><table><tr><th></th><th>min</th><th>max</th><th>mean</th><th>median</th><th>1σ</th><th>median 90% CI</th><th>mean 90% CI</th><th>n</th></tr>${statRows}</table>${conv}
+<h2>Elapsed time</h2><table><tr><th></th><th>min</th><th>max</th><th>mean</th><th>median</th><th>1σ</th><th>median 90% CI</th><th>mean 90% CI</th><th>n</th></tr>${statRows}</table>${conv}
 <h2>Routes</h2>${maps}
 <p class="dim">Each line is one start, coloured by its elapsed time. Hover a line for its start date and time. Grey is the land mask the router avoided; dashed is the rhumb line between the marks.</p>
 <h2>Time on each point of sail</h2>${methods.map(heat).join('')}
