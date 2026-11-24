@@ -121,3 +121,6 @@ reports/
 # Python bytecode (scripts/naples-study)
 __pycache__/
 *.pyc
+
+# Python virtual environments (scripts/routing, scripts/naples-study)
+.venv/

@@ -1,0 +1,5 @@
+cdsapi>=0.7.4
+xarray
+netCDF4
+numpy
+global-land-mask>=1.0
