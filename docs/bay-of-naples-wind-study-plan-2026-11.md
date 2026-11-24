@@ -125,9 +125,27 @@ Answered 24 Nov 2026 (Wouter, from racing and coaching on site). Sorrento is the
 | S2 | Peak at masthead | A good sea breeze reaches **15–18 kn** | firm | Agrees: sea-breeze daily peaks 14–22 kn in 10-min bins (hourly means to 17.4) |
 | S3 | Strongest zone | Strongest **deeper into the bay**: bottom of the bay (Castellammare – Torre Annunziata) = **Sorrento + 2 kn**; Naples = **Sorrento + 1–2 kn** | bottom firm; Naples **less sure** | Not testable from N72 (one zone). Becomes the prior for the zone factors in §5.4.4 |
 | S4 | Direction | Set by the **morning gradient**. SE morning gradient: starts **160°**, veers to **250°**. NW morning gradient: starts **210°**, goes to **280–290°** | firm | Mixed on the 19 May days, but those are race windows only (first and last hour of racing), not onset-to-peak. Tested on the stations' full days instead (§5.3) |
-| S5 | July vs May | *not yet answered* | | |
+| S5 | July vs May | **Not sure it is stronger — it may be LIGHTER**: a bigger chance of an inversion, and hot seawater | open, and the reason for the study | First look below: the drivers pull both ways |
 | S6 | Killers | **Strong E–SE** gradient; an **inversion** layer | firm | 850 hPa is above the lid, so the proxy available (T850 − SST) does not separate the days. ERA5 1000/925 hPa (06–15 UTC) added to the fetch for this |
 | S7 | Local features | **Capri** casts a big shadow in **SE–SSW**, which does **not** reach Naples. **Vesuvius** shadow in **NE–ESE** | firm | Becomes a direction-conditioned zone factor; CERRA's 5.5 km grid resolves Capri's wake only coarsely, Vesuvius better |
+
+**S5, first look (2024–26 reanalysis, weak-gradient days, 850 hPa < 10 kn, 14:00 local).** Both of
+the mechanisms are there, pulling against each other:
+
+| | 10–31 May (43 d) | 15 Jun – 31 Jul (94 d) |
+|---|---|---|
+| SST over the bay | 19.9 °C | 26.6 °C |
+| land 2 m T − SST (the breeze's engine) | 2.6 K | **4.4 K** — stronger |
+| boundary-layer height | 301 m | **246 m** — a lower lid |
+| T850 − SST (stability) | −9.0 K | **−7.8 K** — more stable |
+| CERRA 30 m afternoon (13–16 h) off Sorrento | 7.9 kn | **7.3 kn** |
+
+The land heats more than the sea warms, so the thermal contrast is larger in July; but the air above is
+warmer relative to the water and the mixed layer shallower, which caps how much of that contrast turns
+into wind. The model nets the two to **~0.6 kn lighter** (−0.65, +0.27, −1.44 kn by year). That is a
+hint, not an answer: CERRA has no skill on individual sea-breeze days (§5.2), and the inversion
+measure here is the boundary-layer height alone. The answer comes from §5.4.3, the stations, which
+saw both seasons.
 
 What these change in the method:
 - **Two sea-breeze sub-regimes**, keyed on the morning (08 local) gradient direction: *SE-morning* (160 → 250°)
@@ -305,11 +323,14 @@ Cross-checked with an unsupervised k-means on the hourly CERRA wind at the cours
    synoptic winds are well modelled, so this transfers to July with the least argument.
 3. **Sea-breeze days → the masthead's own distribution**, per local hour (11–17), from the 12 N72
    sea-breeze days. Then two adjustments, each stated as a factor with its uncertainty:
-   - **May → late June/July.** The breeze is driven by the land–sea contrast, which is larger in
-     midsummer (SST up, but inland heating up more). Measured, not assumed: the ratio of July to May
+   - **May → late June/July — the study's central question, with NO assumed sign.** Two mechanisms
+     compete: a larger land–sea contrast in July (+1.8 K on weak days, 2024–26) pushes the breeze up; a
+     lower, stronger inversion over 26 °C water (boundary layer 246 m against 301 m) pushes it down,
+     and on-site experience suspects the second wins. Measured, not assumed: the ratio of July to May
      sea-breeze-day afternoon wind at **Capo Posillipo and ISPRA Napoli** (both seasons on record), per
-     hour, and ERA5's own July/May land–sea contrast on those days as the physical covariate. Capri,
-     sheltered, contributes timing only.
+     hour, with BOTH covariates beside it — ERA5's land–sea contrast and the 1000/925 hPa inversion — so
+     the result says not only *whether* July is lighter but *why*, and how often each wins. The factor
+     may come out below 1. Capri, sheltered, contributes timing only.
    - **Across the bay** — see 4. The masthead sampled wherever the course was; the race area is fixed.
 4. **Spatial pattern on sea-breeze days.** CERRA is wrong about the day but may be right about the
    SHAPE: the ratio of each zone (Sorrento, mid-bay, Posillipo) to the zone N72 sailed in, on the same
