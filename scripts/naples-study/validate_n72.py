@@ -143,6 +143,33 @@ def day_boot_mean(x, day, n=4000, seed=1):
     return np.percentile(m, [2.5, 97.5])
 
 
+def regimes(p: pd.DataFrame, raw: Path):
+    """Split the gate by regime. Sea-breeze = ERA5 850 hPa over the bay < 10 kn at 12 UTC AND the boat's
+    afternoon direction onshore (180-290); gradient = 850 hPa >= 12 kn; anything else 'other'.
+    The finding this exists to reproduce (24 Nov 2026): on sea-breeze days neither model has hourly
+    skill (r ~ 0.1) and ERA5 is a steady ~x1.4 low, so the masthead IS the sea-breeze wind."""
+    pl = pd.concat(pd.read_csv(f, parse_dates=["valid_time"]) for f in glob.glob(str(raw / "era5pl/*.csv.gz")))
+    pl = pl[(pl.pressure_level == 850) & pl.latitude.between(40.5, 41.0) & pl.longitude.between(13.75, 14.75)]
+    g = pl.groupby("valid_time")[["u", "v"]].mean()
+    ws850 = np.hypot(g.u, g.v) * KN
+    day = p.groupby("day").agg(obs_dir=("obs_dir", lambda d: float(np.median(d))))
+    day["ws850"] = [ws850.get(pd.Timestamp(d) + pd.Timedelta(hours=12), np.nan) for d in day.index]
+    day["regime"] = np.where(day.ws850 >= 12, "gradient",
+                             np.where((day.ws850 < 10) & day.obs_dir.between(180, 290), "seabreeze", "other"))
+    q = p.merge(day[["regime"]], left_on="day", right_index=True)
+    print("\nBY REGIME: days, hours, obs mean | CERRA bias rmse r | ERA5 bias rmse r")
+    for reg, x in q.groupby("regime"):
+        sc, se = skill(x.obs_kn, x.cerra_kn), skill(x.obs_kn, x.era5_kn)
+        print(f"  {reg:9s} {x.day.nunique():2d} d {len(x):3d} h  {sc['obs_mean']:5.1f} | {sc['bias']:+.2f} {sc['rmse']:.2f} "
+              f"{sc['r']:.2f} | {se['bias']:+.2f} {se['rmse']:.2f} {se['r']:.2f}")
+    sb = q[q.regime == "seabreeze"]
+    print("  sea-breeze days by LOCAL hour (+2): n, obs p25/p50/p75, CERRA mean (obs/model), ERA5 mean (obs/model)")
+    for h, x in sb.groupby(sb.valid_time.dt.hour + 2):
+        print(f"    {h:02d}h {len(x):2d}  {x.obs_kn.quantile(.25):4.1f} {x.obs_kn.median():4.1f} {x.obs_kn.quantile(.75):4.1f}"
+              f"  {x.cerra_kn.mean():5.1f} (x{x.obs_kn.mean() / x.cerra_kn.mean():.2f})"
+              f"  {x.era5_kn.mean():5.1f} (x{x.obs_kn.mean() / x.era5_kn.mean():.2f})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--obs", type=Path, default=OBS)
@@ -208,6 +235,8 @@ def main():
           ", ".join(f"{k} {dang(g.obs_dir, g.cerra_dir).mean():+.1f}" for k, g in q.groupby("regatta")))
     print("  per regatta, ERA5 mean offset:     ",
           ", ".join(f"{k} {dang(g.obs_dir, g.era5_dir).mean():+.1f}" for k, g in q.groupby("regatta")))
+
+    regimes(p, a.raw)
 
     if a.out:
         p.to_csv(a.out, index=False)

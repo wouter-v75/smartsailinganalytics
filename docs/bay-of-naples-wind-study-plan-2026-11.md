@@ -111,6 +111,22 @@ Each enters through a regression per regime and sector against CERRA, never as a
   ECMWF diurnal 4.60→3.34 kn, ICON-EU sector 4.82→3.52, ARPEGE and ICON-2I raw. They were fitted on
   May at 10–17 h and have **never been tested outside May**.
 
+### 3.5 On-site knowledge (Wouter) — an input with its own uncertainty
+
+The models' known failure is exactly the regime the regatta is most likely to get, so experienced local
+observation is a data source here, not colour. It is recorded as numbers with ranges, before the
+CERRA spatial composite is looked at, so the comparison in §5.4 is honest:
+
+| # | Question (classic late-June/July sea-breeze day, 11–17 local) | Answer | Range / confidence |
+|---|---|---|---|
+| S1 | When does the breeze fill on the race area? When does it peak, and does it fade before 17:00? | | |
+| S2 | Typical peak at **masthead** height off Sorrento / mid-bay / Posillipo, in kn | | |
+| S3 | Which zone is strongest, and by how much relative to where N72 sailed in May? | | |
+| S4 | Direction at onset and at peak; how much does it veer through the afternoon? | | |
+| S5 | How does a July sea-breeze day compare with the May ones N72 sailed (stronger, earlier, steadier)? | | |
+| S6 | Which synoptic situations kill it or replace it (scirocco, maestrale, NE gradient), and how often in the window? | | |
+| S7 | Known local features: wind shadows under the peninsula or Vesuvius, acceleration zones, Capri wake | | |
+
 ## 4. Spatial and temporal frame
 
 - **Course areas**: to be named by the organiser (open question 1). Until then, three boxes: *Sorrento*
@@ -182,11 +198,49 @@ regatta it was not fitted on**, and only ERA5's does:
 CERRA's bias by regatta is −0.6, −3.5 and **+2.0** kn (2026: 13–16 kn on 25–26 May against 6–8
 measured), so a correction learned on two years makes the third worse. ERA5's is −2.2, −3.8 and −2.0.
 
-**Decision: the 30 m backbone is ERA5 + a bias (or quantile-mapped) correction, not CERRA.** `a·x+b`
-has the lowest rmse and is NOT used: it is the shrinkage the Med MOS audit warns about — held out, it
-puts **0 %** of 2024's and 2026's hours at ≥ 12 kn against 31 % and 17 % measured. CERRA stays in the
-study for what ERA5 cannot do at 0.25°: **relative** differences across the bay (Sorrento vs mid-bay vs
-Posillipo), applied as ratios to the corrected ERA5 series, and as a second opinion on regime timing.
+First reading (pooled over all days): ERA5 + a bias correction carries from one regatta to the next and
+CERRA does not. `a·x+b` has the lowest rmse and is NOT used — the shrinkage the Med MOS audit warns
+about: held out, it puts **0 %** of 2024's and 2026's hours at ≥ 12 kn against 31 % and 17 % measured.
+
+**Split by regime, the picture is sharper — and it is the known one.** Days classified from ERA5's
+850 hPa wind over the bay at 14:00 local and the boat's own afternoon direction: **sea-breeze** = 850 hPa
+< 10 kn and an onshore 180–290° afternoon (12 days, 50 h); **gradient** = 850 hPa ≥ 12 kn (6 days, 21 h);
+one other (20 May 2025, SE).
+
+| | n | masthead | CERRA bias / rmse / r | ERA5 bias / rmse / r |
+|---|---|---|---|---|
+| gradient days | 21 h | 11.8 kn | −1.2 / 2.65 / **0.73** | −2.2 / 3.25 / **0.79** |
+| sea-breeze days | 50 h | 8.8 kn | −0.7 / 4.70 / **0.09** | −2.8 / 4.69 / **0.10** |
+
+Sea-breeze afternoons, mean by local hour — masthead against model, and the ratio:
+
+| local | 11 | 12 | 13 | 14 | 15 | 16 |
+|---|---|---|---|---|---|---|
+| N72 (kn) | 6.4 | 6.8 | 7.8 | 9.3 | 10.6 | 11.0 |
+| CERRA | 2.6 (×2.4) | 6.0 (×1.13) | 8.4 (×0.92) | 9.1 (×1.03) | 10.0 (×1.06) | 8.8 (×1.25) |
+| ERA5 | 4.7 (×1.36) | 4.6 (×1.48) | 5.5 (×1.41) | 6.6 (×1.41) | 7.4 (×1.42) | 6.5 (×1.69) |
+
+What that says:
+- **On gradient days both reanalyses work** (r 0.73–0.79, held-out rmse 2.6 kn for either once
+  bias-corrected). The synoptic wind is what models are good at.
+- **On sea-breeze days neither has any hour-to-hour skill (r ≈ 0.1).** No reanalysis knows WHICH
+  afternoon fills to 15 kn and which stalls at 6. ERA5 under-does every afternoon by a steady ~40 % —
+  the known sea-breeze under-forecast. CERRA gets the 12–15 h mean about right but starts late, fades an
+  hour early, and is +2 kn one regatta and −3.5 the next.
+- So on a sea-breeze day **the masthead is the wind**, not a correction to a model. The masthead's own
+  distribution (p25 / p50 / p75: 13 h 6.8 / 7.8 / 9.0, 14 h 7.5 / 9.8 / 10.9, 15 h 7.5 / 10.7 / 13.4 kn;
+  daily peaks 5.5–17.4) is what the climatology is built from.
+
+**Decision (revised 24 Nov 2026): a regime-split backbone.**
+- **Regime frequency** — how often the window gets a sea-breeze day, a gradient day, or something else —
+  comes from the 42-summer reanalysis (850 hPa wind, MSLP, land–sea contrast). This is the part models
+  do well and the part the masthead cannot supply.
+- **Gradient days**: CERRA 30 m, bias-corrected (its raw is already the better of the two, and it
+  resolves the bay).
+- **Sea-breeze days**: the N72 masthead's empirical distribution by local hour, **shifted from May to
+  late June** (§5.4) and **spread across the bay** with CERRA's relative pattern AND on-site knowledge (§3.5).
+- ERA5 + bias is kept as the cross-check on every number; where it and the regime-split answer disagree
+  by more than the stated uncertainty, the report says so.
 
 Also settled:
 - **CERRA `wind_direction` is already true north.** Raw offset vs the masthead's true TWD is −2.2° and
@@ -222,26 +276,37 @@ checked against the stations' diurnal turn:
 Cross-checked with an unsupervised k-means on the hourly CERRA wind at the course (Di Bernardino et al.
 2022 method) — two independent labellings that agree are worth more than one tuned one.
 
-### 5.4 Correct the reanalysis to the masthead (MCP, regime-conditioned)
+### 5.4 Build the 30 m wind per regime (revised 24 Nov 2026 after the 5.2 result)
 
-1. Fit **CERRA-30 m → N72** per regime × hour band (11–13, 13–15, 15–17 local) × sector, on May. Forms
-   from the same ladder as SSA's MOS (raw → a·x+b → + sector → + diurnal), chosen by leave-one-regatta-out
-   CV, **with the tail bar**, and with the slope-pinned-at-1 fallback. A variance-ratio form is tried
-   beside OLS because OLS shrinks the variance the race-able question depends on.
-2. **Measure the May → July transfer error on data we do have in both seasons.** Fit the same
-   CERRA → station relation for Capo Posillipo (2014–2025) and ISPRA Napoli on **May only**, then test it
-   on **June–July**. The degradation, per regime, is the transfer error, and it is added to the
-   uncertainty of every corrected number. Done on two stations so one sheltered anemometer cannot
-   decide it.
-3. Apply the per-regime corrections to the window's days and **reweight by the window's regime
-   frequencies**, so the correction learned on May's mix is applied to July's mix.
-4. Stability term: if 5.2 shows CERRA's 30/15 m ratio differs materially between May and July, the
-   correction is fitted on the **15 m** wind and lifted by CERRA's own July shear, so the fitted part
-   does not carry May's stratification into July.
+1. **Classify every day 1985–2026** (§5.3) from ERA5 alone, so the same rule applies to the N72 days and
+   to the window. The rule used in 5.2 (850 hPa < 10 kn, onshore afternoon) needs the boat's direction;
+   for the archive it becomes 850 hPa speed + direction, MSLP gradient and the land–sea contrast
+   (ERA5 land t2m − SST, which ran 4–8 K on the strongest-breeze days and ~0 on gradient days). Checked
+   by reproducing the 19 N72 days' labels.
+2. **Gradient days → CERRA 30 m with a bias correction**, fitted on the N72 gradient hours (21 so far:
+   −0.7 kn in 2024, −1.9 in 2025), one number or one per hour band, tail bar applied. Both seasons'
+   synoptic winds are well modelled, so this transfers to July with the least argument.
+3. **Sea-breeze days → the masthead's own distribution**, per local hour (11–17), from the 12 N72
+   sea-breeze days. Then two adjustments, each stated as a factor with its uncertainty:
+   - **May → late June/July.** The breeze is driven by the land–sea contrast, which is larger in
+     midsummer (SST up, but inland heating up more). Measured, not assumed: the ratio of July to May
+     sea-breeze-day afternoon wind at **Capo Posillipo and ISPRA Napoli** (both seasons on record), per
+     hour, and ERA5's own July/May land–sea contrast on those days as the physical covariate. Capri,
+     sheltered, contributes timing only.
+   - **Across the bay** — see 4. The masthead sampled wherever the course was; the race area is fixed.
+4. **Spatial pattern on sea-breeze days.** CERRA is wrong about the day but may be right about the
+   SHAPE: the ratio of each zone (Sorrento, mid-bay, Posillipo) to the zone N72 sailed in, on the same
+   hour. That ratio is taken from CERRA's sea-breeze composite, then **checked against the on-site
+   knowledge in §3.5**, and where the two disagree the site knowledge wins with its stated range,
+   because a 5.5 km model is exactly what is known to miss a breeze that lives in the last few km of
+   coast. The decision and the numbers are both recorded, so the report shows which source set each zone.
+5. **Mix the regimes with the window's frequencies** (step 1) into one 30 m distribution per zone and
+   hour — the Q2/Q3 answers — with the uncertainty from (a) the N72 sample (day-bootstrap), (b) the
+   May → July factor, (c) the spatial factor, (d) regime-frequency variability between summers.
 
-If step 2 shows the transfer error exceeds the correction itself, **the study ships CERRA raw with its
-validated bias stated** rather than a correction that cannot be shown to hold in July. Saying "no
-correction" with the measurement beside it is the same discipline as `not_shipped`.
+The rule from before stands: a correction that cannot be shown to hold is not shipped. If the May → July
+factor at the stations is not stable between them, the study gives the May masthead distribution with
+the station range beside it rather than one invented July number.
 
 ### 5.5 Climatology products (from the corrected 30 m series)
 
