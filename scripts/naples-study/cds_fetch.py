@@ -2,7 +2,7 @@
 """
 Bay of Naples 30 m wind study (2027 regatta, 29 Jun - 3 Jul) -- Copernicus downloads.
 
-Pulls, for every summer 1985-2026, 10 May - 2 Aug (the study window 30 May - 2 Aug
+Pulls, for every summer 2006-2026 (the last twenty completed ones plus this one), 10 May - 2 Aug (the study window 30 May - 2 Aug
 plus the N72 May days for comparison), the RACING WINDOW ONLY: 11:00-17:00 local =
 09-15 UTC (CEST is UTC+2 all summer).
 
@@ -16,9 +16,13 @@ plus the N72 May days for comparison), the RACING WINDOW ONLY: 11:00-17:00 local
           subsidence (heat-dome) signal.
 
 CERRA HAS NO AREA OPTION on the CDS: every field comes back for all of Europe
-(~1069 x 1069 points). Each request is therefore one month of one product, cropped
-to the bay box on arrival and the full-domain file deleted, so the disk only ever
-holds one or two raw files. ERA5 is cropped server-side.
+(~1069 x 1069 points), cropped to the bay box on arrival and the full-domain file
+deleted. A CERRA request is ONE SUMMER of one product (May-Aug, every day; the days
+outside 10 May - 2 Aug are dropped on arrival): the CDS queue, not the transfer, is
+the cost -- one-month requests sat four hours without starting on 24 Nov 2026 -- and
+a summer is ~3,000 of the 90,000-field request limit. That is ~5-7 GB passing through
+disk per request. ERA5 is cropped server-side and stays monthly; it starts in seconds,
+and it runs in its own pool so it never waits behind the CERRA queue.
 
 Dry run by default: prints what it would request. --write downloads.
 
@@ -27,7 +31,8 @@ Dry run by default: prints what it would request. --write downloads.
   python cds_fetch.py all --years 2024-2026 --write    # pilot: three summers
   python cds_fetch.py all --write           # everything, resumable
 
-Output: <out>/<dataset>/<YYYY>-<MM>[-an|-fc].csv.gz, one file per request. A file
+Output: <out>/<dataset>/<YYYY>-<MM>.csv.gz for ERA5, <out>/cerra/<YYYY>-<an|fc>.csv.gz
+for CERRA (2024-2026 were fetched monthly as <YYYY>-<MM>-<an|fc> and count as done). A file
 that exists is skipped, so an interrupted run just restarts.
 """
 from __future__ import annotations
@@ -49,7 +54,7 @@ BAY = dict(lat_min=40.45, lat_max=40.92, lon_min=13.80, lon_max=14.62)
 # ERA5 box (N, W, S, E): wider, so the regime classifier sees the Tyrrhenian upwind.
 ERA5_AREA = [41.25, 12.75, 40.25, 15.00]
 
-YEARS = list(range(1985, 2027))
+YEARS = list(range(2006, 2027))
 # 10 May - 2 Aug
 DAYS = {5: range(10, 32), 6: range(1, 31), 7: range(1, 32), 8: range(1, 3)}
 UTC_HOURS = [f"{h:02d}:00" for h in range(9, 16)]  # 11:00-17:00 CEST
@@ -93,23 +98,33 @@ def days(month: int) -> list[str]:
 
 # ---------------------------------------------------------------- requests
 def cerra_requests(years):
+    ndays = 31 + 30 + 31 + 31  # what is DOWNLOADED; only DAYS is kept
     for y in years:
-        for m in DAYS:
-            common = {
-                "variable": ["wind_speed", "wind_direction"],
-                "height_level": HEIGHTS,
-                "data_type": "reanalysis",
-                "year": str(y), "month": f"{m:02d}", "day": days(m),
-                # GRIB, not NetCDF: the same values bit for bit, 2.3 MB a field against 5.3
-                "data_format": "grib",
-            }
-            yield ("cerra", f"{y}-{m:02d}-an", "reanalysis-cerra-height-levels",
-                   {**common, "product_type": "analysis", "time": ["09:00", "12:00", "15:00"]},
-                   len(days(m)) * 3 * 6)
-            yield ("cerra", f"{y}-{m:02d}-fc", "reanalysis-cerra-height-levels",
-                   {**common, "product_type": "forecast", "time": ["09:00", "12:00"],
-                    "leadtime_hour": ["1", "2"]},
-                   len(days(m)) * 4 * 6)
+        common = {
+            "variable": ["wind_speed", "wind_direction"],
+            "height_level": HEIGHTS,
+            "data_type": "reanalysis",
+            "year": str(y), "month": [f"{m:02d}" for m in DAYS],
+            "day": [f"{d:02d}" for d in range(1, 32)],
+            # GRIB, not NetCDF: the same values bit for bit, 2.3 MB a field against 5.3
+            "data_format": "grib",
+        }
+        yield ("cerra", f"{y}-an", "reanalysis-cerra-height-levels",
+               {**common, "product_type": "analysis", "time": ["09:00", "12:00", "15:00"]},
+               ndays * 3 * 6)
+        yield ("cerra", f"{y}-fc", "reanalysis-cerra-height-levels",
+               {**common, "product_type": "forecast", "time": ["09:00", "12:00"],
+                "leadtime_hour": ["1", "2"]},
+               ndays * 4 * 6)
+
+
+def already_have(out_root: Path, ds_key: str, name: str) -> bool:
+    if (out_root / ds_key / f"{name}.csv.gz").exists():
+        return True
+    if ds_key == "cerra":  # a summer fetched month by month (2024-2026) counts
+        y, prod = name.split("-")
+        return all((out_root / "cerra" / f"{y}-{m:02d}-{prod}.csv.gz").exists() for m in DAYS)
+    return False
 
 
 def lsm_request():
@@ -171,6 +186,7 @@ def open_files(path: Path, workdir: Path) -> list[Path]:
 
 def to_frame(nc: Path, crop: bool):
     import numpy as np
+    import pandas as pd
     import xarray as xr
 
     with open(nc, "rb") as f:
@@ -194,6 +210,11 @@ def to_frame(nc: Path, crop: bool):
         ds = ds.assign_coords(iy=(ydim, np.arange(iy.min(), iy.max() + 1)),
                               ix=(xdim, np.arange(ix.min(), ix.max() + 1)))
     df = ds.to_dataframe().reset_index()
+    if crop and lat.ndim == 2 and "valid_time" in df.columns:
+        # whole-summer requests ask for every day of May-Aug; keep only the study days
+        vt = pd.to_datetime(df["valid_time"])
+        keep = [d in DAYS.get(m, ()) for m, d in zip(vt.dt.month, vt.dt.day)]
+        df = df[keep]
     # Keep a stable valid-time column whatever the converter called it.
     if "valid_time" not in df.columns:
         if "time" in df.columns and "step" in df.columns:
@@ -246,7 +267,7 @@ def process(raw: Path, out: Path, crop: bool):
 def fetch_one(req, out_root: Path, write: bool):
     ds_key, name, dataset, body, _ = req
     out = out_root / ds_key / f"{name}.csv.gz"
-    if out.exists():
+    if already_have(out_root, ds_key, name):
         return f"skip  {ds_key}/{name} (exists)"
     if not write:
         return f"would {ds_key}/{name}  <- {dataset}"
@@ -269,9 +290,10 @@ def parse_years(s: str | None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("what", choices=["check", "plan", "cerra", "era5", "all"])
-    ap.add_argument("--years", help="e.g. 2024-2026 (default 1985-2026)")
+    ap.add_argument("--years", help="e.g. 2024-2026 (default 2006-2026)")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    ap.add_argument("--jobs", type=int, default=3, help="parallel CDS requests (default 3)")
+    ap.add_argument("--jobs", type=int, default=3, help="parallel ERA5 requests (default 3)")
+    ap.add_argument("--cerra-jobs", type=int, default=3, help="parallel CERRA requests (default 3)")
     ap.add_argument("--write", action="store_true", help="actually download")
     a = ap.parse_args()
     years = parse_years(a.years)
@@ -298,8 +320,8 @@ def main():
         cerra_fields = sum(r[4] for r in reqs if r[0] == "cerra")
         print(f"years {years[0]}-{years[-1]}, 10 May-2 Aug, 09-15 UTC (11-17 local)")
         print(f"{len(reqs)} requests; CERRA {cerra_fields:,} full-domain fields "
-              f"(~{cerra_fields * 2.3 / 1000:,.0f} GB passes through, ~2 GB kept at most at once)")
-        done = sum((a.out / r[0] / f"{r[1]}.csv.gz").exists() for r in reqs)
+              f"(~{cerra_fields * 2.3 / 1000:,.0f} GB passes through, ~7 GB per request)")
+        done = sum(already_have(a.out, r[0], r[1]) for r in reqs)
         print(f"{done} already on disk in {a.out}")
         return
 
@@ -310,10 +332,14 @@ def main():
         print("  ...")
         return
     free = shutil.disk_usage(a.out.parent if a.out.parent.exists() else Path.home()).free / 1e9
-    if free < 10:
-        sys.exit(f"only {free:.0f} GB free; each CERRA month passes ~1-1.5 GB through disk")
-    with cf.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-        futs = {ex.submit(fetch_one, r, a.out, True): r for r in reqs}
+    need = 8 * a.cerra_jobs if any(r[0] == "cerra" for r in reqs) else 2
+    if free < need:
+        sys.exit(f"only {free:.0f} GB free; each CERRA summer passes ~5-7 GB through disk")
+    # Two pools, so the minutes-long ERA5 requests never queue behind CERRA's hours.
+    with cf.ThreadPoolExecutor(max_workers=a.cerra_jobs) as cx, \
+         cf.ThreadPoolExecutor(max_workers=a.jobs) as ex:
+        futs = {(cx if r[0] in ("cerra", "lsm") else ex).submit(fetch_one, r, a.out, True): r
+                for r in reqs}
         for f in cf.as_completed(futs):
             r = futs[f]
             try:
