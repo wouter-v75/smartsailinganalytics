@@ -337,10 +337,13 @@ def fetch_one(req, out_root: Path, write: bool, job_id: str | None = None):
 
 # ---------------------------------------------------------------- CLI
 def parse_years(s: str | None):
+    """MOST RECENT FIRST (Wouter, 25 Nov 2026): the pools take requests in this order, so a long
+    download that is stopped, or stalls in the CDS queue, leaves the most relevant summers on disk
+    and an interim answer can be built on them."""
     if not s:
-        return YEARS
+        return sorted(YEARS, reverse=True)
     a, _, b = s.partition("-")
-    return list(range(int(a), int(b or a) + 1))
+    return list(range(int(b or a), int(a) - 1, -1))
 
 
 def main():
@@ -378,7 +381,7 @@ def main():
 
     if a.what == "plan":
         cerra_fields = sum(r[4] for r in reqs if r[0] == "cerra")
-        print(f"years {years[0]}-{years[-1]}, 10 May-2 Aug, 09-15 UTC (11-17 local)")
+        print(f"years {min(years)}-{max(years)}, 10 May-2 Aug, 09-15 UTC (11-17 local)")
         print(f"{len(reqs)} requests; CERRA {cerra_fields:,} full-domain fields "
               f"(~{cerra_fields * 2.3 / 1000:,.0f} GB passes through, ~7 GB per request)")
         done = sum(already_have(a.out, r[0], r[1]) for r in reqs)
