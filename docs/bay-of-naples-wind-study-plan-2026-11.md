@@ -361,7 +361,7 @@ are the check.
 | 925 hPa wind at 08 local | the sea-breeze sub-regime: SE-morning (90–200°), NW-morning (250–20°), other |
 | 925 hPa wind at 14 local | the kill rule (below) |
 | land 2 m T − bay SST at 14 local (dT) | the breeze's engine, in the kill rule |
-| θ925 − θ1000 at 14 local | the stable-lid flag (above the window's 75th percentile, 3.9 K) |
+| θ925 − θ1000 at 14 local | the stable-lid flag (above the window's 75th percentile, 4.1 K) |
 
 **The kill rule.** A 925 hPa flow of ≥ 8 kn from **off the land** as seen from the course (55–185°,
 Castellammare round to Punta Campanella) kills the breeze, **unless dT is above the window's median**
@@ -378,22 +378,30 @@ for the station archive.
 direction. The miss, 2026-05-25, is a 6 kn day on which ERA5 has NNW at 15 local and the masthead had
 272°.
 
-**First results — provisional, 13 full summers** (2006–2015 and 2024–2026; 2016–2023 still downloading):
+**Results — all 21 summers, 2006–2026** (run 25 Nov 2026, 1,785 days; ERA5 complete):
 
 | | sea breeze | sea breeze on a gradient | gradient | no breeze |
 |---|---|---|---|---|
-| Study window, 30 May – 2 Aug | 62 % | 8 % | 27 % (S–SW 13, NW 7, N–NE 6) | 3 % — ~2 days a summer |
-| Regatta week, 29 Jun – 3 Jul | 71 % | 5 % | 22 % | 3 % |
-| May 10–31 (the N72 season) | 43 % | 8 % | 40 % | 8 % |
+| Study window, 30 May – 2 Aug | 61 % | 8 % | 27 % (S–SW 13, NW 7, N–NE 7, E–SE 1) | 3 % — ~2 days a summer |
+| Regatta week, 29 Jun – 3 Jul | 70 % | 5 % | 23 % (S–SW 9, NW 8, N–NE 7) | 3 % |
+| May 10–31 (the N72 season) | 43 % | 8 % | 42 % (S–SW 22) | 7 % |
 
-Among sea-breeze days in the window, a NW morning is the most common (36 % of all days), then other
-mornings (21 %), then SE mornings (5 %).
+These are the 13-summer provisional figures to within a point in every cell, so eight more summers
+moved nothing. Among sea-breeze days in the window, a NW morning is the most common (37 % of all
+days), then other mornings (19 %), then SE mornings (5 %). The regatta week is 105 days, so its
+percentages carry roughly ±5 points of sampling noise.
+
+**The summers are warming, and the breeze count is not moving.** Bay SST in the window ran 23.7–24.9 °C
+through 2006–2014 and 25.2–26.6 °C from 2022, and the land–sea contrast averaged 2.3 K over 2006–2014 against 3.7 K over 2022–2026 (2023 the exception, at 2.0).
+Sea-breeze days stay at 40–50 of 65 in every summer, with no trend. So the warming is in the breeze's
+engine, which may show up as STRENGTH rather than frequency. ERA5 cannot measure that, since it
+under-does the breeze (§5.2); the masthead years are all from the warm end.
 
 **May is not July.** May has half as many gradient days again and nearly three times the lost days.
 Any May-calibrated correction must therefore be applied per regime, never to the pooled distribution,
 which is the premise of §5.4.
 
-Each summer sees 42–49 sea-breeze days out of 65 and 1–4 lost days. An earlier run, made while 2014's files
+Each summer sees 40–50 sea-breeze days out of 65 and 0–4 lost days. An earlier run, made while 2014's files
 were still arriving, showed it with 45 gradient days; with the summer complete it reads 19.
 
 ### 5.4 Build the 30 m wind per regime (revised 24 Nov 2026 after the 5.2 result)
