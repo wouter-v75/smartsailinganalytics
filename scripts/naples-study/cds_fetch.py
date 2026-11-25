@@ -59,6 +59,12 @@ BAY = dict(lat_min=40.45, lat_max=40.92, lon_min=13.80, lon_max=14.62)
 ERA5_AREA = [41.25, 12.75, 40.25, 15.00]
 
 YEARS = list(range(2006, 2027))
+# CERRA is CAPPED (Wouter, 25 Nov 2026): the 2024-26 pilot plus the three summers already in the CDS
+# tape queue. Since the regime split CERRA supplies the spatial pattern and the gradient-day bias, not
+# the climatology, and at ~17 h a summer without starting the other 15 could take weeks. Gradient
+# days take ERA5's 21 summers through a CERRA/ERA5 factor fitted where both exist; Open-Meteo's CERRA
+# copy (openmeteo_cerra.py, 10/100 m, to June 2021) is the check. --cerra-years lifts the cap.
+CERRA_YEARS = [2006, 2007, 2008, 2024, 2025, 2026]
 # 10 May - 2 Aug
 DAYS = {5: range(10, 32), 6: range(1, 31), 7: range(1, 32), 8: range(1, 3)}
 UTC_HOURS = [f"{h:02d}:00" for h in range(9, 16)]  # 11:00-17:00 CEST
@@ -137,27 +143,31 @@ def _norm(v):
     return sorted(map(str, v)) if isinstance(v, (list, tuple)) else [str(v)]
 
 
-def queued_jobs(reqs) -> dict[str, str]:
-    """Requests of ours already sitting in the CDS queue, name -> job id.
+def queued_jobs(reqs) -> dict[tuple[str, str], str]:
+    """Requests of ours already at the CDS, (key, name) -> job id: queued, running, or finished and
+    not yet downloaded.
 
-    A restart must NOT resubmit them: it would join the back of a tape queue the
-    first copy has already waited hours in, and repeated submit/cancel is what
-    gets a CDS account suspended. A job counts as ours when every field of the
-    request we would send matches it."""
+    A restart must NOT resubmit them: it would join the back of a queue the first copy has already
+    waited hours in, and repeated submit/cancel is what gets a CDS account suspended. A job counts as
+    ours when it is the same dataset and every field of the request we would send matches it. ERA5
+    too since 25 Nov: a restart used to orphan the ERA5 jobs in flight and submit them again."""
     from ecmwf.datastores import Client
 
     cred = cds_credentials()
     dc = Client(url=cred[0], key=cred[1], progress=False) if cred else Client(progress=False)
-    want = {r[1]: (r[2], r[3]) for r in reqs if r[0] == "cerra"}
+    want = {(r[0], r[1]): (r[2], r[3]) for r in reqs}
     found = {}
-    for jid in dc.get_jobs(status=["accepted", "running"], limit=100).request_ids:
+    # Every job is a round trip, and slow when the CDS is congested: 200 took over 18 minutes on
+    # 25 Nov. Queued and running are few; of the finished ones only the latest can be undownloaded.
+    ids = dc.get_jobs(status=["accepted", "running"], limit=100).request_ids + \
+        dc.get_jobs(status=["successful"], limit=20).request_ids
+    for jid in ids:
         remote = dc.get_remote(jid)
-        if remote.collection_id != "reanalysis-cerra-height-levels":
-            continue
         got = remote.request
-        for name, (_, body) in want.items():
-            if name not in found and all(_norm(got.get(k)) == _norm(v) for k, v in body.items()):
-                found[name] = jid
+        for key, (dataset, body) in want.items():
+            if key not in found and remote.collection_id == dataset and \
+                    all(_norm(got.get(k)) == _norm(v) for k, v in body.items()):
+                found[key] = jid
                 break
     return found
 
@@ -313,7 +323,11 @@ def fetch_one(req, out_root: Path, write: bool, job_id: str | None = None):
 
         cred = cds_credentials()
         dc = Client(url=cred[0], key=cred[1], progress=False) if cred else Client(progress=False)
-        dc.get_remote(job_id).download(str(raw))
+        try:
+            dc.get_remote(job_id).download(str(raw))
+        except Exception as e:  # a finished job's result can expire: fetch it afresh
+            print(f"      {ds_key}/{name}: job {job_id} not downloadable ({e}); resubmitting", flush=True)
+            client().retrieve(dataset, body).download(str(raw))
     else:
         client().retrieve(dataset, body).download(str(raw))
     mb = raw.stat().st_size / 1e6
@@ -337,6 +351,7 @@ def main():
     ap.add_argument("--jobs", type=int, default=3, help="parallel ERA5 requests (default 3)")
     ap.add_argument("--cerra-fc", action="store_true",
                     help="also fetch CERRA's +1/+2 h forecasts (doubles the tape requests)")
+    ap.add_argument("--cerra-years", help="lift the CERRA cap, e.g. 2006-2026 (default: CERRA_YEARS)")
     ap.add_argument("--cerra-jobs", type=int, default=3, help="parallel CERRA requests (default 3)")
     ap.add_argument("--write", action="store_true", help="actually download")
     a = ap.parse_args()
@@ -356,7 +371,8 @@ def main():
 
     reqs = []
     if a.what in ("cerra", "all", "plan"):
-        reqs += list(lsm_request()) + list(cerra_requests(years, fc=a.cerra_fc))
+        cy = parse_years(a.cerra_years) if a.cerra_years else [y for y in years if y in CERRA_YEARS]
+        reqs += list(lsm_request()) + list(cerra_requests(cy, fc=a.cerra_fc))
     if a.what in ("era5", "all", "plan"):
         reqs += list(era5_requests(years))
 
@@ -382,14 +398,14 @@ def main():
     # Two pools, so the minutes-long ERA5 requests never queue behind CERRA's hours.
     reqs = [r for r in reqs if not already_have(a.out, r[0], r[1])]
     queued = queued_jobs(reqs)
-    for name, jid in queued.items():
-        print(f"wait  cerra/{name}: already queued at the CDS as {jid}", flush=True)
+    for (k, name), jid in queued.items():
+        print(f"wait  {k}/{name}: already at the CDS as {jid}", flush=True)
     # queued ones first, so their pool slots go to the jobs that have already waited
-    reqs.sort(key=lambda r: r[1] not in queued if r[0] == "cerra" else 0)
+    reqs.sort(key=lambda r: (r[0], r[1]) not in queued)
     with cf.ThreadPoolExecutor(max_workers=a.cerra_jobs) as cx, \
          cf.ThreadPoolExecutor(max_workers=a.jobs) as ex:
         futs = {(cx if r[0] in ("cerra", "lsm") else ex).submit(
-                    fetch_one, r, a.out, True, queued.get(r[1]) if r[0] == "cerra" else None): r
+                    fetch_one, r, a.out, True, queued.get((r[0], r[1]))): r
                 for r in reqs}
         for f in cf.as_completed(futs):
             r = futs[f]

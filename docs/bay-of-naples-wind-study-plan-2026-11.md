@@ -76,7 +76,7 @@ the obvious shortcut of correcting the reanalysis to Capri.
 
 | Product | Why | Use |
 |---|---|---|
-| **CERRA height levels** (C3S, 5.5 km) | The only open, long, still-updated product that stores wind **at exactly 30 m** (levels 15/30/50/75/100… m). Best of the European reanalyses on the French Med coast (bias within ±10 %, diurnal bias ~−0.5 m/s, Patra et al. 2025). Grid fine enough to put several cells inside the bay | **Backbone, 2006 → latest available** (the last twenty summers; decided 24 Nov 2026). The 09/12/15 UTC analyses only (forecast steps dropped 24 Nov 2026, see §5.1); its role after the regime split (§5.4) is the spatial pattern across the bay and the gradient-day check. 15 and 50 m too, for the shear |
+| **CERRA height levels** (C3S, 5.5 km) | The only open, long, still-updated product that stores wind **at exactly 30 m** (levels 15/30/50/75/100… m). Best of the European reanalyses on the French Med coast (bias within ±10 %, diurnal bias ~−0.5 m/s, Patra et al. 2025). Grid fine enough to put several cells inside the bay | **Capped 25 Nov 2026 at the 2024–26 pilot plus 2006–08** (§5.1: the tape queue). Spatial pattern and gradient-day bias, not the climatology. The 09/12/15 UTC analyses only (forecast steps dropped 24 Nov 2026, see §5.1); its role after the regime split (§5.4) is the spatial pattern across the bay and the gradient-day check. 15 and 50 m too, for the shear |
 | **ERA5** (0.25°), model level **136 = 30.96 m**, plus 10/100 m and 850/700 hPa | Longest, most homogeneous; drives the regime classification; the yardstick for CERRA's added value | Regime classifier input (gradient wind, 850 hPa temperature), cross-check of interannual variability and trend |
 | MERIDA HRES (RSE, WRF on ERA5, 4 km, 1986 →, 10/100 m) | Independent finer model for the spatial pattern (Q6) | Optional, needs registration |
 | Parthenope WRF archive (since 2006, ~1 km over the Gulf) | The only kilometre-scale hindcast of the bay itself — resolves Capri, the Lattari ridge and Bocca Piccola | Optional, by request; best tool for Q6 if granted |
@@ -84,8 +84,8 @@ the obvious shortcut of correcting the reanalysis to Capri.
 Rejected, with reasons, so they are not re-litigated: **COSMO-REA6** (ends 2019; gets the Med summer
 daytime cycle wrong), **SPHERA** (ends 2020; no published wind fields), **NEWA** (no 30 m level),
 **Global Wind Atlas** (no time series), **CMEMS L4 winds** (a 10 m stress-equivalent wind and ERA5
-underneath — inside the bay it is interpolated from offshore), **Open-Meteo's CERRA** (stops June 2021
-and carries only 10/100 m).
+underneath — inside the bay it is interpolated from offshore), **Open-Meteo's CERRA** as the backbone (stops June 2021
+and carries only 10/100 m). It IS used, since 25 Nov 2026, as the check on the capped CDS copy (§5.1).
 
 ### 3.3 Stations
 
@@ -202,6 +202,28 @@ What these change in the method:
      against 0.73). `--cerra-fc` puts them back if the queue clears. A restart reattaches to requests
      already queued rather than resubmitting them — 154 cells over the bay. The CDS catalogue lists
      CERRA **through 31 Aug 2026**, so the 2025 and 2026 summers are in.
+
+     **Capped, 25 Nov 2026 (Wouter).** After 17 hours, the 2006–08 summers had still not started,
+     so CERRA from the CDS stops at the **2024–26 pilot plus 2006–08** (`CERRA_YEARS`;
+     `--cerra-years` lifts the cap). The other fifteen summers could take weeks, and since the regime
+     split they are not load-bearing:
+     - regime frequencies come from ERA5's 21 summers;
+     - sea-breeze speeds come from the masthead;
+     - the spatial pattern needs a composite, not a long record (the pilot alone holds ~140 window
+       sea-breeze days).
+
+     The one thing the cap thins is the **gradient-day distribution**: ~50 window days in the pilot,
+     fewer per direction sector. It is therefore built from ERA5's 21 summers, scaled to CERRA's 30 m
+     by a factor per direction sector fitted where both exist, and checked against:
+     - **Open-Meteo's copy of CERRA** (`openmeteo_cerra.py`): 10 and 100 m, hourly, 2006 to 30 June
+       2021, one sea cell per zone (course, Sorrento, bottom of the bay, mid-bay, Posillipo).
+       It is served from disk and fetches in minutes. It has no 30 m level, so 30 m comes from
+       interpolating 10 → 100 m with the shear CERRA's own 15/30/50 m levels show in the pilot, and
+       that step is stated wherever it is used. Where it overlaps the CDS copy (2006–08, if they land)
+       the two are compared first; a mismatch means it is not the same product, and it is dropped.
+
+     A restart now reattaches to **every** request of ours already at the CDS — queued, running, or
+     finished and not yet downloaded — not only CERRA's, so stopping the script orphans nothing.
    - **ERA5** single levels (10/100 m wind, gust, 2 m T and dewpoint, SST, BLH, MSLP, cloud) and
      850/700 hPa u, v, T — these DO crop server-side (`area`), so they are small and fast. ERA5's
      31 m model level would need MARS tape retrieval; the 10/100 m pair is used instead.
@@ -467,11 +489,12 @@ May and hurts in July is exactly what the `seasonal` mechanism exists for.
 | 7 | Report, brief, data products | 5, 6 | here + `docs:pdf` |
 | opt | MERIDA / Parthenope WRF / ISPRA spatial layer | deferred: Copernicus first | laptop |
 
-WP1 is the long pole: CDS queue time for 21 summers of CERRA is days, not hours — **measured on
+WP1 was the long pole, and CERRA is now capped (§5.1). CDS queue time for 21 summers of CERRA is
+weeks, not days — **measured on
 23 Nov 2026, one CERRA height-level request waited ~1 h 40 min in the queue** where the ERA5 and
 CERRA single-level ones ran in minutes. **Pilot first on
 2024–2026** — those are also the N72 summers, so the validation gate (5.2) can run on the pilot alone
-and decide whether CERRA is the backbone before the other 39 summers are fetched.
+and decide whether CERRA is the backbone before the other summers are fetched.
 
 ## 8. Decisions (taken 23 Nov 2026)
 
@@ -507,7 +530,7 @@ and decide whether CERRA is the backbone before the other 39 summers are fetched
 |---|---|---|
 | No 30 m truth inside the window | The correction may not transfer | Regime conditioning + measured transfer error (5.4.2); raw-with-bias fallback |
 | CERRA too smooth for Capri/peninsula effects | Q6 under-resolved | Parthenope WRF / MERIDA layer; report the limitation plainly |
-| CERRA has no area subsetting | ~250 GB through the disk; the CDS queue is the bottleneck | Summer-at-a-time crop-and-delete in `cds_fetch.py`, ERA5 in a separate pool; pilot on 2024–26 done |
+| CERRA has no area subsetting | ~250 GB through the disk; the CDS queue is the bottleneck | Summer-at-a-time crop-and-delete in `cds_fetch.py`, ERA5 in a separate pool; pilot on 2024–26 done; **capped at pilot + 2006–08 (25 Nov)**, gradient days from ERA5 × a CERRA factor, checked on Open-Meteo's CERRA 2006–2021 |
 | ~~CERRA `wind_direction` relative to its grid~~ | — | **Closed 24 Nov**: it is true north (5.2 result); `gridrot` is kept in the files but not applied |
 | Stations sheltered or elevated | Biased truth | Used only for regime, timing, direction and the transfer test, never lifted to 30 m |
 | Western-Med breeze trend | Old summers overstate today | Trend test; recent-15-year headline if significant |
