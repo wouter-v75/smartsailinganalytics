@@ -70,6 +70,7 @@ if (flag('help') || !arg('data') || !arg('gpx') || !arg('polar') || !arg('start'
   --day-factor F         share of the polar sailed in daylight (default 0.95)
   --night-factor F       share of the polar sailed in darkness (default 0.90)
   --dark-below DEG       sun altitude below which it is dark (default -0.833 = sunset; -6 = civil dusk)
+  --name TEXT            report title (default: the GPX route's own name)
   --radius NM            mark rounding radius (default 0.25)
   --step MIN             isochrone step (default 30)
   --sector-nm NM         isochrone pruning resolution (default 0.5)
@@ -94,6 +95,9 @@ const polar = parseRoutingPolar(fs.readFileSync(home(arg('polar')!), 'utf8'), {
   refHeightM: mast, tackSec: Number(arg('tack', '60')), gybeSec: Number(arg('gybe', '45')), factor: Number(arg('factor', '1')),
 })
 const course = parseCourseGpx(fs.readFileSync(home(arg('gpx')!), 'utf8'), { radiusNm: Number(arg('radius', '0.25')) })
+// Expedition carries a route's name over when a route is copied, so a GPX can
+// arrive titled after another race; --name says what this one is.
+if (arg('name')) course.name = arg('name')!
 const isoOpts = { stepMin: Number(arg('step', '30')), sectorNm: Number(arg('sector-nm', '0.5')) }
 // Day/night performance: the share of the polar the crew sails, switched on the
 // sun's altitude at the BOAT (daylight.ts). 95 % by day and 90 % by night is the
@@ -320,9 +324,15 @@ function routeMap(m: string): string {
   const esc = (t: string) => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
   const ok = results[m].filter(x => x.r.ok)
   const pts = ok.flatMap(x => x.r.path)
-  const la = [...pts.map(p => p.lat), ...course.marks.map(k => k.lat)], lo = [...pts.map(p => p.lon), ...course.marks.map(k => k.lon)]
-  const pad = Math.max(0.5, 0.06 * Math.max(Math.max(...la) - Math.min(...la), Math.max(...lo) - Math.min(...lo)))
-  const la0 = Math.min(...la) - pad, la1 = Math.max(...la) + pad, lo0 = Math.min(...lo) - pad, lo1 = Math.max(...lo) + pad
+  // A loop, not Math.min(...xs): 320 ocean routes are ~10^5 points, past what a
+  // spread can pass as arguments (RangeError: Maximum call stack size exceeded).
+  let laMin = Infinity, laMax = -Infinity, loMin = Infinity, loMax = -Infinity
+  for (const p of [...pts, ...course.marks]) {
+    if (p.lat < laMin) laMin = p.lat; if (p.lat > laMax) laMax = p.lat
+    if (p.lon < loMin) loMin = p.lon; if (p.lon > loMax) loMax = p.lon
+  }
+  const pad = Math.max(0.5, 0.06 * Math.max(laMax - laMin, loMax - loMin))
+  const la0 = laMin - pad, la1 = laMax + pad, lo0 = loMin - pad, lo1 = loMax + pad
   const k = Math.cos(((la0 + la1) / 2) * Math.PI / 180)
   const W = 940, L = 34, B = 22, Wp = W - L - 8
   const Hp = Math.max(160, Math.min(1100, (Wp * (la1 - la0)) / ((lo1 - lo0) * k)))
