@@ -48,7 +48,7 @@ import { routeGrid } from '../src/lib/routing/gridRouter'
 import { elapsedStats, twaTwsTable, tableCsv, localStartToUtc, pointOfSail, bootstrapBlocks } from '../src/lib/routing/climatology'
 import { offsetFromCoords } from '../src/lib/tzFromCoords'
 import { makePerf, isDark } from '../src/lib/routing/daylight'
-import type { LandMask } from '../src/lib/routing/land'
+import { stepHitsLand, type LandMask } from '../src/lib/routing/land'
 import type { Env } from '../src/lib/routing/motion'
 
 // ── args ────────────────────────────────────────────────────────────────────
@@ -230,6 +230,11 @@ for (const m of methods) {
     if (isDark(pth[k].lat, pth[k].lon, (pth[k].t + pth[k + 1].t) / 2, dayNight.darkBelowDeg)) darkH += hh
   }
   const darkShare = allH ? darkH / allH : NaN
+  // Land audit: every drawn segment of every route, re-checked against the mask
+  // the routers used. The routers refuse any step that touches land, so this
+  // should be zero; it is here so a report SAYS so rather than asks to be trusted.
+  const landHits = land ? ok.filter(x => x.r.path.some((p, k) => k > 0 && stepHitsLand(land, x.r.path[k - 1], p)))
+    .map(x => x.startLocal) : []
   // Resample whole years: the starts inside one year share its weather regimes.
   const byYear = years.map(y => ok.filter(x => x.year === y).map(x => x.r.elapsedSec!)).filter(g => g.length)
   const ci = bootstrapBlocks(byYear)
@@ -247,7 +252,7 @@ for (const m of methods) {
   ;(summary.methods as Record<string, unknown>)[m] = {
     elapsedHours: { n: st.n, failed: st.failed, min: h(st.minSec), max: h(st.maxSec), mean: h(st.meanSec), median: h(st.medianSec), sd: h(st.sdSec),
       medianCI90: ci.median.map(h), meanCI90: ci.mean.map(h) },
-    pointOfSail: pos, darkShare, table, byOffset: off, byYear: perYear,
+    pointOfSail: pos, darkShare, landHits, table, byOffset: off, byYear: perYear,
     routes: rs.map(x => ({ year: x.year, offsetH: x.offsetH, startLocal: x.startLocal, startUtc: x.startUtc, ok: x.r.ok, reason: x.r.reason, elapsedH: x.r.elapsedSec != null ? h(x.r.elapsedSec) : null,
       legH: x.r.legSec.map(h), sailedNm: x.r.sailedNm, tacks: x.r.tacks, gybes: x.r.gybes, runMs: x.ms })),
   }
@@ -255,7 +260,8 @@ for (const m of methods) {
   console.log(`\n${m.toUpperCase()}  n=${st.n}${st.failed ? ` (${st.failed} failed)` : ''}
   elapsed  min ${dh(h(st.minSec))}  max ${dh(h(st.maxSec))}  mean ${dh(h(st.meanSec))}  median ${dh(h(st.medianSec))}  1 sigma ${dh(h(st.sdSec))}
            median 90 % CI ${dh(h(ci.median[0]))}-${dh(h(ci.median[1]))} (bootstrap over whole years)
-  time     upwind ${(100 * pos.upwind).toFixed(0)} %  reaching ${(100 * pos.reach).toFixed(0)} %  downwind ${(100 * pos.downwind).toFixed(0)} %  starboard ${(100 * pos.starboard).toFixed(0)} %  in the dark ${(100 * darkShare).toFixed(0)} %`)
+  time     upwind ${(100 * pos.upwind).toFixed(0)} %  reaching ${(100 * pos.reach).toFixed(0)} %  downwind ${(100 * pos.downwind).toFixed(0)} %  starboard ${(100 * pos.starboard).toFixed(0)} %  in the dark ${(100 * darkShare).toFixed(0)} %
+  land     ${land ? (landHits.length ? `${landHits.length} route(s) touch land: ${landHits.join(', ')}` : `no route touches land (${ok.length} checked)`) : 'NOT CHECKED (no land mask)'}`)
 }
 fs.writeFileSync(path.join(outDir, 'elapsed.csv'), csvRows.join('\n') + '\n')
 fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 1))
@@ -533,7 +539,7 @@ th{background:#f6f6f6}.heat td,.heat th{min-width:22px;font-size:10.5px;padding:
 <h2>Elapsed time</h2><table><tr><th></th><th>min</th><th>max</th><th>mean</th><th>median</th><th>1σ</th><th>median 90% CI</th><th>mean 90% CI</th><th>n</th></tr>${statRows}</table>${conv}
 <h2>Routes</h2>${maps}
 <p class="dim">Each line is one start, coloured by its elapsed time. Hover a line for its start date and time. Grey is the land mask the router avoided; dashed is the rhumb line between the marks.</p>
-<h2>Time on each point of sail</h2><p class="dim">${methods.map(m => `${m === 'iso' ? 'Isochrone' : 'Grid'}: ${pc(ms[m].pointOfSail.upwind)} upwind (&lt;70°), ${pc(ms[m].pointOfSail.reach)} reaching, ${pc(ms[m].pointOfSail.downwind)} downwind (&gt;120°), ${pc(ms[m].pointOfSail.starboard)} on starboard, ${pc(ms[m].darkShare)} in the dark.`).join(' ')}</p>${methods.map(heat).join('')}
+<h2>Time on each point of sail</h2><p class="dim">${methods.map(m => `${m === 'iso' ? 'Isochrone' : 'Grid'}: ${pc(ms[m].pointOfSail.upwind)} upwind (&lt;70°), ${pc(ms[m].pointOfSail.reach)} reaching, ${pc(ms[m].pointOfSail.downwind)} downwind (&gt;120°), ${pc(ms[m].pointOfSail.starboard)} on starboard, ${pc(ms[m].darkShare)} in the dark.`).join(' ')} ${land ? methods.map(m => ms[m].landHits.length ? `<b>${m === 'iso' ? 'Isochrone' : 'Grid'}: ${ms[m].landHits.length} route(s) touch land (${esc(ms[m].landHits.join(', '))}).</b>` : '').join(' ') || 'Every route re-checked against the land mask: none touches land.' : '<b>Routed without a land mask.</b>'}</p>${methods.map(heat).join('')}
 ${offTable}<h2>Per year</h2><p class="dim">Green is fast, red slow, across the whole table.</p><table><tr><th></th>${yearHead}</tr>${yearRows}</table>
 <p class="dim">ERA5 (C3S) hourly 0.25°; wind sampled bilinear in space, linear in time, direction from u/v and speed preserved. Arrival at each mark solved exactly from every front point (no isochrone quantisation). Marks routed leg by leg, which is exact for point marks.</p>
 </body></html>`
