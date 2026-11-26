@@ -72,11 +72,15 @@ function rangeOf(sails: ChartSail[]): Range {
   const pts = sails.flatMap(s => outline(s.points, 6))
   if (!pts.length) return { twaMin: 25, twaMax: 180, twsMin: 0, twsMax: 30 }
   const twas = pts.map(p => p.twa), twss = pts.map(p => p.tws)
+  // Downwind always runs to 180°, and there is headroom above the windiest shape:
+  // the range is frozen while a point is dragged, so a plot trimmed to the shapes
+  // (+2°) put the kites' deepest points ON its right edge and a point could not be
+  // pulled past it in one go — while the polar's downwind targets run to ~160°.
   return {
     twaMin: Math.max(0, floorTo(Math.min(...twas) - 2, 5)),
-    twaMax: Math.min(180, ceilTo(Math.max(...twas) + 2, 5)),
+    twaMax: 180,
     twsMin: 0,
-    twsMax: Math.max(10, ceilTo(Math.max(...twss) + 1, 2)),
+    twsMax: Math.max(10, ceilTo(Math.max(...twss) + 3, 2)),
   }
 }
 
@@ -527,14 +531,21 @@ export default function SailChartPanel({
             <rect x={M.l} y={M.t} width={pw} height={ph} fill="none" stroke="#94a3b8" style={{ pointerEvents: 'none' }} />
           </svg>
 
-          {readout && (
-            <div style={{ position: 'absolute', top: 8, right: 10, background: 'rgba(15,23,42,0.85)', color: '#e2e8f0', fontSize: 11,
-              padding: '6px 9px', borderRadius: 6, pointerEvents: 'none', lineHeight: 1.5, fontVariantNumeric: 'tabular-nums' }}>
-              TWA {readout.twa.toFixed(0)}° · TWS {readout.tws.toFixed(1)} kn
-              {readout.bsp != null && readout.app && <><br />BSP {readout.bsp.toFixed(1)} · AWA {readout.app.awa.toFixed(0)}° · AWS {readout.app.aws.toFixed(1)}</>}
-              <br />{readout.under.length ? readout.under.join(' · ') : <span style={{ color: '#94a3b8' }}>no sail</span>}
-            </div>
-          )}
+          {/* The hover readout sits in a strip UNDER the plot, never over it: floated in
+              a corner it covered the deep, windy end of the chart — exactly where the
+              kites' points are — so they could not be seen or grabbed. Fixed height,
+              so the page does not jump as the pointer enters and leaves the plot. */}
+          <div style={{ marginTop: 6, minHeight: 20, display: 'flex', flexWrap: 'wrap', gap: '2px 12px', alignItems: 'center',
+            background: '#0a1c2e', border: `1px solid ${C.border}`, borderRadius: 6, padding: '3px 9px',
+            color: '#e2e8f0', fontSize: 11, lineHeight: 1.5, fontVariantNumeric: 'tabular-nums' }}>
+            {readout ? (
+              <>
+                <span>TWA {readout.twa.toFixed(0)}° · TWS {readout.tws.toFixed(1)} kn</span>
+                {readout.bsp != null && readout.app && <span>BSP {readout.bsp.toFixed(1)} · AWA {readout.app.awa.toFixed(0)}° · AWS {readout.app.aws.toFixed(1)}</span>}
+                <span style={{ fontWeight: 700 }}>{readout.under.length ? readout.under.join(' · ') : <span style={{ color: '#94a3b8', fontWeight: 400 }}>no sail</span>}</span>
+              </>
+            ) : <span style={{ color: C.dim }}>Point at the chart for TWA, TWS, boat speed, apparent wind and the sail there.</span>}
+          </div>
           <div style={{ fontSize: 11, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
             Click a sail to select it.{canEdit && ' Drag a point to reshape, drag inside to move the whole sail, double-click near the outline to add a point, Alt-click a point (or select it + Delete) to remove it. ⌘Z undoes.'}
           </div>
