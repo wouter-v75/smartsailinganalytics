@@ -1,22 +1,32 @@
-// Orchestrates the per-video "proxy sync" pipeline that backs the manual
-// "Sync proxy" button. End-to-end this does three things, in order:
+// The BYTES half of Flow A: one clip's proxy, from a local blob to a playable
+// rendition. src/lib/uploadFlows.ts is the layer above it — the architecture,
+// and the one entry point every caller in the app uses. Nothing in the app
+// calls this file directly; it is called through uploadClipProxy().
 //
-//   1. Generate a 720p H.264 proxy from the source blob using ffmpeg.wasm
-//      (see src/lib/video-proxy.ts). 30–60s per minute of input on phones,
-//      faster on laptops.
-//   2. PUT the proxy blob to Bunny Storage at
-//      `sessions/<date>/proxies/<videoId>.mp4` via the browser-side
-//      AccessKey path (see src/lib/bunny-storage-upload.ts).
-//   3. PATCH the videos row in Supabase to flip `has_proxy = true` and
-//      record bunny_proxy_path + proxy_bytes (see /api/videos/[id]/renditions).
+// End to end, in order:
 //
-// We intentionally do all three sequentially per video and don't try to
-// parallelise ffmpeg jobs — the WASM core is single-instance per page,
-// running two in parallel just queues them and burns more memory.
+//   1. Generate a 720p H.264 proxy from the source blob with ffmpeg.wasm (see
+//      src/lib/video-proxy.ts). 30–60 s per minute of input on phones, faster
+//      on laptops — and SKIPPED entirely when the source is already
+//      proxy-sized (shouldSkipProxy), which clips:day output always is.
+//   2. PUT the blob to Bunny Storage, direct from the browser on the
+//      AccessKey path (src/lib/bunny-storage-upload.ts).
+//   3. PATCH the videos row (/api/videos/[id]/renditions) to flip has_proxy and
+//      record the path + bytes. The clip is WATCHABLE from here, as a
+//      progressive MP4.
+//   4. Ask Bunny to fetch it into Stream (/api/stream/fetch) and record the
+//      guid, which upgrades it to the adaptive ladder. Everything from here on
+//      returns ok with `streamError` if it fails: the clip already plays.
 //
-// The 'original' upload path is identical minus the ffmpeg step; that's
-// `syncOriginalForVideo`. Phase B v1 wires only the proxy button; the
-// original button comes later once the proxy flow is proven in the field.
+// Sequential per video on purpose — the WASM core is single-instance per page,
+// so two ffmpeg jobs in parallel only queue and burn more memory.
+//
+// There is no `syncOriginalForVideo`. The header used to promise one; Flow B
+// went a different way in the end (resumable TUS straight to Stream, where the
+// `EnabledResolutions` header can ask for the full ladder) and lives in
+// useCloudSync's originals queue. putAndFetch below still has an 'original'
+// branch, for the one case this file can produce: a source small enough to
+// upload untouched, registered as the original because that is what it is.
 
 import { generateProxy, type ProxyProgress } from './video-proxy'
 import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './bunny-storage-upload'
@@ -146,17 +156,17 @@ async function probeBlob(blob: Blob): Promise<{ height: number | null; durationS
 
 
 /**
- * THE one way a clip reaches the cloud.
- *
  * Storage first, then Bunny fetches it into Stream server-side. Storage first
  * because the clip is watchable the moment its bytes land — as a progressive
  * MP4 — instead of waiting on a transcode. Bunny fetching rather than us
- * uploading twice because the bytes then cross our uplink once.
+ * uploading twice because the bytes then cross the boat's uplink once.
  *
- * Both renditions go through here. They differ only in WHICH columns they
- * write, and that distinction is honest: `original` means we shipped the file
- * as it was, `proxy` means we shrank it first, so has_original never claims to
- * be a file we re-encoded.
+ * Both KINDS come through here, and they differ only in which columns they
+ * write. The distinction is honest: `original` means the file was shipped as it
+ * was, `proxy` means it was shrunk first, so has_original never claims to be a
+ * file we re-encoded. (Flow B's archive copy does NOT come through here — it
+ * TUSes straight to Stream, because that is the only place Bunny lets an upload
+ * name its own encoding ladder. See src/lib/uploadFlows.ts.)
  *
  * Anything failing after the row is marked returns ok with `streamError`: the
  * clip already plays, and only the adaptive ladder is missing. Telling the user

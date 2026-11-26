@@ -1,17 +1,17 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getActiveMembership } from '../../lib/active-membership';
-import { createStreamUpload, FULL_LADDER, listR2Sessions, syncSessionToCloud, uploadFileToStream } from '../../lib/bunny';
+import { createStreamUpload, FULL_LADDER, listR2Sessions, syncSessionDataToCloud, uploadFileToStream } from '../../lib/bunny';
 import { listSessionsCloud } from '../../lib/cloud-sessions';
-import { ensureCloudVideoId, makeVideoMirrorCallback } from '../../lib/cloud-videos';
+import { ensureCloudVideoId } from '../../lib/cloud-videos';
 import { connInfo, onWifi } from '../../lib/connection';
 import { getLogData, getSessions, getSessionsForMembership, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced } from '../../lib/localStore';
 import { clearPendingOrigStream, getPendingOrigStream, setPendingOrigStream } from '../../lib/pendingOrigStreams';
-import { currentStorageScope, scopeOfMembership } from '../../lib/storageScope';
+import { scopeOfMembership } from '../../lib/storageScope';
 import { getBrowserSupabase } from '../../lib/supabase/browser';
 import { daySyncRefusal } from '../../lib/syncBoatGuard';
 import { sortForUpload } from '../../lib/uploadOrder';
-import { syncProxyForVideo } from '../../lib/video-rendition-sync';
+import { uploadClipProxy } from '../../lib/uploadFlows';
 import { ROLES } from '../ssa/constants';
 import { fmtDate } from '../ssa/format';
 
@@ -100,48 +100,16 @@ export function useCloudSync({
         });
 
         try {
-          // Need an authed user — without it we have no Supabase row to
-          // mark the proxy against. Quietly skip; the user can sync
-          // manually once they sign in.
-          const supabase = getBrowserSupabase();
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) { addLog(`✕ ${label}: not signed in — cannot upload.`); autoSyncRef.current.failed++; autoSyncRef.current.done = idx; continue; }
-
-          // Source blob from IDB. If it's missing (e.g. mobile-skipped
-          // storage on a small device) the user has no way to re-upload
-          // from here; flag and move on.
-          const blob = await getVideoBlob(item.videoId);
-          if (!blob) {
-            console.warn('[autoSync] no local blob for', item.videoId);
-            addLog(`✕ ${label}: no video data on this device — re-import the clip.`);
-            noteSyncError(label,'no video data on this device — re-import the clip');
-            autoSyncRef.current.failed++;
-            autoSyncRef.current.done = idx; continue;
-          }
-
-          // Find the in-memory video record for ensureCloudVideoId to work
-          // out title/duration/etc.
+          // The in-memory record, so the cloud row gets title/duration/tags.
           const localVid = allVideosRef.current.find(v => v.id === item.videoId)
                           || { id: item.videoId, sessionDate: item.sessionDate };
 
-          const cloudId = await ensureCloudVideoId({
-            userId: user.id,
+          // FLOW A — see src/lib/uploadFlows.ts. Auth, the cloud row, the blob
+          // and the local mark all live in there, shared with the watch folder,
+          // Push to Cloud and the per-clip panel.
+          const res = await uploadClipProxy({
             video: localVid,
             sessionDate: item.sessionDate,
-          });
-          if (!cloudId) {
-            console.warn('[autoSync] no cloud row for', item.videoId);
-            addLog(`✕ ${label}: no active boat workspace — can't create the cloud entry.`);
-            noteSyncError(label,"no active boat workspace — can't create the cloud entry");
-            autoSyncRef.current.failed++;
-            autoSyncRef.current.done = idx; continue;
-          }
-
-          await syncProxyForVideo({
-            videoId: cloudId,
-            sessionDate: item.sessionDate,
-            scope: await currentStorageScope(),
-            source: blob,
             onProgress: ({phase, pct}) => {
               // Phase leads the message so it stays visible even where the
               // progress line is narrow (the clip name is what gets clipped,
@@ -157,11 +125,20 @@ export function useCloudSync({
               });
             },
           });
+          if (!res.ok) {
+            addLog(`✕ ${label}: ${res.error || 'upload failed'}`);
+            noteSyncError(label, res.error || 'upload failed');
+            autoSyncRef.current.failed++;
+            autoSyncRef.current.done = idx; continue;
+          }
+          if (res.streamError) {
+            addLog(`⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`);
+          }
 
           // Update the live UI so the clip's "proxy ready" badge shows up
           // without waiting for a manual refresh.
           setAllVideos(p => p.map(v => v.id === item.videoId
-            ? {...v, hasProxy: true, cloudId, streamProcessing: true, proxyUploadedAt: new Date().toISOString()}
+            ? {...v, hasProxy: true, cloudId: res.cloudId, streamProcessing: true, proxyUploadedAt: new Date().toISOString()}
             : v));
         } catch (e) {
           // Surface it. Silently swallowing this is what made an upload "succeed"
@@ -402,10 +379,14 @@ export function useCloudSync({
   // Caller passes the local IDB video records (id + title/name for labels).
   function enqueueAutoSync(videos, sessionDate){
     if (!videos?.length) return;
-    const items = videos
+    // Same debrief-first ordering as the originals queue: starts, then
+    // roundings, then manoeuvres. The queue drains serially, so what is queued
+    // first is what the team can watch first — and that matters MORE here than
+    // for the originals, because this is the queue they are waiting on.
+    const items = sortForUpload(videos
       // Filter out anything already proxy-uploaded so re-imports don't
       // re-transcode unnecessarily.
-      .filter(v => !v.hasProxy)
+      .filter(v => !v.hasProxy))
       .map(v => ({
         videoId: v.id,
         // Each clip keeps its OWN session date — not the batch-wide
@@ -432,7 +413,7 @@ export function useCloudSync({
     // heavy = run the upload PUSH (log/xml/videos). Auto-sync sets heavy=false on
     // a metered/poor link so only the light session-list PULL runs there.
     const heavy = !opts || opts.heavy !== false;
-    // pushVideos = also upload the VIDEO BLOBS. Only ever true for a sync the user
+    // pushVideos = also upload the clips' BYTES (Flow A). Only ever true for a sync the user
     // explicitly pressed. The automatic path must never do it: video originals are
     // multi-GB, and auto-sync fires on mount / foreground / regained link, so it
     // would silently start a huge upload for whatever session happens to be loaded
@@ -518,21 +499,21 @@ export function useCloudSync({
         setMobileSyncState({phase:"pushing",message:`Uploading ${uc} unsynced…`,progress:75});
         const logD=await getLogData(activeDate);
         const xmlD=await getXmlData(activeDate);
-        // Videos only when the user asked for it — see `pushVideos` above.
-        const vids=pushVideos?await getVideosForDate(activeDate):[];
-        await syncSessionToCloud(activeDate,logD,xmlD,vids,msg=>{
+        // The day's clips are LISTED in meta.json, never uploaded from here.
+        const vids=await getVideosForDate(activeDate);
+        await syncSessionDataToCloud(activeDate,logD,xmlD,vids,msg=>{
           setMobileSyncState(p=>({...p,message:msg.length>48?msg.slice(0,45)+"…":msg}));
-        },{
-          scope: syncScope,
-          // Mirror each clip the moment its Bunny upload finishes so the
-          // crew watching from their phones see clips appear progressively.
-          // supaUser was resolved up-front in the PULL phase above.
-          onVideoSynced: makeVideoMirrorCallback({
-            userId: supaUser?.id || null,
-            sessionDate: activeDate,
-            syncOffsets,
-          }),
-        });
+        },{ scope: syncScope });
+        // Clip BYTES, when the user asked for them: Flow A, through the proxy
+        // queue that mobile already uses on import and on Wi-Fi. The session
+        // sync used to upload them itself, in full, down a third path.
+        if(pushVideos){
+          const held=vids.filter(v=>!v.hasProxy&&v.hasLocalBlob);
+          if(held.length){
+            enqueueAutoSync(held,activeDate);
+            await processAutoSyncQueue();
+          }
+        }
         markCloudSynced(activeDate);
         setUnsyncedCount(getUnsyncedCount());
       }

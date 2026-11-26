@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 const API_KEY = process.env.BUNNY_STORAGE_API_KEY!;
 const ZONE    = process.env.BUNNY_STORAGE_ZONE!;
 const REGION  = process.env.BUNNY_STORAGE_REGION || "de";
 
-function base() {
-  return REGION === "de"
-    ? "https://storage.bunnycdn.com"
-    : `https://${REGION}.storage.bunnycdn.com`;
-}
+const base = () => storageHost(REGION);
 
 // GET /api/bunny/sessions
 // Lists all session dates available in Bunny Storage by reading the sessions/ folder.

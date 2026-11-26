@@ -14,16 +14,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../../lib/supabase/admin-guard'
 import { readCandidates, SESSION_LEAVES, photoLeaves } from '@/lib/storageKeys'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 const API_KEY = process.env.BUNNY_STORAGE_API_KEY!
 const ZONE = process.env.BUNNY_STORAGE_ZONE!
 const REGION = process.env.BUNNY_STORAGE_REGION || 'de'
 
-function bunnyBase(): string {
-  return REGION === 'de'
-    ? 'https://storage.bunnycdn.com'
-    : `https://${REGION}.storage.bunnycdn.com`
-}
+const bunnyBase = (): string => storageHost(REGION)
 
 async function bunnyList(prefix: string): Promise<{
   ObjectName: string
@@ -207,10 +204,19 @@ export async function POST(
           duration_ms,
           tags: Array.isArray(v.tags) ? v.tags : [],
           bytes: v.size ?? null,
+          // The GUID from meta.json, written by the session sync that used to
+          // upload clips itself. It is the only locator these rows have, and it
+          // is also the dedupe key above.
           bunny_stream_id: v.streamId || null,
-          bunny_storage_path: `sessions/${date}/videos/${v.id || ''}/original`,
           created_by_user_id: guard.userId,
         }
+        // NOT a bunny_storage_path. This used to invent
+        // `sessions/<date>/videos/<id>/original` for every row, and there has
+        // never been an object at that key: the bytes these rows describe went
+        // to Bunny STREAM, not Storage. resolveLegacy() signs
+        // bunny_storage_path and serves it, so the invented path was a 404 the
+        // player would reach for in preference to nothing — and it hid the real
+        // state, which is "this clip is in Stream under that guid".
 
         if (existingId) {
           const { error } = await service

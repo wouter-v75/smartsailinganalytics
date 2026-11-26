@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../../lib/supabase/admin-guard'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 const STORAGE_KEY = process.env.BUNNY_STORAGE_API_KEY!
 const ZONE = process.env.BUNNY_STORAGE_ZONE!
@@ -32,11 +33,7 @@ const LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID!
 
 const MAX_PER_RUN = 15
 
-function storageBase(): string {
-  return REGION === 'de'
-    ? 'https://storage.bunnycdn.com'
-    : `https://${REGION}.storage.bunnycdn.com`
-}
+const storageBase = (): string => storageHost(REGION)
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

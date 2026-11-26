@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 const STORAGE_KEY    = process.env.BUNNY_STORAGE_API_KEY;
 const STORAGE_ZONE   = process.env.BUNNY_STORAGE_ZONE;
@@ -30,9 +31,7 @@ export async function GET() {
   let storageOk = false;
   if (storageConfigured) {
     try {
-      const base = STORAGE_REGION === "de"
-        ? "https://storage.bunnycdn.com"
-        : `https://${STORAGE_REGION}.storage.bunnycdn.com`;
+      const base = storageHost(STORAGE_REGION);
       const res = await fetch(`${base}/${STORAGE_ZONE}/`, {
         headers: { AccessKey: STORAGE_KEY! },
         signal: AbortSignal.timeout(4000),

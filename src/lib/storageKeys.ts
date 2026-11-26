@@ -144,8 +144,15 @@ export const photoLeaves = (id: string) => ({
 /** Leaf for a clip's transcoded proxy / its original. */
 export const proxyLeaf = (videoId: string) => `proxies/${videoId}.mp4`
 export const originalLeaf = (videoId: string) => `originals/${videoId}.mp4`
-/** The older per-clip original layout, still referenced by rows in the database. */
-export const videoOriginalLeaf = (videoId: string) => `videos/${videoId}/original`
+// There was a `videoOriginalLeaf` here — `videos/<id>/original` — described as
+// "the older per-clip original layout, still referenced by rows in the
+// database". The rows are real; the OBJECTS never were. That string was built by
+// the legacy session sync and written to `bunny_storage_path` for a clip whose
+// bytes had gone to Bunny STREAM, so it named a Storage object nothing had ever
+// PUT. The admin backfill still mints the same string for the same reason, and
+// its rows have the same problem. Nothing reads it to find a file, nothing
+// called this helper, and inventing a path for bytes that are elsewhere is not
+// a layout worth keeping a name for.
 
 /**
  * The prefix a day's photos live under, for the day-wipe. SCOPED ONLY — returning

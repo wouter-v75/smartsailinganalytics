@@ -443,6 +443,10 @@ export async function updateVideoBlobAndDuration(id, blob, durationSec, newStart
 // Without this the watch-folder uploader had nowhere to record a proxy, so it
 // recorded an ORIGINAL instead — which is why 154 clips:day rows carry an
 // original and not one of them carries a proxy.
+/**
+ * @param {string} id
+ * @param {{proxyPath?: string|null, proxyStreamId?: string|null, cloudId?: string|null}} [marks]
+ */
 export async function markVideoProxyUploaded(id, { proxyPath = null, proxyStreamId = null, cloudId = null } = {}) {
   try {
     const db    = await openDb();
@@ -462,12 +466,21 @@ export async function markVideoProxyUploaded(id, { proxyPath = null, proxyStream
   } catch { return false; }
 }
 
+/**
+ * @param {string} id
+ * @param {{originalPath?: string|null, originalStreamId?: string|null, cloudId?: string|null}} [marks]
+ */
 export async function markVideoOriginalUploaded(id, { originalPath = null, originalStreamId = null, cloudId = null } = {}) {
   try {
     const db    = await openDb();
     const entry = await idbGet(db, "videos", id);
     if (!entry) return false;
-    entry.originalUploadedAt = Date.now();
+    // ISO, like the proxy mark above and like the cloud column. This wrote
+    // Date.now() while the field two functions up wrote an ISO string — one
+    // field, two types, which is exactly what the note above it warns about.
+    // Every reader goes through truthiness or new Date(x), so both parsed; the
+    // next reader is the one it would have caught out.
+    entry.originalUploadedAt = new Date().toISOString();
     entry.originalPath       = originalPath;
     entry.originalStreamId   = originalStreamId;
     // Never cleared by a later call that does not know it.

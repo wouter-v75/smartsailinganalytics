@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 // GET /api/currents/hires?lat=49.66&lon=-1.62
 // Returns ONLY a ~20x20 km clip of the native 1.5 km AMM15 current field around
@@ -13,11 +14,7 @@ const REGION = process.env.BUNNY_STORAGE_REGION || "de";
 const KEY = "icon-race/currents/channel/field_hires.json";
 const HALF_KM = 10; // 20x20 km box
 
-function storageBase() {
-  return REGION === "de"
-    ? "https://storage.bunnycdn.com"
-    : `https://${REGION}.storage.bunnycdn.com`;
-}
+const storageBase = () => storageHost(REGION);
 
 // The box publishes via Caddy -> pull zone (same place the overview is read from),
 // so prefer the public base; fall back to the storage zone only if no base is set.

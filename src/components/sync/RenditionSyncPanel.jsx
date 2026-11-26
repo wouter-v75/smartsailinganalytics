@@ -1,10 +1,6 @@
 'use client'
 import React, { useState } from "react";
-import { ensureCloudVideoId } from '../../lib/cloud-videos';
-import { getVideoBlob } from '../../lib/localStore';
-import { currentStorageScope } from '../../lib/storageScope';
-import { getBrowserSupabase } from '../../lib/supabase/browser';
-import { syncProxyForVideo } from '../../lib/video-rendition-sync';
+import { uploadClipProxy } from '../../lib/uploadFlows';
 
 // Phase B — per-video proxy upload control. Manual trigger by design:
 // crew often want to crop a clip first (future feature) before paying
@@ -32,70 +28,34 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
   const handleSync = async () => {
     setError(null);
     setProgress({phase:'transcoding', pct:0, message:'Loading source…'});
-    try {
-      const blob = await getVideoBlob(video.id);
-      if (!blob) {
-        setError("Original file not on this device. Open this video on the device that imported it.");
-        setProgress(null);
-        return;
-      }
-      const sessionDate = video.sessionDate || activeDate;
-
-      // The PATCH endpoint targets the Supabase row by its UUID. For
-      // locally-imported videos, `video.id` is still the IDB key (e.g.
-      // `v_1779...`), so first ensure a cloud row exists and grab its
-      // UUID. Idempotent — repeated clicks dedupe by external_id.
-      let cloudId = video.id;
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cloudId)) {
-        setProgress({phase:'transcoding', pct:0, message:'Registering cloud row…'});
-        try {
-          const supabase = getBrowserSupabase();
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) {
-            setError("You're signed out. Sign in and try again.");
-            setProgress(null);
-            return;
-          }
-          const resolved = await ensureCloudVideoId({
-            userId: user.id,
-            video,
-            sessionDate,
-          });
-          if (!resolved) {
-            setError("Couldn't create the cloud row for this video. Check your team membership in Admin.");
-            setProgress(null);
-            return;
-          }
-          cloudId = resolved;
-        } catch (e) {
-          setError("Failed to register video in cloud: " + (e?.message || String(e)));
-          setProgress(null);
-          return;
-        }
-      }
-
-      const result = await syncProxyForVideo({
-        videoId: cloudId,
-        sessionDate,
-        scope: await currentStorageScope(),
-        source: blob,
-        onProgress: setProgress,
-      });
-      if (!result.ok) {
-        setError(result.error || "Sync failed");
-      } else {
-        // Tell the parent so it can refresh the row's hasProxy state.
-        // Pass BOTH the local and cloud ids so the UI can update either
-        // way it might be looking up.
-        onSynced?.(video.id, {
-          proxyStreamId: result.proxyStreamId,
-          proxyBytes: result.proxyBytes,
-          cloudId,
-        });
-      }
-    } catch (e) {
-      setError(e?.message || String(e));
+    // FLOW A for one clip — the same call the watch folder, Push to Cloud and
+    // the batch queue make. See src/lib/uploadFlows.ts. This used to inline the
+    // auth / cloud-row / blob / PATCH sequence itself, with its own copy of the
+    // UUID test that lives next to ensureCloudVideoId, and it was the only one
+    // of the four that never recorded the upload on this device.
+    const result = await uploadClipProxy({
+      video,
+      sessionDate: video.sessionDate || activeDate,
+      onProgress: setProgress,
+    });
+    if (!result.ok) {
+      setError(result.error || 'Sync failed');
+      setProgress(null);
+      return;
     }
+    if (result.streamError) {
+      // Uploaded and playable; only the adaptive ladder is missing. Saying
+      // "failed" here would send the user re-uploading footage the team can
+      // already watch.
+      setError(`Uploaded and playable — the adaptive encode was not queued (${result.streamError})`);
+    }
+    // Tell the parent so it can refresh the row's hasProxy state. Pass BOTH
+    // ids: the UI may be looking the clip up either way.
+    onSynced?.(video.id, {
+      proxyStreamId: result.proxyStreamId,
+      proxyBytes: result.proxyBytes,
+      cloudId: result.cloudId,
+    });
   };
 
   return (

@@ -2,13 +2,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — Bunny.net Storage + Stream integration
 //
-// All uploads bypass Vercel completely:
-//   Log/events JSON  → direct browser PUT → Bunny Storage
-//   Videos           → direct browser TUS → Bunny Stream
-// Reads go through Vercel proxy (read-only key).
+// Every WRITE goes browser → Bunny directly, bypassing Vercel: a day's log is
+// multi-MB and a clip is hundreds, both well past Vercel's ~4.5 MB request cap.
+// READS come back through a Vercel proxy on the read-only key, so the key the
+// browser holds can create but never delete.
+//
+// What this file is:
+//   • the session's JSON — log, events, meta, manifest — PUT to Bunny Storage
+//   • the Bunny Stream primitives: create a video object, TUS a file into it,
+//     delete one
+//   • `alreadyInCloud`, the question every upload path asks first
+//
+// What this file is NOT: the upload architecture. Which clip goes where, and by
+// which of the two flows, lives in src/lib/uploadFlows.ts. `syncSessionDataToCloud`
+// below handles DATA only and has not moved a video byte since Nov 2026.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getVideoBlob, markVideoCloudSynced, markCloudSynced } from "./localStore";
+import { markCloudSynced } from "./localStore";
 import { uploadIsGone } from './tusUploadError';
 import { hashLogPayload, hashXmlPayload } from "./contentHash";
 import { readSyncManifest, updateSyncManifest } from "./syncManifest";
@@ -157,10 +167,11 @@ async function forgetTusUpload(tus, upload) {
 //   • the PUT upload's `enabledResolutions` / `jitEnabled` query string.
 //
 // NOT on video CREATE: `CreateVideoModel` is `additionalProperties: false` and
-// documents only title/collectionId/thumbnailTime. /api/stream/create has been
-// sending `enabledResolutions` in the create body, which may or may not be
-// honoured — the observed ladders are equally consistent with the library
-// default. The header below is the one that is documented to work.
+// documents only title/collectionId/thumbnailTime. /api/stream/create used to
+// send `enabledResolutions` in the create body with a comment claiming it set
+// the full ladder; the field was dropped on the floor and every ladder this app
+// ever got from that path came from the library default. It is gone from the
+// route. The header below is the one that is documented to work.
 //
 // And NOT on `videos/fetch` at all: its body takes url/headers/title and
 // nothing else, so a video brought in storage-first inherits the LIBRARY
@@ -220,8 +231,9 @@ export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}
       onSuccess() { resolve({ ok: true, gone: false }); },
       async onError(err) {
         // An EXPIRED upload is not a failed one. Bunny holds a TUS upload until
-        // its AuthorizationExpire (two hours here) and then answers 404 for
-        // ever — and re-signing does not extend it. Resuming it again is the
+        // its AuthorizationExpire — 24 h, set in /api/stream/upload — and then
+        // answers 404 for ever; re-signing does not extend it. (It also expires
+        // after ~48 h idle regardless.) Resuming it again is the
         // one thing guaranteed never to work, so say which kind of failure this
         // was and let the caller forget the video guid.
         const gone = uploadIsGone(err);
@@ -240,45 +252,25 @@ export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}
   });
 }
 
-// ── Poll until Bunny Stream video is ready ────────────────────────────────────
-export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    try {
-      const res = await fetch(`/api/stream/status/${streamId}`);
-      if (res.ok) { const data = await res.json(); if (data.ready) return data; }
-    } catch {}
-    await new Promise(r => setTimeout(r, 3000));
-  }
-  return null;
-}
-
-// ── Full session sync ─────────────────────────────────────────────────────────
-// opts.onVideoSynced({ video, streamId }) — fires immediately after each
-// individual video finishes uploading to Bunny Stream (before the next one
-// starts). Used by the UI to mirror that video into Supabase straight away so
-// teammates see clips appear one-by-one instead of waiting for the whole batch.
-// Is this clip already in the cloud, so that Push to Cloud must not send it
-// again? Five ways it can be:
+// Does this clip already have bytes in the cloud, by any upload path? Four
+// ways it can:
 //
-//   cloudSynced + streamId          the legacy direct-to-Stream upload below
-//   originalUploadedAt              storage-first, set even when the Stream
-//                                   fetch failed — the bytes are up
-//   hasOriginal                     the library's own flag from the cloud row
-//   proxyUploadedAt / hasProxy      the TEAM'S copy
+//   cloudSynced + streamId          a legacy direct-to-Stream upload, from
+//                                   before the two flows (see uploadFlows.ts)
+//   originalUploadedAt / hasOriginal  the evening archive copy
+//   proxyUploadedAt / hasProxy        the copy the TEAM watches
 //
-// The last two were missing, and the watch folder walked straight into the gap
+// The proxy pair was missing, and the watch folder walked straight into the gap
 // the moment it started sending proxies instead of originals: a day of racing
-// is ~150 clips that the team can already watch, every one of which this would
-// have re-sent in full to `bunny_stream_id` — the legacy column that
+// is ~150 clips the team can already watch, every one of which the caller would
+// have re-sent in full down a third path into `bunny_stream_id` — the column
 // resolveLegacy() reaches only when there is no proxy AND no original, i.e.
 // never for these. That is exactly the 69.7 GB of unplayed duplicates
 // migration 0107 was written to clear.
 //
-// So the question this answers is "is the clip up", not "is the ORIGINAL up".
-// A clip with only a proxy is missing its archive copy, and that is the Upload
-// originals button's job — a separate, deliberate action — not something to
-// infer by re-uploading the whole clip down a third path.
+// So the question it answers is "is the clip up", not "is the ORIGINAL up". A
+// clip with only a proxy is missing its archive copy, and that is the Upload
+// originals button's job — a separate, deliberate action.
 export function alreadyInCloud(video) {
   if (!video) return false;
   return Boolean(
@@ -288,16 +280,22 @@ export function alreadyInCloud(video) {
   );
 }
 
-export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus, opts = {}) {
+// ── Session DATA sync ────────────────────────────────────────────────────────
+// Log rows, event XML and the session meta — to Bunny Storage, direct from the
+// browser. NO VIDEO BYTES: `videosForMeta` is listed in meta.json and never
+// uploaded. Clips go through the two flows in src/lib/uploadFlows.ts.
+//
+// It used to upload them, as a third flow: create a Stream video, TUS the full
+// file with no ladder, record the guid in `bunny_stream_id`. That column is the
+// one `resolveLegacy()` reaches last and migration 0107 had to clear 69.7 GB
+// out of, so the flow's whole output was a duplicate nobody watched.
+export async function syncSessionDataToCloud(date, logData, xmlData, videosForMeta, onStatus, opts = {}) {
   const status = msg => onStatus?.(msg);
   // Whose session this is. Without it the keys fall back to the flat
   // pre-migration layout — which is what a user with no active membership
   // always had. See src/lib/storageKeys.ts.
   const scope = opts.scope || null;
-  const onVideoSynced = opts.onVideoSynced;
-  // skipped: ids whose original was already up without a legacy streamId, so
-  // the caller can close their progress rows.
-  const result = { success: false, streamIds: {}, skipped: [] };
+  const result = { success: false };
   try {
     // Read the session manifest once (a few hundred bytes) so we can skip
     // re-uploading log/xml that is already in the cloud unchanged. This replaces
@@ -350,66 +348,16 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       }
     }
 
-    // 3. Videos → Bunny Stream (direct via tus)
-    for (const video of videos) {
-      // Skip anything whose original is already up, by either upload path.
-      if (alreadyInCloud(video)) {
-        status(`↩ ${video.name} already in cloud — skipping`);
-        if (video.cloudSynced && video.streamId) result.streamIds[video.id] = video.streamId;
-        else result.skipped.push(video.id);
-        continue;
-      }
-
-      // Get file: prefer video.file (just uploaded), then IDB blob, then objectUrl
-      let file = video.file || null;
-      if (!file) file = await getVideoBlob(video.id);
-      if (!file && video.objectUrl) {
-        try { const r = await fetch(video.objectUrl); file = await r.blob(); } catch {}
-      }
-      if (!file) {
-        status(`⚠ No file available for ${video.name} — skipping`);
-        continue;
-      }
-
-      status(`Creating Bunny Stream video for ${video.name}…`);
-      const uploadInfo = await createStreamUpload(video.name, video.size);
-      if (!uploadInfo) { status(`⚠ Stream create failed for ${video.name}`); continue; }
-
-      status(`Uploading ${video.name} to Bunny Stream (${(video.size / 1e6).toFixed(0)} MB)…`);
-      const uploaded = await uploadFileToStream(
-        uploadInfo, file, pct => status(`Uploading ${video.name}… ${pct}%`)
-      );
-      if (!uploaded.ok) {
-        status(uploaded.gone
-          ? `⚠ Stream upload for ${video.name} had expired — it will start fresh next time`
-          : `⚠ Stream upload failed for ${video.name}`);
-        continue;
-      }
-
-      result.streamIds[video.id] = uploadInfo.streamId;
-      await markVideoCloudSynced(video.id, uploadInfo.streamId);
-      status(`✓ ${video.name} uploaded to Stream (ID: ${uploadInfo.streamId.slice(0, 8)}…)`);
-
-      // Fire per-video hook so the caller can mirror this clip to Supabase
-      // (or anywhere else) right now — before the rest of the batch finishes.
-      // Best-effort; swallow errors so a flaky DB call can't break the upload
-      // loop for the remaining clips.
-      if (onVideoSynced) {
-        try { await onVideoSynced({ video, streamId: uploadInfo.streamId }); }
-        catch (e) { console.warn('onVideoSynced threw:', e); }
-      }
-    }
-
-    // 4. Session meta → Bunny Storage (direct)
+    // 3. Session meta → Bunny Storage (direct)
     // Include ALL enriched fields so other devices can display full metadata
     // without needing to re-derive from log/xml.
     const meta = {
       date, boat: xmlData?.meta?.boat || null, location: xmlData?.meta?.location || null,
-      hasLog: !!logData, hasXml: !!xmlData, videoCount: videos.length,
-      videos: videos.map(v => ({
+      hasLog: !!logData, hasXml: !!xmlData, videoCount: videosForMeta.length,
+      videos: videosForMeta.map(v => ({
         id: v.id, name: v.name, size: v.size, duration: v.duration,
         camera: v.camera, title: v.title, tags: v.tags,
-        streamId: result.streamIds[v.id] || v.streamId || v.originalStreamId || null,
+        streamId: v.originalStreamId || v.proxyStreamId || v.streamId || null,
         startUtc: v.startUtc || null, tsSource: v.tsSource || null,
         // Enriched instrument averages
         twsAvg: v.twsAvg ?? null, twaAvg: v.twaAvg ?? null,
@@ -433,7 +381,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
     try { await markCloudSynced(date, { logHash: syncedLogHash, xmlHash: syncedXmlHash }); } catch {}
 
     result.success = true;
-    status(`✓ Session ${date} fully synced to Bunny Storage + Stream`);
+    status(`✓ Session ${date} data synced to Bunny Storage`);
     return result;
   } catch (err) {
     status(`Sync error: ${err instanceof Error ? err.message : String(err)}`);

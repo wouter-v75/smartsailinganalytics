@@ -2,12 +2,11 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getActiveMembership } from '../lib/active-membership';
 import { setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
-import { alreadyInCloud, syncSessionToCloud, waitForStreamReady } from '../lib/bunny';
+import { alreadyInCloud, syncSessionDataToCloud } from '../lib/bunny';
 import { saveLogDataCloud, saveXmlDataCloud, sessionSyncBlocker } from '../lib/cloud-sessions';
 import { mergeTagListCloud } from '../lib/cloud-tag-list';
-import { ensureCloudVideoId, makeVideoMirrorCallback } from '../lib/cloud-videos';
 import { reduceLogForCloud } from '../lib/cloudLogReduce';
-import { computeAutoTags, deleteSsaPhases, getLogData, getSessions, getSessionsForMembership, getVideoBlob, getVideoCloudFlags, getXmlData, loadSsaPhases, markVideoProxyUploaded, mergeTagList, saveLogData, saveSsaPhases, saveVideo, saveXmlData, venueTodayIso as TODAY } from '../lib/localStore';
+import { computeAutoTags, deleteSsaPhases, getLogData, getSessions, getSessionsForMembership, getVideoCloudFlags, getXmlData, loadSsaPhases, mergeTagList, saveLogData, saveSsaPhases, saveVideo, saveXmlData, venueTodayIso as TODAY } from '../lib/localStore';
 import { parseLog } from '../lib/logParse';
 import { isSubSecondLog, lidarSailsIn, logRateHz, thinToOneHz } from '../lib/logResolution';
 import { uploadSessionStats } from '../lib/phaseStatsUpload';
@@ -20,7 +19,7 @@ import { daySyncRefusal } from '../lib/syncBoatGuard';
 import { buildDayTimeline } from '../lib/timeline/buildNodes';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { sortForUpload } from '../lib/uploadOrder';
-import { syncProxyForVideo } from '../lib/video-rendition-sync';
+import { uploadClipProxy } from '../lib/uploadFlows';
 import { enrichVideo } from '../lib/videoEnrich';
 import { clipTimestampSettled, extractVideoCreationTime, probeVideo, resolveStartUtc } from '../lib/videoProbe';
 import { canWatchFolders, collectNewClips, ensureFolderPermission } from '../lib/watchFolder';
@@ -481,8 +480,8 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     if (!queued) return;
 
     // The queued entry is a SNAPSHOT taken the moment the clip was saved, and
-    // the timestamp probe may still have been running then. ensureCloudVideoId
-    // writes start_utc ONCE, from whatever it is handed, and the row is never
+    // the timestamp probe may still have been running then. The cloud row is
+    // created from whatever it is handed, start_utc is written ONCE and never
     // rewritten — so a stale snapshot leaves the cloud row with no start time
     // for ever, while the local record settles and the Videos tab looks right.
     // The timeline then parks the clip at the start of the day: on 2 October
@@ -499,40 +498,22 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     (async () => {
       const label = next.title || next.name || next.id;
       try {
-        const supabase = getBrowserSupabase();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) throw new Error('not signed in');
-        const sessionDate = next.sessionDate;
-        if (!sessionDate) throw new Error('no session date');
-        const cloudId = await ensureCloudVideoId({ userId: user.id, video: next, sessionDate });
-        if (!cloudId) throw new Error('no cloud row');
-        const blob = await getVideoBlob(next.id);
-        if (!blob) throw new Error('no video data on this device');
-
         addLog(`↑ ${label} — uploading the 720p copy…`);
         setWatchProgress({ label, pct: 0, message: 'starting…' });
-        // THE PROXY, not the original. This is the fast path: the whole point of
-        // the watch folder is that the team sees the day's racing on their
-        // phones while it is still the day, and a proxy is 360p + 720p against
-        // the original's full ladder.
+        // FLOW A, the proxy — see src/lib/uploadFlows.ts. The whole point of the
+        // watch folder is that the team sees the day's racing on their phones
+        // while it is still the day.
         //
-        // It used to call uploadOriginalStorageFirst, which is why 154 clips:day
-        // rows carry an original and NOT ONE carries a proxy — the slow path was
-        // the automatic one and the fast path was a button nobody pressed.
-        //
-        // No transcode is spent here in practice: clips:day already writes 720p
-        // (measured mean 6.10 Mbps), so shouldSkipProxy passes the file straight
-        // through and the same bytes are uploaded — they are simply registered
-        // as the copy the team watches. Full resolution is a separate, later,
-        // deliberate action: clips:day --full-res plus the Upload originals
-        // button.
-        const res = await syncProxyForVideo({
-          videoId: cloudId, sessionDate, scope: await currentStorageScope(), source: blob,
-          // registerAs is load-bearing. clips:day output is ALREADY 720p, so no
-          // transcode is needed and the blob is the source — and left to decide
-          // for itself syncProxyForVideo would then file it as an ORIGINAL,
-          // which is how 154 of these came to claim a full-resolution copy they
-          // do not have. The clip's real original is the 4K still on the card.
+        // `registerAs: 'proxy'` is load-bearing, and the watcher is the only
+        // caller that passes it. clips:day output is ALREADY 720p (measured mean
+        // 6.10 Mbps), so no transcode is needed and the blob IS the source —
+        // left to decide for itself the uploader would then file it as an
+        // ORIGINAL, which is how 154 of these came to claim a full-resolution
+        // copy they do not have. The clip's real original is the 4K still on the
+        // card, and it goes up later through Flow B.
+        const res = await uploadClipProxy({
+          video: next,
+          sessionDate: next.sessionDate,
           registerAs: 'proxy',
           onProgress: (pr) => setWatchProgress({
             label,
@@ -542,27 +523,16 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         });
         if (!res.ok) throw new Error(res.error || 'upload failed');
         if (res.streamError) addLog(`⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`);
-        // Record the upload on this device AND in the saved list: Push to Cloud
-        // re-sends anything not marked, so without this it uploaded every
-        // watched clip a second time.
-        // cloudId is load-bearing, not bookkeeping: the timeline, the campaign
-        // notes and the debrief reel all hand the player a SUPABASE id, and the
-        // library is keyed by this device's IndexedDB id. Without the link the
-        // lookup misses and the player falls back to the day's first clip — so
-        // every card in the timeline opened the race start, while the
-        // thumbnails (drawn from the cloud rows) looked right. The batch upload
-        // path has always recorded it; this one did not.
-        const mark = {
-          cloudId,
+        // uploadClipProxy has written the IndexedDB mark; mirror it into the
+        // saved list so Push to Cloud's count and this tab's badges agree with
+        // it without a reload.
+        setSavedVids(p => p.map(v => v.id === next.id ? { ...v,
+          cloudId: res.cloudId,
           hasProxy: true,
           proxyUploadedAt: new Date().toISOString(),
           proxyPath: res.proxyPath || null,
           proxyStreamId: res.proxyStreamId || null,
-        };
-        await markVideoProxyUploaded(next.id, {
-          cloudId, proxyPath: mark.proxyPath, proxyStreamId: mark.proxyStreamId,
-        });
-        setSavedVids(p => p.map(v => v.id === next.id ? { ...v, ...mark } : v));
+        } : v));
         addLog(`✓ ${label} — 720p is up, the team can watch it now`);
         setWatchUploaded(n => n + 1);
       } catch (e) {
@@ -1041,10 +1011,14 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     setPhase("syncing");
     syncAbortRef.current=false;
 
-    // Build one item per upload action with exact labels for matching
+    // One row per thing that will actually be sent. Clips already in the cloud
+    // get no row: listing them and closing them instantly reads as a failure
+    // ("150 videos", finished in two seconds), and with the watch folder
+    // running, most of a racing day is already up by the time this is pressed.
+    const toUpload=sortForUpload(savedVids.filter(v=>!alreadyInCloud(v)));
     const items=[
       {id:"log",   label:"Log & Events",  state:"pending", pct:0},
-      ...savedVids.map(v=>({id:v.id, label:v.name||v.title, state:"pending", pct:0}))
+      ...toUpload.map(v=>({id:v.id, label:v.name||v.title, state:"pending", pct:0}))
     ];
     // Helpers — use a local ref so setItem can be called from the sync callback
     // without stale-closure issues
@@ -1067,16 +1041,17 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     setSyncProgress({...progressRef});
 
     setItem("log",{state:"active",pct:5});
-    addLog("Starting Bunny Storage + Stream upload…");
+    addLog(toUpload.length
+      ? `Uploading the day's log and events, then ${toUpload.length} clip${toUpload.length===1?"":"s"} as 720p…`
+      : "Uploading the day's log and events…");
 
     try{
-      let currentVidId=null;
       // Filled by the boat guard just below, which resolves the same membership.
       let uploadScope = null;
 
       // ── Boat guard ─────────────────────────────────────────────────────────
       // Same refusal the mobile sync makes: savedDate can belong to another
-      // boat, and syncSessionToCloud would file it under the active one without
+      // boat, and the sync would file it under the active one without
       // saying so. See src/lib/syncBoatGuard.ts.
       {
         const guardUser = await (async()=>{ try{ const {data:{user}} = await getBrowserSupabase().auth.getUser(); return user||null; }catch{ return null; } })();
@@ -1102,17 +1077,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       const _flags = await getVideoCloudFlags(savedVids.map(v => v.id));
       const _syncVids = savedVids.map(v => enrichVideo({ ...v, ...(_flags.get(v.id) || {}) }, _syncLog, _syncXml, syncOffsets));
 
-      // Resolve the authed user up-front so the per-video Supabase mirror
-      // callback (below) doesn't have to re-auth on every clip.
-      let _syncUser = null;
-      try {
-        const sb = getBrowserSupabase();
-        const { data:{ user } } = await sb.auth.getUser();
-        _syncUser = user || null;
-      } catch {}
       const _syncVidsById = new Map(_syncVids.map(v => [v.id, v]));
 
-      const result=await syncSessionToCloud(
+      // ── 1. Session DATA — log, events, meta ───────────────────────────────
+      // Videos are LISTED here (in meta.json) and never uploaded; they go up
+      // through Flow A below. See src/lib/uploadFlows.ts.
+      await syncSessionDataToCloud(
         savedDate,
         _syncLog,
         _syncXml,
@@ -1120,90 +1090,74 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         msg=>{
           if(syncAbortRef.current)return;
           addLog(msg);
-
-          // ── Log & Events item ──────────────────────────────────────────────
-          // "Uploading log data to Bunny Storage…"
-          if(msg.includes("Uploading log data")) setItem("log",{state:"active",pct:20});
-          // "✓ Log data uploaded to Bunny Storage"
-          if(msg.includes("✓ Log data uploaded")) setItem("log",{state:"active",pct:50});
-          // "Uploading event data to Bunny Storage…"
-          if(msg.includes("Uploading event data")) setItem("log",{state:"active",pct:70});
-          // "✓ Event data uploaded to Bunny Storage"
-          if(msg.includes("✓ Event data uploaded")) setItem("log",{state:"done",pct:100});
-          // also mark done if log upload fails but we continue (no XML)
-          if(msg.includes("✓ Log data uploaded")&&!savedVids.length) setItem("log",{state:"done",pct:100});
-
-          // ── Per-video items ────────────────────────────────────────────────
-          // "Creating Bunny Stream video for {name}…"
-          if(msg.includes("Creating Bunny Stream video for ")){
-            const name=msg.replace("Creating Bunny Stream video for ","").replace("…","").trim();
-            const vid=savedVids.find(v=>(v.name||v.title)===name);
-            if(vid){currentVidId=vid.id;setItem(currentVidId,{state:"active",pct:5});}
-          }
-          // "Uploading {name} to Bunny Stream (X MB)…"
-          if(msg.includes("to Bunny Stream")&&!msg.startsWith("✓")){
-            if(currentVidId) setItem(currentVidId,{state:"active",pct:10});
-          }
-          // "Uploading {name}… {pct}%"  — live TUS progress
-          const progMatch=msg.match(/Uploading (.+?)… (\d+)%$/);
-          if(progMatch){
-            const name=progMatch[1].trim();
-            const pct=parseInt(progMatch[2]);
-            const vid=savedVids.find(v=>(v.name||v.title)===name);
-            const id=vid?.id||currentVidId;
-            if(id) setItem(id,{state:"active",pct:Math.max(10,Math.min(95,pct))});
-          }
-          // "✓ {name} uploaded to Stream (ID: {id}…)"
-          if(msg.startsWith("✓")&&msg.includes("uploaded to Stream")){
-            const name=msg.replace("✓ ","").split(" uploaded to Stream")[0].trim();
-            const vid=savedVids.find(v=>(v.name||v.title)===name);
-            const id=vid?.id||currentVidId;
-            if(id){
-              const sidMatch=msg.match(/ID: ([a-f0-9-]+)/i);
-              setItem(id,{state:"processing",pct:98,streamId:sidMatch?.[1]});
-            }
-            currentVidId=null;
-          }
-          // Upload failure
-          if(msg.includes("upload failed")||msg.includes("failed for")){
-            if(currentVidId) setItem(currentVidId,{state:"error",pct:0});
-          }
+          if(msg.includes("Uploading log data"))        setItem("log",{state:"active",pct:20});
+          if(msg.includes("✓ Log data uploaded"))      setItem("log",{state:"active",pct:50});
+          if(msg.includes("Uploading event data"))      setItem("log",{state:"active",pct:70});
+          if(msg.includes("✓ Event data uploaded"))    setItem("log",{state:"done",pct:100});
         },
-        {
-          // Mirror each clip into Supabase the moment its Bunny upload
-          // finishes, so teammates see videos appear one-by-one during a
-          // long session sync — they no longer wait for the entire batch.
-          scope: uploadScope,
-          onVideoSynced: makeVideoMirrorCallback({
-            userId: _syncUser?.id || null,
-            sessionDate: savedDate,
-            syncOffsets,
-            onMirrored: (label) => addLog(`☁ ${label} mirrored to Supabase`),
-          }),
-        }
+        { scope: uploadScope }
       );
-
-      // Mark all successful videos as done using returned streamIds
-      Object.entries(result.streamIds||{}).forEach(([vidId,streamId])=>{
-        setItem(vidId,{state:"done",pct:100,streamId});
-      });
-      // Clips skipped because their original was already up (watch folder or
-      // Videos tab) have no new streamId — close their rows too.
-      (result.skipped||[]).forEach(vidId=>setItem(vidId,{state:"done",pct:100}));
-      // Mark log done if not already (handles the case with no XML)
       setItem("log",{state:"done",pct:100});
 
-      setPhase("done");
-      addLog("Bunny sync complete. Stream videos processing in background…");
-      progressRef.overall=100;pushProgress();
+      // ── 2. FLOW A — the 720p copy the team watches ────────────────────────
+      // Serial: ffmpeg.wasm is single-instance per page, and because the upload
+      // is storage-first each clip becomes watchable as its own bytes land, so
+      // finishing one beats making progress on five. `toUpload` is already in
+      // debrief order — starts, then roundings, then manoeuvres.
+      let nUploaded=0, nFailed=0, nAlready=0;
+      for(const row of toUpload){
+        if(syncAbortRef.current) break;
+        // `toUpload` was filtered on the list in MEMORY, which lags: the watch
+        // folder or the Videos tab may have uploaded a clip since it was saved.
+        // _syncVids carries this device's fresh marks, so re-check against those
+        // and close the row rather than sending the clip a second time.
+        const v=_syncVidsById.get(row.id)||row;
+        const label=v.name||v.title||v.id;
+        if(alreadyInCloud(v)){
+          nAlready++;
+          setItem(v.id,{state:"done",pct:100});
+          continue;
+        }
+        setItem(v.id,{state:"active",pct:5});
+        const res=await uploadClipProxy({
+          video:v,
+          sessionDate:savedDate,
+          syncOffsets,
+          onProgress:pr=>setItem(v.id,{
+            state:"active",
+            pct:Math.max(5,Math.min(95,Math.round((pr.pct||0)*100))),
+          }),
+        });
+        if(res.ok){
+          nUploaded++;
+          setItem(v.id,{state:"done",pct:100,streamId:res.proxyStreamId||undefined});
+          setSavedVids(p=>p.map(x=>x.id===v.id?{...x,
+            cloudId:res.cloudId, hasProxy:true,
+            proxyUploadedAt:new Date().toISOString(),
+            proxyPath:res.proxyPath||null, proxyStreamId:res.proxyStreamId||null,
+          }:x));
+          addLog(res.streamError
+            ? `⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`
+            : `✓ ${label} — 720p is up, the team can watch it now`);
+        }else{
+          nFailed++;
+          setItem(v.id,{state:"error",pct:0});
+          addLog(`✕ ${label}: ${res.error||"upload failed"}`);
+        }
+      }
 
-      // Poll for HLS readiness
-      Object.entries(result.streamIds||{}).forEach(async([vidId,streamId])=>{
-        const ready=await waitForStreamReady(streamId,300000);
-        const vid=savedVids.find(v=>v.id===vidId);
-        setItem(vidId,{state:ready?"done":"error",pct:100});
-        addLog(ready?`✓ ${vid?.name} ready — HLS available`:`⚠ ${vid?.name} stream timeout`);
-      });
+      setPhase("done");
+      progressRef.overall=100;pushProgress();
+      // Say what landed. Every uploaded clip is already PLAYABLE at this point,
+      // as a progressive MP4 straight off Storage — the adaptive 360p/720p
+      // ladder is Bunny encoding in the background and needs nothing further
+      // from this device, so there is no readiness left to wait on here.
+      const already=nAlready?` ${nAlready} were already up.`:"";
+      addLog(nFailed
+        ? `Done — log and events up, ${nUploaded} clip${nUploaded===1?"":"s"} uploaded, ${nFailed} failed (see above).${already}`
+        : nUploaded
+          ? `✓ Done — log, events and ${nUploaded} clip${nUploaded===1?"":"s"}. The team can watch them now.${already}`
+          : "✓ Done — log and events. Every clip was already in the cloud.");
 
     }catch(e){
       setSyncProgress(p=>p?{...p,error:e instanceof Error?e.message:String(e)}:p);
@@ -1542,12 +1496,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               {phase==="saved"&&watchOn&&<div style={{fontSize:10,color:"#6EE7B7",marginBottom:12}}>Clips from the watched folder upload by themselves — nothing to press.</div>}
               {phase==="saved"&&!watchOn&&cloudStatus?.available&&perms.canSync&&(
                 <div style={{marginBottom:12}}>
-                  <div style={{fontSize:10,color:"#475569",marginBottom:10}}>Uploads the day&apos;s log and event file. Clips already in the cloud are skipped — send the team&apos;s copies with <strong>Sync proxies</strong> and the archive copies with <strong>Upload originals</strong>, both in the Videos tab.</div>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:10}}>Uploads the day&apos;s log and event file, then each clip as the <strong>720p copy the team watches</strong>. Clips already in the cloud are skipped. Full-resolution archive copies are a separate, later job — <strong>Upload originals</strong> in the Videos tab.</div>
                   {/* Count what will actually be SENT, not what is in the day. A
                       button promising "150 videos" that skips 150 of them reads
                       as a failure the first time somebody watches it finish in
                       two seconds. */}
-                  <button onClick={pushCloud} style={{background:"#8B5CF6",border:"none",borderRadius:8,padding:"11px 0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",width:"100%"}}>{(()=>{const n=savedVids.filter(v=>!alreadyInCloud(v)).length;return n?`② Push to Cloud — log + events + ${n} clip${n!==1?"s":""}`:"② Push to Cloud — log + events";})()}</button>
+                  <button onClick={pushCloud} style={{background:"#8B5CF6",border:"none",borderRadius:8,padding:"11px 0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",width:"100%"}}>{(()=>{const n=savedVids.filter(v=>!alreadyInCloud(v)).length;return n?`② Push to Cloud — log + events + ${n} clip${n!==1?"s":""} as 720p`:"② Push to Cloud — log + events";})()}</button>
                 </div>
               )}
               {phase==="saved"&&!cloudStatus?.available&&<div style={{fontSize:10,color:"#334155",background:"#071624",borderRadius:6,padding:"8px 10px"}}>Cloud not configured. Set Bunny env vars in Vercel to enable sync. Session is fully usable from local storage.</div>}

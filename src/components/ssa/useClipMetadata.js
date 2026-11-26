@@ -67,8 +67,6 @@ export function useClipMetadata({
             tags: mergedTags,
             syncOffsetSecs: 0,                // baked in
             thumbnailUrl: v.thumbnailUrl ?? null,
-            bunnyStreamId: v.streamId ?? null,
-            bunnyStoragePath: v.bunny_storage_path ?? null,
             bytes: v.size ?? null,
             externalId: v.externalId || v.id,
           });
@@ -110,8 +108,6 @@ export function useClipMetadata({
         tags: video.tags ?? [],
         syncOffsetSecs: syncOffsets[video.id] ?? 0,
         thumbnailUrl: video.thumbnailUrl ?? null,
-        bunnyStreamId: video.streamId ?? null,
-        bunnyStoragePath: video.bunny_storage_path ?? null,
         bytes: video.size ?? null,
         externalId: video.externalId || video.id,
         ...overrides,
@@ -149,8 +145,6 @@ export function useClipMetadata({
           tags: newTags,
           syncOffsetSecs: syncOffsets[video.id] ?? 0,
           thumbnailUrl: video.thumbnailUrl ?? null,
-          bunnyStreamId: video.streamId ?? null,
-          bunnyStoragePath: video.bunny_storage_path ?? null,
           bytes: video.size ?? null,
           externalId: video.externalId || video.id,
         });
@@ -165,7 +159,7 @@ export function useClipMetadata({
         } else {
           // Action=updated means the dedupe found the existing row and
           // applied tags. action=created means the server didn't find a
-          // matching row (external_id / bunny_stream_id mismatch) and
+          // matching row (external_id mismatch) and
           // inserted a NEW row — symptom of a duplicate-clip problem
           // where the original cloud row still has the old tags.
           console.log('[tags] cloud upsert OK', {

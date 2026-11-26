@@ -14,6 +14,7 @@ import { parseSailScanReport, ParsedScan } from '../../../../../lib/sailScanPars
 import { matchSailToInventory } from '../../../../../lib/sailCodeMatch'
 import { extractPdfText } from '../../../../../lib/pdfText'
 import { signBunnyUrl, bunnyConfigured } from '../../../../../lib/bunny-signed-url'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 // Remove a transit-only object from Bunny Storage. Used for the report PDF, which we
 // upload solely to get it past the request-body limit and parse — never to keep.
@@ -24,7 +25,7 @@ async function deleteFromBunnyStorage(key: string): Promise<void> {
     const zone = process.env.BUNNY_STORAGE_ZONE
     const region = process.env.BUNNY_STORAGE_REGION || 'de'
     if (!apiKey || !zone) return
-    const host = region === 'de' ? 'https://storage.bunnycdn.com' : `https://${region}.storage.bunnycdn.com`
+    const host = storageHost(region)
     const safe = key.replace(/\.\./g, '').replace(/^\/+/, '')
     await fetch(`${host}/${zone}/${safe}`, { method: 'DELETE', headers: { AccessKey: apiKey } })
   } catch {

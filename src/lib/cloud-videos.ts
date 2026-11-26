@@ -150,11 +150,26 @@ interface UpsertArgs {
   tags?: string[]
   syncOffsetSecs?: number
   thumbnailUrl?: string | null
-  bunnyStreamId?: string | null
-  bunnyStoragePath?: string | null
   bytes?: number | null
   externalId?: string | null
 }
+
+// NOTE what is NOT here: bunny_stream_id and bunny_storage_path.
+//
+// This function pushes a clip's METADATA — title, tags, start time, offset. The
+// columns naming where the bytes are belong to the upload flows
+// (src/lib/uploadFlows.ts) and to nothing else. Both used to be arguments, and
+// every caller filled them from the in-memory clip record, where
+// `bunny_storage_path` does not exist (toLegacyVideoShape never exposed it). So
+// a rename or a tag edit sent `bunny_storage_path: null` into a non-sparse
+// UPDATE and ERASED it — and that column is the only playback source
+// resolveLegacy() has for a row that pre-dates the proxy split. Renaming a clip
+// could un-play it.
+//
+// ensureCloudVideoId still sends bunny_stream_id, deliberately: it is how a
+// clip whose local record carries a legacy guid finds its EXISTING cloud row
+// instead of creating a duplicate. The route treats both columns sparsely now,
+// so an absent one is left alone.
 
 export interface UpsertVideoResult {
   ok: boolean
@@ -188,8 +203,6 @@ export async function upsertVideoCloud(args: UpsertArgs): Promise<UpsertVideoRes
     tags: args.tags ?? [],
     sync_offset_secs: args.syncOffsetSecs ?? 0,
     thumbnail_url: args.thumbnailUrl ?? null,
-    bunny_stream_id: args.bunnyStreamId ?? null,
-    bunny_storage_path: args.bunnyStoragePath ?? null,
     bytes: args.bytes ?? null,
     external_id: args.externalId ?? null,
   }
@@ -312,59 +325,6 @@ export async function ensureCloudVideoId({
   } catch (e) {
     if (e instanceof Error) throw e
     throw new Error('cloud video row failed (network)')
-  }
-}
-
-// Build a per-video callback for syncSessionToCloud's onVideoSynced hook.
-// Mirrors each clip into Supabase the moment its Bunny upload finishes, so
-// teammates can see clips appear one-by-one rather than after the whole
-// batch. Safe to invoke without an authed user — returns a no-op in that case.
-interface MirrorArgs {
-  userId: string | null
-  sessionDate: string
-  syncOffsets?: Record<string, number>
-  onMirrored?: (label: string) => void
-}
-export function makeVideoMirrorCallback({
-  userId,
-  sessionDate,
-  syncOffsets,
-  onMirrored,
-}: MirrorArgs) {
-  return async ({
-    video,
-    streamId,
-  }: {
-    video: {
-      id: string
-      name?: string | null
-      title?: string | null
-      startUtc?: number | string | null
-      duration?: number | null
-      tags?: string[]
-      size?: number | null
-    }
-    streamId: string | null
-  }) => {
-    if (!userId || !streamId) return
-    try {
-      await upsertVideoCloud({
-        userId,
-        sessionDate,
-        title: video.title || video.name || null,
-        startUtc: video.startUtc ?? null,
-        durationSec: video.duration ?? null,
-        tags: video.tags ?? [],
-        syncOffsetSecs: syncOffsets?.[video.id] || 0,
-        bunnyStreamId: streamId,
-        bunnyStoragePath: `sessions/${sessionDate}/videos/${video.id}/original`,
-        bytes: video.size ?? null,
-        externalId: video.id,
-      })
-      onMirrored?.(video.title || video.name || video.id)
-    } catch {
-      /* non-fatal — Bunny still has the file */
-    }
   }
 }
 

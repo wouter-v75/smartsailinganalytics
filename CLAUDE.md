@@ -616,6 +616,22 @@ mounts it: verifying a weather change means signing in.
 nothing like SSA and nothing in `src/components/weather/` affects it. Matching
 on the filename sent two sessions to the wrong page.
 
+**A clip reaches the cloud by exactly TWO flows, and `src/lib/uploadFlows.ts`
+is the whole architecture** — read it before touching anything that uploads.
+**A** is the proxy (720p; Storage PUT, then `videos/fetch` pulls it into Stream;
+ladder is the LIBRARY DEFAULT because `videos/fetch` takes no encoding options);
+**B** is the archive original (TUS straight to Stream with `EnabledResolutions:
+FULL_LADDER`, behind the Upload originals button). Flow A has ONE entry point,
+`uploadClipProxy()`, and four callers — the watch folder, Push to Cloud, the
+"Sync proxies" queue and the per-clip panel. There used to be a third flow
+inside `syncSessionToCloud` that uploaded full-resolution clips into
+`bunny_stream_id`, the column `resolveLegacy()` tries last, so nothing ever
+played them: 69.7 GB, cleared by 0107. It is gone, that function is
+`syncSessionDataToCloud` and uploads DATA only, and
+`src/lib/__tests__/uploadFlows.test.ts` asserts the shape against the source
+tree — a failure there means a new upload path appeared, which is how every
+bug in this area has started.
+
 ## Bunny credentials
 
 `BUNNY_STORAGE_API_KEY` is **read-only**; `BUNNY_STORAGE_WRITE_KEY` is the

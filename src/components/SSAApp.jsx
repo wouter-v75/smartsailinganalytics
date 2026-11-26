@@ -2,11 +2,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getActiveMembership } from '../lib/active-membership';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
-import { checkCloudStatus, fetchCloudSession, listR2Sessions, syncSessionToCloud, updateCloudSessionMetadata } from '../lib/bunny';
+import { checkCloudStatus, fetchCloudSession, listR2Sessions, syncSessionDataToCloud, updateCloudSessionMetadata } from '../lib/bunny';
 import { upsertPhotoCloud } from '../lib/cloud-photos';
 import { getSessionCloud, listSessionsCloud } from '../lib/cloud-sessions';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud } from '../lib/cloud-tag-list';
-import { listVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape } from '../lib/cloud-videos';
+import { listVideosCloud, toLegacyVideoShape } from '../lib/cloud-videos';
 import { onWifi } from '../lib/connection';
 import { hasOpenableData } from '../lib/hasOpenableData';
 import { computeAutoTags, dedupeVideos, getAllVideos, getAllVideosForMembership, getLogData, getSessions, getSessionsForMembership, getSyncOffsets, getTagList, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced, markVideoOriginalUploaded, pruneInertVideos, saveSyncOffset, saveTagList, updateVideoBlobAndDuration, updateVideoStartUtc, updateVideoTags, venueTodayIso as TODAY } from '../lib/localStore';
@@ -812,7 +812,7 @@ function SSAApp(){
                 // alreadyInCloud() covers it in memory; this makes it true on
                 // disk too, once.
                 if(shaped.hasOriginal && !local.originalUploadedAt){
-                  local.originalUploadedAt=Date.now();
+                  local.originalUploadedAt=new Date().toISOString();
                   markVideoOriginalUploaded(local.id,{
                     originalPath:shaped.originalPath||null,
                     originalStreamId:shaped.originalStreamId||null,
@@ -1298,11 +1298,11 @@ function SSAApp(){
                     const setItem=(id,patch)=>setLibSyncProgress(p=>p?{...p,items:p.items.map(it=>it.id===id?{...it,...patch}:it)}:p);
                     try{
                       let curVid=null;
-                      // Resolve user once so the mirror callback below can
-                      // push each clip to Supabase as soon as it lands.
-                      let libUser=null;
-                      try{const sb=getBrowserSupabase();const {data:{user}}=await sb.auth.getUser();libUser=user||null;}catch{}
-                      await syncSessionToCloud(activeDate,logD,xmlD,
+                      // Log, events and meta. The clips are LISTED in meta.json
+                      // and never uploaded here — Sync proxies / Upload originals
+                      // in the panel below are the two flows that move bytes.
+                      // See src/lib/uploadFlows.ts.
+                      await syncSessionDataToCloud(activeDate,logD,xmlD,
                         vids,
                         msg=>{
                           if(libSyncAbortRef.current)return;
@@ -1320,16 +1320,7 @@ function SSAApp(){
                             return{...p,overall:Math.round(avg)};
                           });
                         },
-                        {
-                          scope: libScope,
-                          // Per-video Supabase mirror — clips appear for
-                          // teammates as each finishes, not after the batch.
-                          onVideoSynced: makeVideoMirrorCallback({
-                            userId: libUser?.id || null,
-                            sessionDate: activeDate,
-                            syncOffsets,
-                          }),
-                        });
+                        { scope: libScope });
                       setLibSyncPhase("done");
                       setLibSyncProgress(p=>p?{...p,overall:100}:p);
                       markCloudSynced(activeDate);

@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 import { PURGE_COLUMNS, planPurge, type DeletedVideoRow } from '../../../../../../../lib/videoPurge'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 // Bunny Stream auto-generates a poster thumbnail for every uploaded video.
 // We hand it back inline in the list response (derived from the original's
@@ -243,10 +244,27 @@ export async function POST(
     sync_offset_secs: body.sync_offset_secs ?? 0,
     thumbnail_url: body.thumbnail_url ?? null,
     bytes: body.bytes ?? null,
-    bunny_stream_id: body.bunny_stream_id ?? null,
-    bunny_storage_path: body.bunny_storage_path ?? null,
     external_id: body.external_id ?? null,
     created_by_user_id: user.id,
+  }
+
+  // The two columns that say WHERE THE BYTES ARE are written only when the
+  // caller actually supplies one, and are never nulled by their absence.
+  //
+  // They used to sit in videoRow with `?? null`, and this is an UPDATE on a
+  // match: so any caller that pushed metadata without them — every tag edit,
+  // every rename, every baked sync offset — erased them. `bunny_storage_path`
+  // is the only playback source resolveLegacy() has for a row predating the
+  // proxy split, so renaming such a clip could un-play it. The rendition PATCH
+  // at /api/videos/:id/renditions has always been sparse for exactly this
+  // reason; this route was the odd one out.
+  //
+  // Clearing one is a job for a migration (0107) or for the purge path, not for
+  // an upsert that was handed no opinion about it.
+  const LOCATORS = ['bunny_stream_id', 'bunny_storage_path'] as const
+  for (const col of LOCATORS) {
+    const v = body[col]
+    if (typeof v === 'string' && v) videoRow[col] = v
   }
 
   if (existing) {
@@ -293,10 +311,7 @@ const STORAGE_REGION = process.env.BUNNY_STORAGE_REGION || 'de'
 const STREAM_KEY = process.env.BUNNY_STREAM_API_KEY
 const STREAM_LIBRARY = process.env.BUNNY_STREAM_LIBRARY_ID
 
-const storageBase = () =>
-  STORAGE_REGION === 'de'
-    ? 'https://storage.bunnycdn.com'
-    : `https://${STORAGE_REGION}.storage.bunnycdn.com`
+const storageBase = () => storageHost(STORAGE_REGION)
 
 interface PurgeReport {
   /** Objects and stream videos actually removed. */

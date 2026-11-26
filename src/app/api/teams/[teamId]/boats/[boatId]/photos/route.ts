@@ -7,6 +7,7 @@ import { getServerSupabase, getServiceSupabase } from '../../../../../../../lib/
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 import { signBunnyUrl, bunnyConfigured } from '../../../../../../../lib/bunny-signed-url'
 import { scopedPhotoPrefix, legacySessionPrefix } from '@/lib/storageKeys'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 // Serve thumbnails over the Bunny CDN (signed) instead of the slow per-request
 // Vercel image proxy — the thumb key is deterministic from the original key.
@@ -21,7 +22,7 @@ function fastThumb(bunnyOriginalPath: string | null): string | null {
 const B_KEY = process.env.BUNNY_STORAGE_API_KEY
 const B_ZONE = process.env.BUNNY_STORAGE_ZONE
 const B_REGION = process.env.BUNNY_STORAGE_REGION || 'de'
-const bBase = () => (B_REGION === 'de' ? 'https://storage.bunnycdn.com' : `https://${B_REGION}.storage.bunnycdn.com`)
+const bBase = () => storageHost(B_REGION)
 
 /** How many objects sit under a prefix. Used to report what a wipe could not touch. */
 async function countBunnyPrefix(prefix: string): Promise<number> {

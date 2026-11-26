@@ -32,6 +32,7 @@ import {
   classifyDate, canClaim, isMigratable, summarise,
   type DateAudit, type SessionClaim,
 } from '@/lib/storageAudit'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 export const maxDuration = 60
 
@@ -39,8 +40,7 @@ const API_KEY = process.env.BUNNY_STORAGE_API_KEY
 const WRITE_KEY = process.env.BUNNY_STORAGE_WRITE_KEY
 const ZONE = process.env.BUNNY_STORAGE_ZONE
 const REGION = process.env.BUNNY_STORAGE_REGION || 'de'
-const base = () =>
-  REGION === 'de' ? 'https://storage.bunnycdn.com' : `https://${REGION}.storage.bunnycdn.com`
+const base = () => storageHost(REGION)
 
 interface BunnyEntry { ObjectName: string; IsDirectory: boolean; Length?: number }
 
