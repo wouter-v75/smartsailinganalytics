@@ -48,8 +48,8 @@ import { routeGrid } from '../src/lib/routing/gridRouter'
 import { elapsedStats, twaTwsTable, tableCsv, localStartToUtc, pointOfSail, bootstrapBlocks } from '../src/lib/routing/climatology'
 import { offsetFromCoords } from '../src/lib/tzFromCoords'
 import { makePerf, isDark } from '../src/lib/routing/daylight'
-import { normaliseSailChart, parseCrossoverXml, centroid, type SailChart } from '../src/lib/sailchart/model'
-import { outline } from '../src/lib/sailchart/geometry'
+import { normaliseSailChart, parseCrossoverXml, type SailChart } from '../src/lib/sailchart/model'
+import { sailSectionHtml } from '../src/lib/routing/sailReport'
 import { sailHours, type SailHours } from '../src/lib/sailchart/assign'
 import { stepHitsLand, type LandMask } from '../src/lib/routing/land'
 import type { Env } from '../src/lib/routing/motion'
@@ -277,7 +277,7 @@ for (const m of methods) {
   elapsed  min ${dh(h(st.minSec))}  max ${dh(h(st.maxSec))}  mean ${dh(h(st.meanSec))}  median ${dh(h(st.medianSec))}  1 sigma ${dh(h(st.sdSec))}
            median 90 % CI ${dh(h(ci.median[0]))}-${dh(h(ci.median[1]))} (bootstrap over whole years)
   time     upwind ${(100 * pos.upwind).toFixed(0)} %  reaching ${(100 * pos.reach).toFixed(0)} %  downwind ${(100 * pos.downwind).toFixed(0)} %  starboard ${(100 * pos.starboard).toFixed(0)} %  in the dark ${(100 * darkShare).toFixed(0)} %
-  ${sails ? `sails    ${sails.sails.filter(x => x.hours > 0).sort((a, b) => b.hours - a.hours).map(x => `${x.name} ${(100 * x.share).toFixed(0)} %`).join(', ')}  (${(100 * sails.outsideShare).toFixed(0)} % of the time outside the chart, given to the nearest sail)\n  ` : ''}land     ${land ? (landHits.length ? `${landHits.length} route(s) touch land: ${landHits.join(', ')}` : `no route touches land (${ok.length} checked)`) : 'NOT CHECKED (no land mask)'}`)
+  ${sails ? `sails    ${sails.sails.filter(x => x.hours > 0).sort((a, b) => b.hours - a.hours).map(x => `${x.name} ${(100 * x.share).toFixed(0)} %`).join(', ')}  (${(100 * sails.outsideShare).toFixed(0)} % of the time outside the chart, counted with the sail on its VMG edge)\n  ` : ''}land     ${land ? (landHits.length ? `${landHits.length} route(s) touch land: ${landHits.join(', ')}` : `no route touches land (${ok.length} checked)`) : 'NOT CHECKED (no land mask)'}`)
 }
 fs.writeFileSync(path.join(outDir, 'elapsed.csv'), csvRows.join('\n') + '\n')
 fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 1))
@@ -469,88 +469,6 @@ ${picker}<svg viewBox="0 0 ${W} ${H.toFixed(0)}" width="100%" class="map${manyRo
 <rect x="${L}" y="8" width="${Wp}" height="${Hp.toFixed(1)}" class="sea"/>${landSvg}<g class="grat">${grat.join('')}</g>${rhumb}${lines}${repSvg}${marks}</svg>${legend}${repNote}`
 }
 
-// ── sails ───────────────────────────────────────────────────────────────────
-// The boat's crossover chart with the race's sailing time on it, then the share
-// of time per sail as bars and a table. Each route segment was charged to the
-// sail whose shape contains its TWA/TWS (sailchart/assign.ts); time outside every
-// shape went to the nearest one, and is hatched so it is never mistaken for the
-// chart's own answer.
-function sailSection(esc: (s: string) => string, pc: (f: number) => string): string {
-  const chart = sailChart!
-  const ms = summary.methods as Record<string, any>
-  const name = (m: string) => (m === 'iso' ? 'Isochrone' : 'Grid')
-  const colourOf = new Map<string, string>()
-  for (const s of chart.sails) if (!colourOf.has(s.name)) colourOf.set(s.name, s.colour)
-
-  // The chart: TWA across, TWS up, as the Sail chart tab draws it.
-  const W = 900, H = 430, L = 46, R = 14, T = 12, B = 38
-  const a0 = 30, a1 = 180, w0 = 0, w1 = 32
-  const X = (a: number) => L + ((Math.max(a0, Math.min(a1, a)) - a0) / (a1 - a0)) * (W - L - R)
-  const Y = (w: number) => H - B - ((Math.max(w0, Math.min(w1, w)) - w0) / (w1 - w0)) * (H - T - B)
-  let g = ''
-  for (let a = a0; a <= a1; a += 10) g += `<line x1="${X(a)}" y1="${T}" x2="${X(a)}" y2="${H - B}"/><text x="${X(a)}" y="${H - B + 15}" text-anchor="middle">${a}</text>`
-  for (let w = w0; w <= w1; w += 4) g += `<line x1="${L}" y1="${Y(w)}" x2="${W - R}" y2="${Y(w)}"/><text x="${L - 6}" y="${Y(w) + 4}" text-anchor="end">${w}</text>`
-  const shapes = chart.sails.filter(s => s.visible && s.points.length >= 3).map(s => {
-    const o = outline(s.points, 12, !!s.extra?.straight)
-    const d = o.map((p, k) => `${k ? 'L' : 'M'}${X(p.twa).toFixed(1)},${Y(p.tws).toFixed(1)}`).join('') + 'Z'
-    return `<path d="${d}" fill="${s.colour}" fill-opacity="${(Math.max(15, Math.min(70, s.opacity || 40)) / 100).toFixed(2)}" stroke="${s.colour}" stroke-width="1.6"${s.dashed ? ' stroke-dasharray="5 3"' : ''}><title>${esc(s.name)} (${esc(s.group)})</title></path>`
-  }).join('')
-  const labels = chart.sails.filter(s => s.visible && s.points.length >= 3).map(s => {
-    const c = s.label ?? centroid(s.points)
-    return `<text class="sl" x="${X(c.twa).toFixed(1)}" y="${(Y(c.tws) + 4).toFixed(1)}" text-anchor="middle">${esc(s.name)}</text>`
-  }).join('')
-  // Sailing time: a dot per 5° x 2 kn bin, area proportional to the hours.
-  const tm = ms[methods[0]].table
-  const hmax = Math.max(1e-9, ...tm.hours.flat())
-  let dots = ''
-  tm.hours.forEach((row: number[], r: number) => row.forEach((hh: number, c: number) => {
-    if (!(hh > 0)) return
-    const lastA = r === tm.twaEdges.length - 1, lastW = c === tm.twsEdges.length - 1
-    const ac = r === 0 ? a0 : lastA ? tm.twaEdges[r] + 5 : (tm.twaEdges[r] + tm.twaEdges[r + 1]) / 2
-    const wc = lastW ? tm.twsEdges[c] + 1 : (tm.twsEdges[c] + tm.twsEdges[c + 1]) / 2
-    const rad = 11 * Math.sqrt(hh / hmax)
-    if (rad < 0.6) return
-    dots += `<circle cx="${X(ac).toFixed(1)}" cy="${Y(wc).toFixed(1)}" r="${rad.toFixed(1)}"><title>${(100 * hh / tm.totalHours).toFixed(1)} % of sailing time</title></circle>`
-  }))
-  const svg = `<svg class="sc" viewBox="0 0 ${W} ${H}" width="100%"><g class="grat">${g}</g>${shapes}<g class="tdot">${dots}</g>${labels}
-<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">TWA °</text><text x="12" y="${(T + H - B) / 2}" text-anchor="middle" transform="rotate(-90 12 ${(T + H - B) / 2})">TWS kn at ${mast} m</text></svg>`
-
-  // Bars: one per method, the share of sailing time, the outside-chart part hatched.
-  const order = [...ms[methods[0]].sails.sails].filter((x: any) => methods.some(m => ms[m].sails.sails.find((y: any) => y.name === x.name)?.hours > 0))
-    .sort((a: any, b: any) => b.share - a.share).map((x: any) => x.name as string)
-  const smax = Math.max(1e-9, ...methods.flatMap(m => ms[m].sails.sails.map((x: any) => x.share)))
-  const BW = 560, LW = 64, rowH = 14 * methods.length + 12
-  const bars = order.map((nm, i) => {
-    const y0 = 6 + i * rowH
-    const col = colourOf.get(nm) ?? '#888'
-    return `<text class="bl" x="${LW - 8}" y="${y0 + 7 * methods.length + 4}" text-anchor="end">${esc(nm)}</text>` + methods.map((m, k) => {
-      const x = ms[m].sails.sails.find((y: any) => y.name === nm)
-      const w = (x.share / smax) * BW, wo = x.hours > 0 ? w * (x.outsideHours / x.hours) : 0
-      const y = y0 + k * 14
-      return `<rect x="${LW}" y="${y}" width="${w.toFixed(1)}" height="12" fill="${col}"${k ? ' fill-opacity=".6"' : ''}><title>${name(m)}: ${(100 * x.share).toFixed(1)} %, ${x.hours.toFixed(1)} h per race</title></rect>`
-        + (wo > 0.5 ? `<rect x="${(LW + w - wo).toFixed(1)}" y="${y}" width="${wo.toFixed(1)}" height="12" fill="url(#hatch)"/>` : '')
-        + `<text class="bv" x="${(LW + w + 6).toFixed(1)}" y="${y + 10}">${(100 * x.share).toFixed(1)} %  ·  ${x.hours.toFixed(1)} h${methods.length > 1 ? `  (${m})` : ''}</text>`
-    }).join('')
-  }).join('')
-  const barSvg = `<svg class="sb" viewBox="0 0 ${LW + BW + 200} ${order.length * rowH + 10}" width="100%"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#fff" fill-opacity=".35"/><line x1="0" y1="0" x2="0" y2="6" stroke="#000" stroke-opacity=".45" stroke-width="2.5"/></pattern></defs>${bars}</svg>`
-
-  const head = `<tr><th rowspan="2">Sail</th><th rowspan="2">Group</th>${methods.map(m => `<th colspan="4">${name(m)}</th>`).join('')}</tr><tr>${methods.map(() => '<th>h / race</th><th>% of time</th><th>outside chart</th><th>races using it</th>').join('')}</tr>`
-  const rows = order.map(nm => {
-    const x0 = ms[methods[0]].sails.sails.find((y: any) => y.name === nm)
-    return `<tr><th style="text-align:left"><span class="sw" style="background:${colourOf.get(nm) ?? '#888'}"></span>${esc(nm)}</th><td style="text-align:left">${esc(x0.group)}</td>${methods.map(m => {
-      const x = ms[m].sails.sails.find((y: any) => y.name === nm)
-      return `<td>${x.hours.toFixed(1)}</td><td>${(100 * x.share).toFixed(1)}</td><td>${x.outsideHours.toFixed(1)} h</td><td>${pc(x.usedIn)}</td>`
-    }).join('')}</tr>`
-  }).join('')
-  const tot = `<tr class="totrow"><th style="text-align:left">all</th><td></td>${methods.map(m => `<td>${ms[m].sails.totalHours.toFixed(1)}</td><td>100</td><td>${(ms[m].sails.totalHours * ms[m].sails.outsideShare).toFixed(1)} h</td><td></td>`).join('')}</tr>`
-  const out = methods.map(m => `${name(m)} ${pc(ms[m].sails.outsideShare)}`).join(', ')
-  return `<h2 id="sails">Sails</h2>
-<p>${esc(chart.fileName ?? 'Sail chart')}: ${chart.sails.filter(s => s.visible).length} shapes. Each stretch of every route is charged to the sail whose shape contains its TWA and TWS. <b>Time outside every shape (${out}) is given to the nearest sail on the chart</b> and hatched below: the chart covers ${Math.round(Math.min(...chart.sails.flatMap(s => s.points.map(p => p.twa))))}–${Math.round(Math.max(...chart.sails.flatMap(s => s.points.map(p => p.twa))))}° TWA and ${Math.min(...chart.sails.flatMap(s => s.points.map(p => p.tws))).toFixed(1)}–${Math.max(...chart.sails.flatMap(s => s.points.map(p => p.tws))).toFixed(1)} kn, so deeper or windier than that is an extrapolation, not the chart's answer.</p>
-<h3>Sail chart, with where the time was spent</h3><p class="dim">Shapes as on SSA's Boat → Sail chart tab. Dots: sailing time per 5° × 2 kn bin (${name(methods[0]).toLowerCase()} routes), area proportional to the hours; hover for the share.</p>${svg}
-<h3>Share of sailing time per sail</h3><p class="dim">${methods.length > 1 ? 'Top bar isochrone, bottom (lighter) grid. ' : ''}Hatched: the part that fell outside the chart and went to the nearest sail.</p>${barSvg}
-<table>${head}${rows}${tot}</table><p class="dim">h / race: mean hours per race carrying that sail. Races using it: the share of the ${ms[methods[0]].elapsedHours.n} routed races that carried it for an hour or more.</p>`
-}
-
 // ── report ──────────────────────────────────────────────────────────────────
 function report(): string {
   const esc = (s: string) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
@@ -622,17 +540,16 @@ function report(): string {
     }).join('')
     return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — % of sailing time (mean ${dh(t.totalHours)} per race)</h3><p class="dim">Rows: TWS at ${mast} m in ${twsStep} kn bands, rising up the page. Columns: |TWA| in ${twaStep}° bins, labelled by their lower edge (30 = 30–${30 + twaStep}°). Red is little time, green the most.</p><div class="scroll"><table class="heat">${head}${rows}<tr class="totrow"><th>all</th>${colTot}<td class="tot">100</td></tr></table></div>`
   }
-  const sailSec = sailChart ? sailSection(esc, pc) : ''
+  const sailSec = sailChart ? sailSectionHtml(sailChart, methods.map(m => ({ key: m, label: m === 'iso' ? 'Isochrone' : 'Grid', sails: ms[m].sails, table: ms[m].table })),
+    { mast, races: ms[methods[0]].elapsedHours.n }) : ''
   const maps = methods.map(routeMap).join('')
   const conv = convergence ? `<p class="dim">Convergence (${convergence.year}): isochrone at half step, half sector and a 2.5° fan changed elapsed time by ${convergence.isoChangePct.toFixed(2)} %; the grid at half cell and 48 directions differs from the isochrone by ${convergence.gridFineVsIsoPct.toFixed(2)} %.</p>` : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(course.name ?? 'Routing climatology')}</title>
 <style>body{font:14px/1.45 system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 16px;color:#111}
 table{border-collapse:collapse;margin:8px 0 20px}td,th{border:1px solid #ddd;padding:3px 7px;text-align:right;font-variant-numeric:tabular-nums}
 th{background:#f6f6f6}.heat td,.heat th{min-width:22px;font-size:10.5px;padding:2px 3px;white-space:nowrap}.heat{margin-top:2px}.heat .tot{font-weight:600}.heat .totrow td,.heat .totrow th{border-top:2px solid #888}.scroll{overflow-x:auto}.dim{color:#666}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
-.sc .grat line{stroke:#ddd;stroke-width:.6}.sc text{font-size:11px;fill:#555}.sc .sl{font-size:12px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:3px}.sc .tdot{fill:#111;fill-opacity:.42}.sb text{font-size:11px;fill:#333}.sb .bl{font-size:12px;font-weight:600}.sw{display:inline-block;width:10px;height:10px;margin-right:6px;border-radius:2px;vertical-align:-1px}
 .map .sea{fill:#eef4f8}.map .grat line{stroke:#c9d6df;stroke-width:.6}.map text{font-size:11px;fill:#555}.map .lbl{font-size:12px;fill:#111}.map .mark{fill:#111}.map .rb{display:none}.map.showbarbs .rb{display:inline}.map .rb .barb{stroke-width:1.1}.map .barb{stroke:#b3121b;stroke-width:1.8;stroke-linecap:round}.legend{margin:4px 0}.map .pennant{fill:#b3121b}.map .halo{stroke:#fff;stroke-opacity:.8}
 @media (prefers-color-scheme:dark){body{background:#111;color:#eee}th{background:#222}td,th{border-color:#333}.dim{color:#999}
-.sc .grat line{stroke:#333}.sc text,.sb text{fill:#bbb}.sc .sl{fill:#eee;stroke:#111}.sc .tdot{fill:#eee;fill-opacity:.5}
 .map .sea{fill:#16202a}.map .land{fill:#3a3d40}.map .grat line{stroke:#2c3a46}.map text{fill:#aaa}.map .lbl{fill:#eee}.map .mark{fill:#eee}.map .ink{stroke:#ddd}.map .barb{stroke:#ff8a7a}.map .pennant{fill:#ff8a7a}.map .halo{stroke:#000}}</style>
 <script>function pickYear(sel){var svg=sel.parentNode.nextElementSibling,y=sel.value;svg.querySelectorAll('.rt').forEach(function(g){g.style.display=!y||g.getAttribute('data-year')===y?'':'none'});svg.classList.toggle('showbarbs',!!y||svg.getAttribute('data-many')!=='1')}</script></head><body>
 <h1>${esc(course.name ?? 'Routing climatology')}</h1>

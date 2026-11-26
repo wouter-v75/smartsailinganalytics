@@ -18,11 +18,22 @@ describe('makeSailPicker', () => {
     expect(pick(60, 12)).toEqual({ name: 'J2', group: 'Headsails', inside: true })
     expect(pick(-135, 15)).toEqual({ name: 'A2', group: 'Spinnakers', inside: true })
   })
-  it('gives time outside the chart to the nearest sail, and says so', () => {
-    // deeper than the chart: the kite that is at 148° for that wind
+  it('deeper than the downwind VMG edge is the sail on that edge at the same TWS', () => {
     expect(pick(160, 15)).toMatchObject({ name: 'A2', inside: false })
-    expect(pick(160, 6)).toMatchObject({ name: 'A1', inside: false })
-    expect(pick(60, 2)).toMatchObject({ name: 'J2', inside: false })
+    expect(pick(175, 6)).toMatchObject({ name: 'A1', inside: false })
+  })
+  it('tighter than the upwind edge is the sail on the upwind edge', () => {
+    expect(pick(30, 12)).toMatchObject({ name: 'J2', inside: false })
+    // at 6 kn the chart's tightest sail is A1 (J2 starts at 8 kn)
+    expect(pick(30, 6)).toMatchObject({ name: 'A1', inside: false })
+  })
+  it('a TWS the chart does not reach is brought to its edge first', () => {
+    expect(pick(60, 30)).toMatchObject({ name: 'J2', inside: false })
+    expect(pick(160, 30)).toMatchObject({ name: 'A2', inside: false })
+    expect(pick(160, 1)).toMatchObject({ name: 'A1', inside: false })
+  })
+  it('a hole inside the chart goes to the nearest sail', () => {
+    expect(pick(115, 15)).toMatchObject({ name: 'J2', inside: false })   // 110-120° gap, nearer J2's edge at 110
   })
   it('a chart with no shapes picks nothing', () => {
     expect(makeSailPicker({ ...chart, sails: [] })).toBeNull()
