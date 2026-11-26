@@ -280,7 +280,8 @@ const main = async () => {
 
   // ── 3. The legacy third copy ──────────────────────────────────────────────
   // A clip can be in Stream THREE times. `bunny_stream_id` is the old
-  // syncSessionToCloud TUS upload; `bunny_proxy_stream_id` and
+  // session-sync TUS upload, removed from the app in Nov 2026 (see
+  // src/lib/uploadFlows.ts); `bunny_proxy_stream_id` and
   // `bunny_original_stream_id` are the proxy/original pair that replaced it.
   // 105 rows carry all three, distinct — so the legacy copy is a full-size
   // duplicate of the original, and `url/route.ts` never reaches it:

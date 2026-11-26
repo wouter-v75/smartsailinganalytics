@@ -1,7 +1,7 @@
 // Does the ACTIVE membership own this day?
 //
-// syncSessionToCloud files everything it is given under whichever team/boat is
-// active right now, but the local stores are keyed by DATE alone — so `activeDate`
+// A cloud push files everything it is given under whichever team/boat is active
+// right now, but the local stores are keyed by DATE alone — so `activeDate`
 // can perfectly well be a session belonging to a different boat. Pushing then
 // silently re-files e.g. old Northstar 72 footage and its log against Northstar 76,
 // and nothing in the result says so.
