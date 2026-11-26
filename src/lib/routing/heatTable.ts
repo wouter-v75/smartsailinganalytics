@@ -25,7 +25,7 @@ export function dh(hours: number): string {
 }
 
 /** `folded`: the share of time moved onto the VMG targets (foldToTargets), when it was. */
-export function heatTableHtml(t: TwaTwsTable, o: { label: string; mast: number; folded?: number }): string {
+export function heatTableHtml(t: TwaTwsTable, o: { label: string; mast: number; folded?: number; targetsFrom?: string }): string {
   let max = 0
   for (const row of t.hours) for (const v of row) if (v > max) max = v
   const twsStep = t.twsEdges[1] - t.twsEdges[0], twaStep = t.twaEdges[2] - t.twaEdges[1]
@@ -50,7 +50,7 @@ export function heatTableHtml(t: TwaTwsTable, o: { label: string; mast: number; 
     return `<td class="tot">${pct >= 0.05 ? pct.toFixed(1) : ''}</td>`
   }).join('')
   const fold = o.folded != null
-    ? ` Time deeper than the downwind VMG target, or tighter than the upwind one, is counted in the box of that TWS row's target angle (${(100 * o.folded).toFixed(0)} % of the time moved).`
+    ? ` Time deeper than the downwind VMG target, or tighter than the upwind one, is counted in the box of that TWS row's target angle (${o.targetsFrom ? `${o.targetsFrom}; ` : ''}${(100 * o.folded).toFixed(0)} % of the time moved).`
     : ''
   return `<h3>${o.label} — % of sailing time (mean ${dh(t.totalHours)} per race)</h3><p class="dim">Rows: TWS at ${o.mast} m in ${twsStep} kn bands, rising up the page. Columns: |TWA| in ${twaStep}° bins, labelled by their lower edge (30 = 30–${30 + twaStep}°). Red is little time, green the most.${fold}</p><div class="scroll"><table class="heat">${head}${rows}<tr class="totrow"><th>all</th>${colTot}<td class="tot">100</td></tr></table></div>`
 }

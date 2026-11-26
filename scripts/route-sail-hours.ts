@@ -8,7 +8,9 @@
 //
 // --polar (the study's own) gives the VMG targets: time deeper than the downwind
 // target, or tighter than the upwind, is counted in the target's box of each TWS
-// row (foldToTargets) — in the redrawn time tables AND before the sails are read.
+// row (foldToTargets) — in the redrawn time tables AND before the sails are read,
+// where each part of a bin is also clamped to the target at its own TWS. The
+// targets are the polar file's declared ones, as the Sail chart tab draws them.
 //
 // --sailchart is SSA's chart JSON (Boat → Sail chart) or Expedition XML.
 // --report is the report to add the section to (default report.html in --results);
@@ -24,7 +26,8 @@ import path from 'node:path'
 import { normaliseSailChart, parseCrossoverXml } from '../src/lib/sailchart/model'
 import { sailHoursFromTable } from '../src/lib/sailchart/assign'
 import { foldToTargets, tableCsv } from '../src/lib/routing/climatology'
-import { parseRoutingPolar } from '../src/lib/routing/polar'
+import { parsePolarText, polarFromData } from '../src/lib/polarFile'
+import { polarVMGTarget } from '../src/lib/polarCalc'
 import { heatTableHtml } from '../src/lib/routing/heatTable'
 import { sailSectionHtml, type SailMethod } from '../src/lib/routing/sailReport'
 
@@ -41,7 +44,19 @@ const text = fs.readFileSync(chartFile, 'utf8')
 const chart = text.trimStart().startsWith('<') ? parseCrossoverXml(text, path.basename(chartFile)) : normaliseSailChart(JSON.parse(text))
 const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'))
 const mast = summary.polar?.refHeightM ?? 10
-const polar = parseRoutingPolar(fs.readFileSync(home(arg('polar')!), 'utf8'), { refHeightM: mast })
+// The targets are the POLAR'S OWN: an Expedition polar tabulates its beat and run
+// VMG angles in every row, and read with straight lines between points (as the
+// Boat → Targets and Sail chart tabs do) the best VMG is exactly those angles.
+// The routing polar's PCHIP curve is flat AT a tabulated point, so its optimum
+// lands ~7° deeper downwind (153° against 145.7° at 16 kn on Ryujin's) — the
+// chart is drawn against the declared targets, so the study is read against them.
+const targetPolar = polarFromData({ entries: parsePolarText(fs.readFileSync(home(arg('polar')!), 'utf8')) })
+if (!targetPolar) throw new Error(`--polar ${arg('polar')}: not a polar`)
+const targets = (w: number) => { const t = polarVMGTarget(targetPolar, w); return { upTwa: t.up, dnTwa: t.down } }
+const clampToTargets = (twa: number, w: number) => {
+  const t = targets(w)
+  return t.upTwa > 0 && t.dnTwa > t.upTwa ? Math.max(t.upTwa, Math.min(t.dnTwa, Math.abs(twa))) : Math.abs(twa)
+}
 if (summary.polar?.file && path.basename(arg('polar')!) !== summary.polar.file) {
   console.warn(`note: the study was routed with ${summary.polar.file}, the targets here come from ${path.basename(arg('polar')!)}`)
 }
@@ -51,11 +66,11 @@ const ms: SailMethod[] = []
 for (const key of Object.keys(summary.methods)) {
   const m = summary.methods[key]
   const label = key === 'iso' ? 'Isochrone' : key === 'grid' ? 'Grid' : key
-  const fold = foldToTargets(m.table, w => polar.vmg(w))
+  const fold = foldToTargets(m.table, targets)
   fs.writeFileSync(path.join(dir, `table-${key}-targets-pct.csv`), tableCsv(fold.table, 'pct') + '\n')
-  heats.push(heatTableHtml(fold.table, { label, mast, folded: fold.movedShare }))
+  heats.push(heatTableHtml(fold.table, { label, mast, folded: fold.movedShare, targetsFrom: "the polar's own tabulated targets, as the Sail chart tab draws them" }))
   console.log(`\n${label}: ${(100 * fold.movedShare).toFixed(1)} % of the time was past a VMG target and is counted at the target`)
-  const sails = sailHoursFromTable(chart, fold.table)
+  const sails = sailHoursFromTable(chart, fold.table, 6, clampToTargets)
   if (!sails) throw new Error(`${chartFile}: no sail shapes in it`)
   ms.push({ key, label, sails, table: fold.table })
   const order = [...sails.sails].sort((a, b) => b.hours - a.hours)

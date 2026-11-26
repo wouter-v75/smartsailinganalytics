@@ -9,7 +9,7 @@
 // left as a hole. A chart's edges are the VMG angles: deeper than its downwind
 // edge is the sail ON that edge at the same TWS (the box the downwind VMG falls
 // in), tighter than its upwind edge the sail on the upwind edge. A TWS the chart
-// does not reach is first brought to its lowest / highest TWS. Only a hole INSIDE
+// does not reach takes the sail at the nearest TWS that covers the same TWA. Only a hole INSIDE
 // the chart's span at that TWS goes to the nearest sail (in 5° x 2 kn cells).
 // Every such pick is flagged, so a report can say how much was extrapolated.
 // Where two shapes overlap (a converted nav table leaves a sliver at the seams)
@@ -54,6 +54,16 @@ export function makeSailPicker(chart: SailChart): ((twa: number, tws: number) =>
     const p: ChartPoint = { twa: Math.abs(twaSigned), tws }
     const s0 = at(p)
     if (s0) return { name: s0.name, group: s0.group, inside: true }
+    // A TWS the chart does not reach: the sail at the nearest TWS that covers this
+    // TWA (a 3 kn breeze at 45° is the light-air jib, not whichever shape happens
+    // to dip lowest), searched up to 4 kn into the chart.
+    if (tws < twsLo || tws > twsHi) {
+      const from = tws < twsLo ? twsLo : twsHi, dir = tws < twsLo ? 1 : -1
+      for (let k = 0; k <= 40; k++) {
+        const s = at({ twa: p.twa, tws: from + dir * k * 0.1 })
+        if (s) return { name: s.name, group: s.group, inside: false }
+      }
+    }
     // Beyond the downwind / upwind VMG edge: the sail on that edge at this TWS.
     const w = Math.max(twsLo + 0.05, Math.min(twsHi - 0.05, tws))
     const s1 = at({ twa: p.twa, tws: w })
@@ -145,7 +155,11 @@ export interface HoursTable { twaEdges: number[]; twsEdges: number[]; hours: num
  * last, TWS over the last) are taken as 5° / 4 kn wide. No `usedIn`: that needs
  * the individual races, which the table has already summed away.
  */
-export function sailHoursFromTable(chart: SailChart, t: HoursTable, sub = 6): SailHours | null {
+export function sailHoursFromTable(
+  chart: SailChart, t: HoursTable, sub = 6,
+  /** Optional: the TWA to read the chart at, e.g. clamped to the VMG targets at that TWS. */
+  twaAt?: (twa: number, tws: number) => number,
+): SailHours | null {
   const pick = makeSailPicker(chart)
   if (!pick) return null
   const acc = new Map<string, { name: string; group: string; hours: number; outsideHours: number }>()
@@ -160,10 +174,11 @@ export function sailHoursFromTable(chart: SailChart, t: HoursTable, sub = 6): Sa
     const w0 = W[c], w1 = c === W.length - 1 ? W[c] + 4 : W[c + 1]
     const hh = h / (sub * sub)
     for (let i = 0; i < sub; i++) for (let j = 0; j < sub; j++) {
-      const p = pick(a0 + ((i + 0.5) / sub) * (a1 - a0), w0 + ((j + 0.5) / sub) * (w1 - w0))
-      const a = acc.get(p.name)!
-      a.hours += hh; total += hh
-      if (!p.inside) { a.outsideHours += hh; outside += hh }
+      const a = a0 + ((i + 0.5) / sub) * (a1 - a0), w = w0 + ((j + 0.5) / sub) * (w1 - w0)
+      const p = pick(twaAt ? twaAt(a, w) : a, w)
+      const x = acc.get(p.name)!
+      x.hours += hh; total += hh
+      if (!p.inside) { x.outsideHours += hh; outside += hh }
     }
   }
   return {

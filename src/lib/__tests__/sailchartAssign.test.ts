@@ -31,6 +31,8 @@ describe('makeSailPicker', () => {
     expect(pick(60, 30)).toMatchObject({ name: 'J2', inside: false })
     expect(pick(160, 30)).toMatchObject({ name: 'A2', inside: false })
     expect(pick(160, 1)).toMatchObject({ name: 'A1', inside: false })
+    // below the chart at an angle only a higher shape covers: that shape, not the lowest one
+    expect(pick(130, 25)).toMatchObject({ name: 'A2', inside: false })
   })
   it('a hole inside the chart goes to the nearest sail', () => {
     expect(pick(115, 15)).toMatchObject({ name: 'J2', inside: false })   // 110-120° gap, nearer J2's edge at 110
