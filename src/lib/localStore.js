@@ -433,6 +433,35 @@ export async function updateVideoBlobAndDuration(id, blob, durationSec, newStart
 // notes, the debrief reel — names it by its Supabase id, while this store is
 // keyed by the id this device gave it. Lose the link and the lookup misses, and
 // the player quietly shows whatever was selected before.
+// ── Mark a video's PROXY as uploaded ────────────────────────────────────────
+// The 360/720 copy the team watches on a phone. Mirrors
+// markVideoOriginalUploaded, and is deliberately a SEPARATE flag: a clip with a
+// proxy is watchable, and a clip with an original is archived, and the two
+// happen at different times by design — proxy as soon as the clip exists, full
+// resolution later, on a button.
+//
+// Without this the watch-folder uploader had nowhere to record a proxy, so it
+// recorded an ORIGINAL instead — which is why 154 clips:day rows carry an
+// original and not one of them carries a proxy.
+export async function markVideoProxyUploaded(id, { proxyPath = null, proxyStreamId = null, cloudId = null } = {}) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "videos", id);
+    if (!entry) return false;
+    // ISO, matching the cloud shape and the three other writers of this
+    // field (useCloudSync, SSAApp's single-clip patch, cloud-videos). A number
+    // parses too, but one field with two types is how a reader comes to be
+    // written against whichever it happened to see first.
+    entry.proxyUploadedAt = new Date().toISOString();
+    entry.proxyPath       = proxyPath;
+    entry.proxyStreamId   = proxyStreamId;
+    entry.hasProxy        = true;
+    if (cloudId) entry.cloudId = cloudId;
+    await idbPut(db, "videos", entry);
+    return true;
+  } catch { return false; }
+}
+
 export async function markVideoOriginalUploaded(id, { originalPath = null, originalStreamId = null, cloudId = null } = {}) {
   try {
     const db    = await openDb();

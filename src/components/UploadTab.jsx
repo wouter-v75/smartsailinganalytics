@@ -7,7 +7,7 @@ import { saveLogDataCloud, saveXmlDataCloud, sessionSyncBlocker } from '../lib/c
 import { mergeTagListCloud } from '../lib/cloud-tag-list';
 import { ensureCloudVideoId, makeVideoMirrorCallback } from '../lib/cloud-videos';
 import { reduceLogForCloud } from '../lib/cloudLogReduce';
-import { computeAutoTags, deleteSsaPhases, getLogData, getSessions, getSessionsForMembership, getVideoBlob, getVideoCloudFlags, getXmlData, loadSsaPhases, markVideoOriginalUploaded, mergeTagList, saveLogData, saveSsaPhases, saveVideo, saveXmlData, venueTodayIso as TODAY } from '../lib/localStore';
+import { computeAutoTags, deleteSsaPhases, getLogData, getSessions, getSessionsForMembership, getVideoBlob, getVideoCloudFlags, getXmlData, loadSsaPhases, markVideoProxyUploaded, mergeTagList, saveLogData, saveSsaPhases, saveVideo, saveXmlData, venueTodayIso as TODAY } from '../lib/localStore';
 import { parseLog } from '../lib/logParse';
 import { isSubSecondLog, lidarSailsIn, logRateHz, thinToOneHz } from '../lib/logResolution';
 import { uploadSessionStats } from '../lib/phaseStatsUpload';
@@ -20,7 +20,7 @@ import { daySyncRefusal } from '../lib/syncBoatGuard';
 import { buildDayTimeline } from '../lib/timeline/buildNodes';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { sortForUpload } from '../lib/uploadOrder';
-import { uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
+import { syncProxyForVideo } from '../lib/video-rendition-sync';
 import { enrichVideo } from '../lib/videoEnrich';
 import { clipTimestampSettled, extractVideoCreationTime, probeVideo, resolveStartUtc } from '../lib/videoProbe';
 import { canWatchFolders, collectNewClips, ensureFolderPermission } from '../lib/watchFolder';
@@ -509,10 +509,31 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         const blob = await getVideoBlob(next.id);
         if (!blob) throw new Error('no video data on this device');
 
-        addLog(`↑ ${label} — uploading…`);
+        addLog(`↑ ${label} — uploading the 720p copy…`);
         setWatchProgress({ label, pct: 0, message: 'starting…' });
-        const res = await uploadOriginalStorageFirst({
-          videoId: cloudId, sessionDate, scope: await currentStorageScope(), source: blob, title: label,
+        // THE PROXY, not the original. This is the fast path: the whole point of
+        // the watch folder is that the team sees the day's racing on their
+        // phones while it is still the day, and a proxy is 360p + 720p against
+        // the original's full ladder.
+        //
+        // It used to call uploadOriginalStorageFirst, which is why 154 clips:day
+        // rows carry an original and NOT ONE carries a proxy — the slow path was
+        // the automatic one and the fast path was a button nobody pressed.
+        //
+        // No transcode is spent here in practice: clips:day already writes 720p
+        // (measured mean 6.10 Mbps), so shouldSkipProxy passes the file straight
+        // through and the same bytes are uploaded — they are simply registered
+        // as the copy the team watches. Full resolution is a separate, later,
+        // deliberate action: clips:day --full-res plus the Upload originals
+        // button.
+        const res = await syncProxyForVideo({
+          videoId: cloudId, sessionDate, scope: await currentStorageScope(), source: blob,
+          // registerAs is load-bearing. clips:day output is ALREADY 720p, so no
+          // transcode is needed and the blob is the source — and left to decide
+          // for itself syncProxyForVideo would then file it as an ORIGINAL,
+          // which is how 154 of these came to claim a full-resolution copy they
+          // do not have. The clip's real original is the 4K still on the card.
+          registerAs: 'proxy',
           onProgress: (pr) => setWatchProgress({
             label,
             pct: Math.max(0, Math.min(1, pr.pct || 0)),
@@ -533,13 +554,16 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         // path has always recorded it; this one did not.
         const mark = {
           cloudId,
-          originalUploadedAt: Date.now(),
-          originalPath: res.originalPath || null,
-          originalStreamId: res.streamId || null,
+          hasProxy: true,
+          proxyUploadedAt: new Date().toISOString(),
+          proxyPath: res.proxyPath || null,
+          proxyStreamId: res.proxyStreamId || null,
         };
-        await markVideoOriginalUploaded(next.id, mark);
+        await markVideoProxyUploaded(next.id, {
+          cloudId, proxyPath: mark.proxyPath, proxyStreamId: mark.proxyStreamId,
+        });
         setSavedVids(p => p.map(v => v.id === next.id ? { ...v, ...mark } : v));
-        addLog(`✓ ${label} uploaded — watchable now`);
+        addLog(`✓ ${label} — 720p is up, the team can watch it now`);
         setWatchUploaded(n => n + 1);
       } catch (e) {
         addLog(`✕ ${label}: auto-upload failed — ${e?.message || e}. Upload it by hand when convenient.`);

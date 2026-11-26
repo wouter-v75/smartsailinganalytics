@@ -270,14 +270,39 @@ export async function syncProxyForVideo({
   scope,
   source,
   proxyBlobIfAvailable,
+  registerAs = 'auto',
   onProgress,
   signal,
   retryBaseMs,
-}: BaseArgs & { proxyBlobIfAvailable?: Blob | null }): Promise<{
+}: BaseArgs & {
+  proxyBlobIfAvailable?: Blob | null
+  /**
+   * Which column this upload belongs in when NO transcode was needed.
+   *
+   * 'auto' (the default, and what every existing caller gets) keeps the old
+   * rule: an untouched file is the source, so it is recorded as the ORIGINAL.
+   *
+   * 'proxy' overrides that, and the watch folder passes it. The rule is right
+   * for a clip imported raw, and wrong for the one workflow that matters most:
+   * clips:day has ALREADY cut and encoded the day's racing to 720p, so the file
+   * the watcher uploads is a review copy by construction — the full-resolution
+   * original is the 4K still sitting on the card. Recording it as an "original"
+   * made has_original claim something untrue AND left has_proxy false, which is
+   * why 154 clips:day rows carry an original and not one carries a proxy.
+   *
+   * Whether a transcode happened is a fact about the ENCODE. What column the
+   * file belongs in is a fact about the WORKFLOW, and only the caller knows it.
+   */
+  registerAs?: 'auto' | 'proxy'
+}): Promise<{
   ok: boolean
   proxyStreamId?: string
   proxyBytes?: number
   proxyBlob?: Blob
+  /** Storage key the rendition landed on — the caller records it locally. */
+  proxyPath?: string
+  /** Uploaded and playable, but the adaptive encode could not be queued. */
+  streamError?: string
   error?: string
 }> {
   const emit = (p: RenditionProgress) => onProgress?.(p)
@@ -330,13 +355,17 @@ export async function syncProxyForVideo({
     // until the transcode finished and made it the one path that never got the
     // storage-first change. Both paths share putAndFetch now.
     //
-    // WHICH columns: if step 1 skipped the transcode, the blob IS the source,
-    // so it is recorded as the ORIGINAL. Calling an untouched file a "proxy"
-    // would make has_original mean nothing.
+    // WHICH COLUMN. If a transcode produced the blob it is unambiguously a
+    // proxy. If it did not, the blob IS the source — and then only the caller
+    // knows whether that source is the clip's full resolution (register it as
+    // the original) or a review copy something upstream already made (register
+    // it as the proxy). See `registerAs` above.
     const asIs = proxyBlob === source
+    const kind: 'original' | 'proxy' =
+      !asIs || registerAs === 'proxy' ? 'proxy' : 'original'
     const r = await putAndFetch({
       videoId, sessionDate, scope, blob: proxyBlob, title: `v_${videoId}`,
-      kind: asIs ? 'original' : 'proxy', onProgress, signal, retryBaseMs,
+      kind, onProgress, signal, retryBaseMs,
     })
     if (!r.ok) throw new Error(r.error || 'upload failed')
     return {
@@ -344,6 +373,8 @@ export async function syncProxyForVideo({
       proxyStreamId: r.streamId,
       proxyBytes: proxyBlob.size,
       proxyBlob,
+      proxyPath: r.path,
+      streamError: r.streamError,
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
