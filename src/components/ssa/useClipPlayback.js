@@ -43,7 +43,21 @@ export function useClipPlayback({
         if (attempt) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2500));
         try {
           if (v.hasProxy || v.hasOriginal) {
-            const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=${isMobile ? 'proxy' : 'auto'}`, { cache: 'no-store', signal: bounded() });
+            // Mobile asks for the ORIGINAL too, not just the proxy. Its 1080p
+            // rung is the whole reason the full-resolution copy goes up in the
+            // evening, and a phone was pinned to the 720p proxy so it could
+            // never see it. hlsOnly is what makes that safe: it demotes the
+            // original's single-bitrate Storage MP4 — a 4K card file at one
+            // bitrate — below the proxy, while still leaving it as a floor for
+            // the clips that have an original and no proxy. See
+            // lib/renditionOrder.
+            //
+            // The quality choice itself is the player's and is already right:
+            // hls.js caps the level to the element's size x devicePixelRatio
+            // and re-checks on resize, so a small inline player stays low and
+            // fullscreen unlocks 1080p; iPhones get hlsMaster's copy with a
+            // light rung first and adapt up.
+            const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=auto${isMobile ? '&hlsOnly=1' : ''}`, { cache: 'no-store', signal: bounded() });
             if (res.ok) {
               const j = await res.json();
               // start_url: the iPhone's start-light playlist (see lib/hlsMaster); its
@@ -139,7 +153,9 @@ export function useClipPlayback({
       const updates={};
       await Promise.all(procs.map(async v=>{
         try{
-          const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
+          // Same as the resolver above — mobile may have HD, with the raw
+          // original MP4 demoted below the proxy rather than removed.
+          const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=auto${isMobile?'&hlsOnly=1':''}`);
           if(res.ok){
             const j=await res.json();
             const exp=j?.expires_at||j?.start_expires_at||null;

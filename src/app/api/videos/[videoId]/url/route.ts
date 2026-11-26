@@ -13,10 +13,17 @@
 //   kind: 'mp4' — a short-lived signed Bunny Storage URL (the proxy, or a
 //                 legacy original / pre-migration row).
 //
-// Selection rule:
-//   prefer=original / auto : original (Stream HLS if encoded, else legacy
-//                            Storage original) → else proxy → else legacy.
-//   prefer=proxy           : proxy → else original → else legacy.
+// Selection rule — the order lives in lib/renditionOrder.ts, with a test:
+//   prefer=original / auto : original HLS → original MP4 → proxy → legacy.
+//   prefer=proxy           : proxy → original HLS → original MP4 → legacy.
+//   + hlsOnly=1            : original HLS → proxy → original MP4 → legacy.
+//
+// hlsOnly is what mobile sends. The original is worth asking a phone's data
+// for because of its 1080p rung, which exists only in the Stream ladder; its
+// raw Storage MP4 is a 4K card file at a single bitrate, so that form is
+// demoted below the proxy. Demoted, not removed — the ~370 rows that carry an
+// original and NO proxy are clips:day 720p cuts, and refusing them a phone
+// would un-play clips that play fine.
 //
 // While a freshly-uploaded original is still encoding on Bunny's side, the
 // original isn't playable yet, so the request transparently falls back to the
@@ -29,8 +36,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase, getServiceSupabase } from '../../../../../lib/supabase/server'
 import { bunnyConfigured, signBunnyUrl } from '../../../../../lib/bunny-signed-url'
 import { masterPath, masterSecret } from '../../../../../lib/hlsMaster'
+import { renditionOrder, type Prefer, type RenditionStep } from '../../../../../lib/renditionOrder'
 
-type Prefer = 'original' | 'proxy' | 'auto'
 type Served = 'original' | 'proxy' | 'legacy'
 interface Resolved {
   url: string
@@ -53,7 +60,8 @@ const CDN_HOST = process.env.BUNNY_CDN_HOSTNAME || ''
 // clip's status could be written onto another clip's row.
 //
 // Bounded at 2.5 s. This call is most of a phone's first load; when Bunny is
-// slow the caller falls back to the signed Storage MP4, which plays at once.
+// slow the caller falls on to the next form in the order — for a phone the
+// 720p proxy — which plays at once.
 async function streamHls(guid: string): Promise<{ url: string | null; status: number | null }> {
   if (!STREAM_KEY || !LIBRARY_ID || !CDN_HOST) return { url: null, status: null }
   try {
@@ -93,6 +101,11 @@ export async function GET(
     preferRaw === 'original' ? 'original'
     : preferRaw === 'proxy'   ? 'proxy'
     : 'auto'
+  // The caller can only make good use of the original as an adaptive ladder, so
+  // demote the single-bitrate original MP4 below the proxy. Mobile sets it: the
+  // original's 1080p rung is the reason to ask for the original at all, and its
+  // raw MP4 is a 4K card file at one bitrate. See lib/renditionOrder.
+  const hlsOnly = req.nextUrl.searchParams.get('hlsOnly') === '1'
 
   // RLS-gated SELECT — returns null if user can't read this row.
   const { data: v, error } = await ssr
@@ -110,25 +123,32 @@ export async function GET(
   // What Bunny said about the original during THIS request (see streamHls).
   let originalStatus: number | null = null
 
-  const resolveOriginal = async (): Promise<Resolved | null> => {
-    // Phase 2/3 — original lives in Bunny Stream as adaptive HLS.
-    if (v.bunny_original_stream_id) {
-      // Fast path, as the proxy already had: the row says this encode finished,
-      // so skip the Bunny round trip.
-      if (v.original_stream_status === 4 && CDN_HOST) {
-        return {
-          url: `https://${CDN_HOST}/${v.bunny_original_stream_id}/playlist.m3u8`,
-          kind: 'hls',
-          served: 'original',
-          expires: null,
-        }
+  // The original as an ADAPTIVE LADDER. The only form carrying a 1080p rung —
+  // the evening TUS upload asks for FULL_LADDER — so it is the only one worth
+  // reaching for when a client wants HD.
+  const resolveOriginalHls = async (): Promise<Resolved | null> => {
+    if (!v.bunny_original_stream_id) return null
+    // Fast path, as the proxy already had: the row says this encode finished,
+    // so skip the Bunny round trip.
+    if (v.original_stream_status === 4 && CDN_HOST) {
+      return {
+        url: `https://${CDN_HOST}/${v.bunny_original_stream_id}/playlist.m3u8`,
+        kind: 'hls',
+        served: 'original',
+        expires: null,
       }
-      const s = await streamHls(v.bunny_original_stream_id)
-      originalStatus = s.status
-      if (s.url) return { url: s.url, kind: 'hls', served: 'original', expires: null }
-      // Stream video exists but hasn't finished encoding — not playable yet.
     }
-    // Legacy — original as a signed Bunny Storage MP4.
+    const s = await streamHls(v.bunny_original_stream_id)
+    originalStatus = s.status
+    // Stream video exists but hasn't finished encoding — not playable yet.
+    return s.url ? { url: s.url, kind: 'hls', served: 'original', expires: null } : null
+  }
+
+  // The original as ONE signed Storage MP4, no ABR. For a clips:day cut that is
+  // a 720p file; for 4K card footage it is gigabytes at a single bitrate, which
+  // is why `hlsOnly` moves it below the proxy rather than serving it to a phone
+  // ahead of one.
+  const resolveOriginalMp4 = (): Resolved | null => {
     if (v.has_original && v.bunny_original_path) {
       const signed = signBunnyUrl({ path: v.bunny_original_path })
       if (signed) {
@@ -186,12 +206,18 @@ export async function GET(
     return null
   }
 
+  // One ordered walk instead of three `||` chains. Each form is tried at most
+  // once, so the Bunny round trip in resolveOriginalHls cannot happen twice.
+  const steps: Record<RenditionStep, () => Promise<Resolved | null> | Resolved | null> = {
+    originalHls: resolveOriginalHls,
+    originalMp4: resolveOriginalMp4,
+    proxy: resolveProxy,
+    legacy: resolveLegacy,
+  }
   let result: Resolved | null = null
-  if (prefer === 'proxy') {
-    result = (await resolveProxy()) || (await resolveOriginal()) || resolveLegacy()
-  } else {
-    // 'original' and 'auto' both prefer the original first.
-    result = (await resolveOriginal()) || (await resolveProxy()) || resolveLegacy()
+  for (const step of renditionOrder(prefer, hlsOnly)) {
+    result = await steps[step]()
+    if (result) break
   }
 
   // Bunny Stream auto-generates a poster thumbnail for every uploaded video.
