@@ -39,6 +39,19 @@ const outPath = outFlag > -1 ? args[outFlag + 1] : inPath.replace(/\.md$/, '.pdf
 
 // ── Markdown → HTML ──────────────────────────────────────────────────────────
 
+// A local SVG in an ```html block is INLINED, not linked: Chrome renders the
+// page from a temp file, where a relative src points nowhere, and a figure
+// that silently drops out of a PDF is worse than one that fails loudly.
+const mdDir = path.dirname(path.resolve(inPath))
+function inlineSvg(html) {
+  return html.replace(/<img\s+src="([^"]+\.svg)"([^>]*)>/g, (_, src, rest) => {
+    const f = path.resolve(mdDir, src)
+    if (!fs.existsSync(f)) throw new Error(`figure not found: ${src}`)
+    const style = (rest.match(/style="([^"]*)"/) || [, ''])[1]
+    return `<div style="${style}">${fs.readFileSync(f, 'utf8')}</div>`
+  })
+}
+
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 // Code spans are protected first so bold/italic/link rules can't reach inside.
@@ -89,7 +102,7 @@ function toHtmlBody(src) {
       // is escaped as before. Deliberately an explicit opt-in per block rather
       // than passing stray `<` through: a doc full of TypeScript generics would
       // otherwise start sprouting tags.
-      if (lang === 'html') { out.push(body.join('\n')); continue }
+      if (lang === 'html') { out.push(inlineSvg(body.join('\n'))); continue }
       out.push(`<pre class="code${lang ? ' lang-' + lang : ''}"><code>${esc(body.join('\n'))}</code></pre>`)
       continue
     }
