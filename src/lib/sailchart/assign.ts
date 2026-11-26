@@ -102,6 +102,8 @@ export interface SailHours {
 export function sailHours(
   chart: SailChart,
   paths: { t: number; twa: number; tws: number }[][],
+  /** Optional: the TWA to read the chart at, e.g. clamped to the VMG targets. */
+  twaAt?: (twa: number, tws: number) => number,
 ): SailHours | null {
   const pick = makeSailPicker(chart)
   if (!pick) return null
@@ -113,7 +115,7 @@ export function sailHours(
     for (let k = 0; k < path.length - 1; k++) {
       const h = (path[k + 1].t - path[k].t) / 3600e3
       if (!(h > 0)) continue
-      const s = pick(path[k].twa, path[k].tws)
+      const s = pick(twaAt ? twaAt(path[k].twa, path[k].tws) : path[k].twa, path[k].tws)
       const a = acc.get(s.name)!
       a.hours += h; total += h
       mine.set(s.name, (mine.get(s.name) ?? 0) + h)

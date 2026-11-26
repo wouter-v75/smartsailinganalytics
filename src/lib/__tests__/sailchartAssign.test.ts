@@ -57,3 +57,30 @@ describe('sailHours', () => {
     expect(r.sails.reduce((a, s) => a + s.share, 0)).toBeCloseTo(1)
   })
 })
+
+import { foldToTargets } from '../routing/climatology'
+describe('foldToTargets', () => {
+  // rows: <30, 30, 35, ..., 155, >=160 (5° bins); columns: 0, 2, ..., 30 kn
+  const twaEdges = [0]; for (let a = 30; a <= 160; a += 5) twaEdges.push(a)
+  const twsEdges: number[] = []; for (let s = 0; s <= 30; s += 2) twsEdges.push(s)
+  const rowOf = (a: number) => twaEdges.indexOf(a)
+  it('moves time past the targets into the target box of the same TWS row, and keeps the total', () => {
+    const hours = twaEdges.map(() => twsEdges.map(() => 0))
+    hours[rowOf(155)][7] = 2      // 14-16 kn, 155-160°: past a 150° target
+    hours[rowOf(160)][7] = 1      // >=160
+    hours[rowOf(150)][7] = 3      // the target's own box
+    hours[rowOf(30)][7] = 1       // tighter than a 40° upwind target
+    hours[rowOf(100)][7] = 5      // between the targets: untouched
+    const t = { twaEdges, twsEdges, hours, totalHours: 12 }
+    const f = foldToTargets(t, () => ({ upTwa: 40, dnTwa: 150 }))
+    expect(f.table.hours[rowOf(150)][7]).toBe(6)
+    expect(f.table.hours[rowOf(155)][7]).toBe(0)
+    expect(f.table.hours[rowOf(160)][7]).toBe(0)
+    expect(f.table.hours[rowOf(40)][7]).toBe(1)
+    expect(f.table.hours[rowOf(30)][7]).toBe(0)
+    expect(f.table.hours[rowOf(100)][7]).toBe(5)
+    expect(f.movedShare).toBeCloseTo(4 / 12)
+    expect(f.table.hours.flat().reduce((a, b) => a + b, 0)).toBe(12)
+    expect(t.hours[rowOf(155)][7]).toBe(2)   // the input is not modified
+  })
+})

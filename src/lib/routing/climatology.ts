@@ -151,3 +151,40 @@ export function bootstrapBlocks(groups: number[][], n = 4000, seed = 1): { media
   const q = (a: number[], p: number) => { a.sort((p1, q1) => p1 - q1); return a[Math.min(a.length - 1, Math.floor(p * a.length))] }
   return { median: [q(meds, 0.05), q(meds, 0.95)], mean: [q(means, 0.05), q(means, 0.95)] }
 }
+
+/**
+ * Fold a TWA x TWS table onto the VMG targets: in each TWS band, time DEEPER than
+ * the downwind target angle is moved into the box holding that target, and time
+ * TIGHTER than the upwind target into the upwind target's box. A table read as
+ * "which angle are we sailing" then never shows time past the targets — on an
+ * ocean leg the router runs at and beyond the downwind target for hours, and that
+ * time belongs to the target's sail and trim, not to a wider bin of its own.
+ * The target is the polar's at the band's centre (the open top band at its edge
+ * + 1 kn). `movedShare` is the share of all sailing time that was moved.
+ */
+export function foldToTargets(
+  t: TwaTwsTable,
+  vmg: (tws: number) => { upTwa: number; dnTwa: number },
+): { table: TwaTwsTable; movedShare: number } {
+  const A = t.twaEdges, W = t.twsEdges
+  const rowOf = (a: number) => {
+    if (a < A[1]) return 0
+    let r = 1
+    while (r < A.length - 1 && a >= A[r + 1]) r++
+    return r
+  }
+  const hours = t.hours.map(row => row.slice())
+  let moved = 0
+  for (let c = 0; c < W.length; c++) {
+    const tws = c === W.length - 1 ? W[c] + 1 : (W[c] + W[c + 1]) / 2
+    const v = vmg(tws)
+    if (!(v.upTwa > 0) || !(v.dnTwa > v.upTwa)) continue
+    const rUp = rowOf(v.upTwa), rDn = rowOf(v.dnTwa)
+    for (let r = 0; r < A.length; r++) {
+      const into = r > rDn ? rDn : r < rUp ? rUp : r
+      if (into === r || !(hours[r][c] > 0)) continue
+      hours[into][c] += hours[r][c]; moved += hours[r][c]; hours[r][c] = 0
+    }
+  }
+  return { table: { ...t, hours }, movedShare: t.totalHours ? moved / t.totalHours : 0 }
+}

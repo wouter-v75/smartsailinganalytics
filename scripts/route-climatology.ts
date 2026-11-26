@@ -45,7 +45,8 @@ import { parseCourseGpx } from '../src/lib/routing/course'
 import { liftToHeight, type LiftMethod, type RawFields } from '../src/lib/routing/windField'
 import { routeIsochrone, type RouteResult } from '../src/lib/routing/isochrone'
 import { routeGrid } from '../src/lib/routing/gridRouter'
-import { elapsedStats, twaTwsTable, tableCsv, localStartToUtc, pointOfSail, bootstrapBlocks } from '../src/lib/routing/climatology'
+import { elapsedStats, twaTwsTable, tableCsv, localStartToUtc, pointOfSail, bootstrapBlocks, foldToTargets } from '../src/lib/routing/climatology'
+import { heatTableHtml } from '../src/lib/routing/heatTable'
 import { offsetFromCoords } from '../src/lib/tzFromCoords'
 import { makePerf, isDark } from '../src/lib/routing/daylight'
 import { normaliseSailChart, parseCrossoverXml, type SailChart } from '../src/lib/sailchart/model'
@@ -236,7 +237,13 @@ for (const m of methods) {
   const paths = ok.map(x => x.r.path)
   const table = twaTwsTable(paths)
   const pos = pointOfSail(paths)
-  const sails: SailHours | null = sailChart ? sailHours(sailChart, paths) : null
+  // The time tables as the report shows them: time past the VMG targets counted
+  // in the target's box (foldToTargets), and the sails read the same way.
+  const atTargets = foldToTargets(table, w => polar.vmg(w))
+  const sails: SailHours | null = sailChart ? sailHours(sailChart, paths, (twa, tws) => {
+    const v = polar.vmg(tws)
+    return v.upTwa > 0 && v.dnTwa > v.upTwa ? Math.max(v.upTwa, Math.min(v.dnTwa, Math.abs(twa))) : Math.abs(twa)
+  }) : null
   // Share of sailing time in the dark, by the same rule the routers used.
   let darkH = 0, allH = 0
   for (const pth of paths) for (let k = 0; k < pth.length - 1; k++) {
@@ -265,10 +272,11 @@ for (const m of methods) {
   })
   fs.writeFileSync(path.join(outDir, `table-${m}-pct.csv`), tableCsv(table, 'pct') + '\n')
   fs.writeFileSync(path.join(outDir, `table-${m}-hours.csv`), tableCsv(table, 'hours') + '\n')
+  fs.writeFileSync(path.join(outDir, `table-${m}-targets-pct.csv`), tableCsv(atTargets.table, 'pct') + '\n')
   ;(summary.methods as Record<string, unknown>)[m] = {
     elapsedHours: { n: st.n, failed: st.failed, min: h(st.minSec), max: h(st.maxSec), mean: h(st.meanSec), median: h(st.medianSec), sd: h(st.sdSec),
       medianCI90: ci.median.map(h), meanCI90: ci.mean.map(h) },
-    pointOfSail: pos, darkShare, landHits, sails, table, byOffset: off, byYear: perYear,
+    pointOfSail: pos, darkShare, landHits, sails, table, tableAtTargets: atTargets.table, movedToTargets: atTargets.movedShare, byOffset: off, byYear: perYear,
     routes: rs.map(x => ({ year: x.year, offsetH: x.offsetH, startLocal: x.startLocal, startUtc: x.startUtc, ok: x.r.ok, reason: x.r.reason, elapsedH: x.r.elapsedSec != null ? h(x.r.elapsedSec) : null,
       legH: x.r.legSec.map(h), sailedNm: x.r.sailedNm, tacks: x.r.tacks, gybes: x.r.gybes, runMs: x.ms })),
   }
@@ -513,34 +521,8 @@ function report(): string {
   const offTable = multi ? `<h2>By start date</h2><p class="dim">Each row is one start offset from ${esc(arg('start')!.slice(5, 10))}, over all years. Green is fast, red slow, across the whole table.</p><table><tr><th></th>${methods.map(m => `<th>${m} mean</th><th>median</th><th>min</th><th>max</th><th>n</th>`).join('')}</tr>${offRows}</table>` : ''
   // TWS down the side, TWA across: one row per 2 kn band reads as "in this
   // breeze, where on the dial was the boat".
-  const heat = (m: string) => {
-    const t = ms[m].table
-    const max = Math.max(...t.hours.flat())
-    const twsStep = t.twsEdges[1] - t.twsEdges[0], twaStep = t.twaEdges[2] - t.twaEdges[1]
-    // Columns are labelled by their LOWER edge (30 = 30-35 deg) so 29 of them fit a page.
-    const twaLab = (r: number) => r === 0 ? `&lt;${t.twaEdges[1]}` : r === t.twaEdges.length - 1 ? `≥${t.twaEdges[r]}` : `${t.twaEdges[r]}`
-    const head = `<tr><th>kn \\ °</th>${t.twaEdges.map((_: number, r: number) => `<th>${twaLab(r)}</th>`).join('')}<th>all</th></tr>`
-    const rows = t.twsEdges.map((sv: number, c: number) => {
-      const lab = c === t.twsEdges.length - 1 ? `≥${sv}` : `${sv}–${sv + twsStep}`
-      let rowSum = 0
-      const cells = t.hours.map((row: number[]) => {
-        const v = row[c]; rowSum += v
-        const pct = t.totalHours ? (100 * v) / t.totalHours : 0
-        if (!(pct >= 0.05)) return '<td></td>'
-        const { bg, fg } = rg(max ? Math.sqrt(v / max) : 0)
-        return `<td style="background:${bg};color:${fg}">${pct.toFixed(1)}</td>`
-      }).join('')
-      const rp = t.totalHours ? (100 * rowSum) / t.totalHours : 0
-      return `<tr><th>${lab}</th>${cells}<td class="tot">${rp >= 0.05 ? rp.toFixed(1) : ''}</td></tr>`
-    }).reverse().join('')   // wind speed UP the page: 0 kn at the bottom, like a chart's y axis
-    const colTot = t.twaEdges.map((_: number, r: number) => {
-      const v = t.hours[r].reduce((a: number, b: number) => a + b, 0)
-      const pct = t.totalHours ? (100 * v) / t.totalHours : 0
-      return `<td class="tot">${pct >= 0.05 ? pct.toFixed(1) : ''}</td>`
-    }).join('')
-    return `<h3>${m === 'iso' ? 'Isochrone' : 'Grid'} — % of sailing time (mean ${dh(t.totalHours)} per race)</h3><p class="dim">Rows: TWS at ${mast} m in ${twsStep} kn bands, rising up the page. Columns: |TWA| in ${twaStep}° bins, labelled by their lower edge (30 = 30–${30 + twaStep}°). Red is little time, green the most.</p><div class="scroll"><table class="heat">${head}${rows}<tr class="totrow"><th>all</th>${colTot}<td class="tot">100</td></tr></table></div>`
-  }
-  const sailSec = sailChart ? sailSectionHtml(sailChart, methods.map(m => ({ key: m, label: m === 'iso' ? 'Isochrone' : 'Grid', sails: ms[m].sails, table: ms[m].table })),
+  const heat = (m: string) => heatTableHtml(ms[m].tableAtTargets, { label: m === 'iso' ? 'Isochrone' : 'Grid', mast, folded: ms[m].movedToTargets })
+  const sailSec = sailChart ? sailSectionHtml(sailChart, methods.map(m => ({ key: m, label: m === 'iso' ? 'Isochrone' : 'Grid', sails: ms[m].sails, table: ms[m].tableAtTargets })),
     { mast, races: ms[methods[0]].elapsedHours.n }) : ''
   const maps = methods.map(routeMap).join('')
   const conv = convergence ? `<p class="dim">Convergence (${convergence.year}): isochrone at half step, half sector and a 2.5° fan changed elapsed time by ${convergence.isoChangePct.toFixed(2)} %; the grid at half cell and 48 directions differs from the isochrone by ${convergence.gridFineVsIsoPct.toFixed(2)} %.</p>` : ''
