@@ -62,13 +62,20 @@ const CDN_HOST = process.env.BUNNY_CDN_HOSTNAME || ''
 // Bounded at 2.5 s. This call is most of a phone's first load; when Bunny is
 // slow the caller falls on to the next form in the order — for a phone the
 // 720p proxy — which plays at once.
-async function streamHls(guid: string): Promise<{ url: string | null; status: number | null }> {
+async function streamHls(
+  guid: string
+): Promise<{ url: string | null; status: number | null; gone?: boolean }> {
   if (!STREAM_KEY || !LIBRARY_ID || !CDN_HOST) return { url: null, status: null }
   try {
     const res = await fetch(
       `https://video.bunnycdn.com/library/${LIBRARY_ID}/videos/${guid}`,
       { headers: { AccessKey: STREAM_KEY }, cache: 'no-store', signal: AbortSignal.timeout(2500) }
     )
+    // 404 is not "could not tell" — it is Bunny saying the video is not there.
+    // Worth separating, because the caller's fallback for a guid it cannot
+    // resolve is to report "still encoding", and for a guid that is GONE that
+    // is a lie the UI polls on for ever.
+    if (res.status === 404) return { url: null, status: null, gone: true }
     if (!res.ok) return { url: null, status: null }
     const v = (await res.json()) as { status?: number }
     const status = typeof v?.status === 'number' ? v.status : null
@@ -198,9 +205,17 @@ export async function GET(
   // The removed flow's STREAM video. A real, adaptive, still-playing copy, and
   // the only one of that era's two columns with bytes behind it — see
   // lib/renditionOrder for the measurement. Tried before the storage path.
+  // Set when Bunny answers 404 for the legacy guid — the Stream video is gone,
+  // not encoding. `stream-dedupe.ts` deletes superseded copies and migration
+  // 0107's own note says it "leaves bunny_stream_id pointing at a video that is
+  // gone", so this is a predicted state, not a freak one. Measured on the live
+  // library, 26 Nov: one such row, a duplicate of a clip that also has a
+  // working original.
+  let legacyStreamGone = false
   const resolveLegacyStream = async (): Promise<Resolved | null> => {
     if (!v.bunny_stream_id) return null
     const s = await streamHls(v.bunny_stream_id)
+    if (s.gone) legacyStreamGone = true
     return s.url ? { url: s.url, kind: 'hls', served: 'legacy', expires: null } : null
   }
 
@@ -266,7 +281,14 @@ export async function GET(
   if (!result) {
     // A Stream rendition exists but hasn't finished encoding yet — tell the
     // UI to show the "processing" state and poll, rather than erroring.
-    if (v.bunny_proxy_stream_id || v.bunny_original_stream_id || v.bunny_stream_id) {
+    // "Encoding, come back shortly" — but only where something might actually
+    // arrive. A legacy guid Bunny has already told us it does not have will
+    // never finish, and saying otherwise leaves the client polling for ever.
+    const mightStillArrive =
+      v.bunny_proxy_stream_id ||
+      v.bunny_original_stream_id ||
+      (v.bunny_stream_id && !legacyStreamGone)
+    if (mightStillArrive) {
       return NextResponse.json({
         url: null,
         kind: 'processing',
