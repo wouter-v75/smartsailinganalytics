@@ -33,6 +33,23 @@ the masthead run **1.2× the mean** (10-minute peak over 10-minute mean).
 - **The masthead has only 11 sea-breeze days**, and only one of them was an SE-morning day.
 - **Nothing measured 30 m in July.** Every 30 m speed comes from May, and only the share of each weather type comes from July.
 
+### How to read P10, P25, P50, P75 and P90
+
+Take one hour, say 15:00 off Sorrento. Imagine every race-week afternoon from the last 21 summers lined up
+in a row, from the lightest at 15:00 to the windiest. The percentiles are places in that row.
+
+| | what it means | 15:00 off Sorrento |
+|---|---|---|
+| **P50 (the median)** | **The typical day.** Half the days are lighter than this and half are windier. It is the "most likely" number used in the charts. | **10.8 kn** |
+| **P25** | One day in four is lighter than this. | 7.8 kn |
+| **P75** | One day in four is windier than this. | 13.4 kn |
+| **P25 to P75** | **The middle half of the days**: what you will normally get. Expect to be inside this range on about every other day. | 7.8–13.4 kn |
+| **P90** | Only one day in ten is windier. This is a properly windy afternoon *for this venue in this week*: the top of the range worth planning sails for. | 15.6 kn |
+| **P10** | Only one day in ten is lighter: the near-drifter. | 6.1 kn |
+
+These describe the **season**, not any one day. On the morning of a race, the forecast replaces them (§8).
+What the percentiles tell you is how far a forecast for that day sits from normal.
+
 ## 1. How the numbers were made
 
 The 30 m wind on a race day depends first on **which kind of day it is**, so the study splits the problem in
@@ -172,8 +189,68 @@ recorded before CERRA's pattern was looked at.
 - **Bottom of the bay:** about 2 kn more than off Sorrento at the peak.
 - **Mid-bay and Naples:** about 1–1.5 kn more.
 
-Add these to the Sorrento numbers in §2 for a course further into the bay. Capri's SE–SSW wake and
-Vesuvius's NE–ESE shadow are below CERRA's 5.5 km resolution and are not in these numbers.
+Capri's SE–SSW wake and Vesuvius's NE–ESE shadow are below CERRA's 5.5 km resolution and are not in
+these numbers.
+
+### The three areas hour by hour, 10:00–18:00
+
+Off **Sorrento** is the race-week wind of §2, extended to 10:00 and 18:00. For **Mid-bay** and
+**Posillipo / Naples harbour**, CERRA's mean difference from Sorrento is added to every simulated hour,
+in speed and in direction. That difference is taken separately for each hour and each weather type,
+from Open-Meteo's CERRA at each area's sea cell over 16 summers.
+
+```html
+<img src="naples-figs/areas_hourly_bars.svg" style="width:100%">
+```
+
+**The typical wind (P50), kn at 30 m:**
+
+| local | 10:00 | 11:00 | 12:00 | 13:00 | 14:00 | 15:00 | 16:00 | 17:00 | 18:00 |
+|---|---|---|---|---|---|---|---|---|---|
+| Sorrento | 5.4 | 6.8 | 7.5 | 8.9 | 10.3 | **10.8** | 10.6 | 9.7 | 8.6 |
+| Mid-bay | 5.1 | 6.3 | 7.5 | 9.6 | 11.4 | 11.9 | **12.2** | 11.6 | 10.4 |
+| Posillipo / Naples harbour | 5.1 | 6.6 | 7.5 | 9.5 | 11.1 | 11.4 | **11.6** | 11.0 | 9.9 |
+
+The middle half of days (P25–P75) at 15:00:
+- Sorrento: 7.8–13.4 kn.
+- Mid-bay: 9.0–14.6 kn.
+- Posillipo / Naples: 8.6–14.2 kn.
+
+P90 at 16:00 is 15.2, 16.9 and 16.4 kn respectively.
+
+What the chart says:
+- **The morning is the same everywhere.** Until 12:00 all three areas are within half a knot of each
+  other. At 10:00 half the days are still under 6 kn in all three.
+- **From 13:00 the inner bay pulls ahead**: about 1 kn at 14:00, growing to nearly 2 kn by 17:00
+  at Mid-bay and 1.3 kn at Posillipo / Naples.
+- **The inner bay holds its breeze later.** At 18:00 Mid-bay still has a typical 10.4 kn and Sorrento
+  8.6 kn. That matches local knowledge that the breeze lasts until about 18:00.
+
+```html
+<img src="naples-figs/areas_roses.svg" style="width:100%">
+```
+
+**Wind roses, 10:00–18:00.** Each petal is the share of race-week hours the wind blows *from* that
+direction. The colour bands within it split those hours by strength.
+
+| % of hours from | WSW (236–259°) | SW (214–236°) | SSW (191–214°) | S (169–191°) | W (259–281°) |
+|---|---|---|---|---|---|
+| Sorrento | **35** | 8 | 11 | 9 | 14 |
+| Mid-bay | **28** | 20 | 11 | 11 | 8 |
+| Posillipo / Naples harbour | **25** | 15 | 16 | 12 | 8 |
+
+- **Off Sorrento the wind is the most concentrated:** one hour in three is from WSW, and a further one in
+  seven is from W.
+- **Further into the bay it spreads further left**, toward SW and SSW, and at Naples toward S. CERRA turns
+  the breeze 7–35° further left there, the most in the morning. That is a sea breeze aimed at the head of
+  the bay rather than along the peninsula.
+
+These direction offsets come from the model alone: nothing on the water has checked them. The speed
+offsets have been checked (by local knowledge, above).
+
+10:00 and 18:00 rest on more model than the hours between. The ERA5 archive was fetched for 11:00–17:00
+only, so on gradient days those two hours are the nearest hour scaled by CERRA's own hourly curve. On
+sea-breeze days they come from the stations' curve, as for every hour the boat didn't sail.
 
 ## 6. Gusts, trend, and a cross-check (Q7, Q9)
 
@@ -225,13 +302,15 @@ direct, in-bay May → June factor a month before the start.
 - **Scripts** (`scripts/naples-study/`, read-only unless `--write`):
   - `classify_regimes.py`: the weather type of each day.
   - `naples_results.py`: everything in §2–6.
+  - `naples_zones.py`: the three areas, 10:00–18:00 (bars and roses).
   - `isd_fetch.py` and `ispra_fetch.py`: the station archives.
   - `station_map.py`: the map.
 - **Outputs**, in `naples-study-2027/results/`:
   - `race_week_hourly.csv`, plus one per weather type;
   - `race_week_sectors.csv`;
   - `regimes_per_summer.csv`;
-  - `race_week.json`.
+  - `race_week.json`;
+  - `areas_10_18.json`, plus an hourly and a rose CSV per area.
 - **Sources:**
   - Copernicus ERA5 and CERRA (C3S);
   - Open-Meteo's copy of CERRA;
