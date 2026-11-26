@@ -104,3 +104,54 @@ describe('what the route must not do to the locator', () => {
     }
   })
 })
+
+describe('the admin backfill writes the other way round', () => {
+  // Same column, opposite precedence, and the difference is which side is
+  // NEWER. The live route merges an incoming CLIENT write over the stored row,
+  // because the client is making the change. The backfill reads a `photos.json`
+  // SNAPSHOT out of Bunny, which can only be older than the row — so there the
+  // stored value wins and the snapshot fills gaps.
+  //
+  // It runs with the service key over a whole boat's history from one button,
+  // so getting this backwards deletes every timeline-measured geometry on the
+  // boat at once.
+  function backfillAnalysis(
+    storedOnRow: Record<string, unknown> | null,
+    fromIndex: Record<string, unknown> | null
+  ): Record<string, unknown> | undefined {
+    if (!fromIndex) return undefined
+    return { ...fromIndex, ...(storedOnRow || {}) }
+  }
+
+  it('keeps geometry the snapshot has never heard of', () => {
+    const row = { inst: { tws: 11.2 }, sailTrim: SAIL_TRIM }
+    const snapshot = { inst: { tws: 11.2 }, sails: ['J2'] }
+    const out = backfillAnalysis(row, snapshot)
+    expect(out?.sailTrim).toEqual(SAIL_TRIM)
+    expect(out?.sails).toEqual(['J2'])          // the gap the backfill is for
+  })
+
+  it('does not let a stale snapshot roll a value back', () => {
+    const row = { inst: { tws: 14.0 } }
+    const snapshot = { inst: { tws: 9.9 } }
+    expect(backfillAnalysis(row, snapshot)?.inst).toEqual({ tws: 14.0 })
+  })
+
+  it('fills a row that has nothing', () => {
+    expect(backfillAnalysis(null, { inst: { tws: 9 } })).toEqual({ inst: { tws: 9 } })
+    expect(backfillAnalysis({}, { sails: ['A2'] })).toEqual({ sails: ['A2'] })
+  })
+
+  it('leaves the column alone when the snapshot has no analysis', () => {
+    expect(backfillAnalysis({ sailTrim: SAIL_TRIM }, null)).toBeUndefined()
+  })
+
+  it('unions tags rather than replacing them', () => {
+    const union = (stored: string[] | null, snapshot: unknown) =>
+      Array.from(new Set([...(stored || []), ...(Array.isArray(snapshot) ? snapshot : [])]))
+    // The team tagged the clip after the snapshot was written.
+    expect(union(['start', 'port-end', 'day8'], ['start'])).toEqual(['start', 'port-end', 'day8'])
+    expect(union([], ['topmark'])).toEqual(['topmark'])
+    expect(union(['a'], null)).toEqual(['a'])
+  })
+})

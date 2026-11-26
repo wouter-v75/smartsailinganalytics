@@ -160,16 +160,17 @@ export async function POST(
     if (meta?.videos?.length) {
       for (const v of meta.videos) {
         // Dedupe.
-        let existingId: string | null = null
+        let existingRow: { id: string; tags: string[] | null } | null = null
         if (v.streamId) {
           const { data } = await service
             .from('videos')
-            .select('id')
+            .select('id, tags')
             .eq('boat_id', params.boatId)
             .eq('bunny_stream_id', v.streamId)
             .maybeSingle()
-          existingId = data?.id ?? null
+          existingRow = data
         }
+        const existingId = existingRow?.id ?? null
 
         // Resolve start time. Prefer meta.json's startUtc; fall back to
         // parsing the DJI / Android-style YYYYMMDDHHMMSS timestamp out of
@@ -202,7 +203,13 @@ export async function POST(
           title: v.title || v.name || null,
           start_utc: startUtc,
           duration_ms,
-          tags: Array.isArray(v.tags) ? v.tags : [],
+          // Tags are typed by a person and the meta.json snapshot can only be
+          // older than the row. Union, so a backfill adds what the archive has
+          // and removes nothing the team has since put on.
+          tags: Array.from(new Set([
+            ...(existingRow?.tags || []),
+            ...(Array.isArray(v.tags) ? v.tags : []),
+          ])),
           bytes: v.size ?? null,
           // The GUID from meta.json, written by the session sync that used to
           // upload clips itself. It is the only locator these rows have, and it
@@ -247,16 +254,17 @@ export async function POST(
     const photoList = photoIndex?.photos || []
     for (const p of photoList) {
       const storagePath = p.bunnyPath || p.url || null
-      let existingId: string | null = null
+      let existing: { id: string; analysis_data: Record<string, unknown> | null } | null = null
       if (storagePath) {
         const { data } = await service
           .from('photos')
-          .select('id')
+          .select('id, analysis_data')
           .eq('boat_id', params.boatId)
           .eq('bunny_storage_path', storagePath)
           .maybeSingle()
-        existingId = data?.id ?? null
+        existing = data
       }
+      const existingId = existing?.id ?? null
 
       // Optional richer metadata file.
       const richer = p.id
@@ -273,8 +281,23 @@ export async function POST(
         thumbnail_url: merged.thumbnailUrl || null,
         bunny_storage_path: storagePath,
         bytes: merged.size ?? null,
-        analysis_data: merged.analysis ?? null,
         created_by_user_id: guard.userId,
+      }
+
+      // ── BACKFILL means FILL A GAP, not overwrite ───────────────────────────
+      // The source here is a `photos.json` snapshot in Bunny, written by
+      // PhotosTab whenever it last rewrote the index. The ROW is live. Where
+      // they disagree the row is newer, and `analysis_data` is where that
+      // matters: sail geometry measured from the TIMELINE goes straight to the
+      // row and never reaches the index, so replacing the column with the
+      // index's copy deletes it — with the service key, across a whole boat's
+      // history, in one click. So the stored value wins per key and the index
+      // only supplies what the row has not got.
+      const fromIndex = (merged.analysis ?? null) as Record<string, unknown> | null
+      if (existingId) {
+        if (fromIndex) row.analysis_data = { ...fromIndex, ...(existing?.analysis_data || {}) }
+      } else if (fromIndex) {
+        row.analysis_data = fromIndex
       }
 
       if (existingId) {
