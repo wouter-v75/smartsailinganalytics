@@ -660,10 +660,17 @@ allow localhost (206 from the page) — nor photo thumbnails drawn through
 `/api/bunny/image`, which proxies the Storage API with the AccessKey and has no
 referrer check at all. So "photos fine, documents broken" is the signature.
 
-Fix for dev parity: add `localhost` to that zone's Allowed Referrers. The URLs
-are token-signed with an expiry regardless, so the list is a second lock on a
-locked door. Do NOT instead proxy media through the app — a PDF would fit, a
-photo original or a clip would not (Vercel's ~4.5 MB response cap).
+Fixed 26 Nov 2026 by adding **`localhost:3000`** to that zone's Allowed
+Referrers (Pull Zones -> ssa-videos -> Security). **The PORT is part of the
+match and so is a trailing dot** — measured, after two entries that looked
+right and did nothing: `localhost.` only matches a referrer whose host is
+literally `localhost.`, which no browser sends, and plain `localhost` matches
+`http://localhost/` but NOT `http://localhost:3000/`. So a different dev port
+needs its own entry. Everything else still 403s, which is the point.
+
+Do NOT instead proxy this media through the app the way `/api/bunny/image`
+does — a 1 MB PDF would fit, a photo original or a clip would not (Vercel's
+~4.5 MB response cap).
 
 ## Bunny credentials
 
