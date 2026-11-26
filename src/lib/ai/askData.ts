@@ -37,6 +37,7 @@ import type {
 import type { AnswerColumn, AnswerTable, ChartSeries, ChartSpec, MediaItem, ToolResult } from './askTypes'
 import { emptyResult } from './askTypes'
 import type { AskContext } from './askRisk'
+import { photoThumbKey } from '@/lib/storageKeys'
 
 type SB = SupabaseClient<any, any, any>
 
@@ -687,8 +688,9 @@ function meanOf(part: PhaseStat[]): Record<string, number | null> {
 // ── Media ────────────────────────────────────────────────────────────────────
 
 const fastThumb = (path: string | null): string | null => {
-  if (!path || !bunnyConfigured()) return null
-  return signBunnyUrl({ path: path.replace(/\.jpe?g$/i, '_thumb.jpg'), ttlSec: 6 * 3600 })?.url || null
+  if (!bunnyConfigured()) return null
+  const thumbKey = photoThumbKey(path)
+  return thumbKey ? signBunnyUrl({ path: thumbKey, ttlSec: 6 * 3600 })?.url || null : null
 }
 const signedOriginal = (path: string | null): string | null =>
   path && bunnyConfigured() ? signBunnyUrl({ path, ttlSec: 6 * 3600 })?.url || null : null

@@ -141,6 +141,29 @@ export const photoLeaves = (id: string) => ({
   meta: `photos/${id}_meta.json`,
 })
 
+/**
+ * The thumbnail key for a photo whose ORIGINAL key we already hold.
+ *
+ * A row stores only `bunny_storage_path`, the original, and the thumbnail sits
+ * beside it under the `_thumb.jpg` rule `photoLeaves` sets above. Two routes
+ * derived it with their own copy of `path.replace(/\.jpe?g$/i, '_thumb.jpg')`,
+ * and that replace has a failure mode worth naming: on any path the pattern
+ * does NOT match it returns the input unchanged — so the caller signs the
+ * ORIGINAL and serves a multi-megabyte photo as a card thumbnail, silently, on
+ * every card. Returning null instead means the caller falls back to the stored
+ * `thumbnail_url`, which is the honest answer.
+ *
+ * Today every photo path ends `.jpg` because `photoLeaves` builds it that way
+ * (359 of 359 on the live library, checked 26 Nov), so this is a guard rather
+ * than a fix. It is the import path that would break the assumption — HEIC
+ * already arrives and is converted; a format that is not would not be.
+ */
+export function photoThumbKey(originalKey: string | null | undefined): string | null {
+  if (!originalKey) return null
+  const thumb = originalKey.replace(/\.jpe?g$/i, '_thumb.jpg')
+  return thumb === originalKey ? null : thumb
+}
+
 /** Leaf for a clip's transcoded proxy / its original. */
 export const proxyLeaf = (videoId: string) => `proxies/${videoId}.mp4`
 export const originalLeaf = (videoId: string) => `originals/${videoId}.mp4`

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   scopedSessionPrefix, legacySessionPrefix, writePrefix, writeKey,
-  readCandidates, scopedPhotoPrefix, photoLeaves, SESSION_LEAVES,
+  readCandidates, scopedPhotoPrefix, photoLeaves, photoThumbKey, SESSION_LEAVES,
 } from '../storageKeys'
 
 const SCOPE = { teamId: 'team-abc', boatId: 'boat-xyz' }
@@ -104,6 +104,39 @@ describe('scopedPhotoPrefix — the day-wipe', () => {
     for (const s of [SCOPE, null, { teamId: 't', boatId: 'b' }]) {
       const p = scopedPhotoPrefix(s, DATE)
       expect(p === null || p.startsWith('teams/')).toBe(true)
+    }
+  })
+})
+
+describe('photoThumbKey', () => {
+  // Two routes derived this with their own copy of the replace. The failure
+  // mode is the quiet one: a non-match returns the input, so the caller signs
+  // the ORIGINAL and serves a multi-megabyte photo as a card thumbnail.
+  it('agrees with photoLeaves, which is where the layout is defined', () => {
+    const leaves = photoLeaves('p_1790619824291_v0yi8eswle')
+    expect(photoThumbKey(leaves.original)).toBe(leaves.thumb)
+  })
+
+  it('handles a scoped path and both jpeg spellings', () => {
+    expect(photoThumbKey('teams/t/boats/b/sessions/2026-09-28/photos/p1.jpg'))
+      .toBe('teams/t/boats/b/sessions/2026-09-28/photos/p1_thumb.jpg')
+    expect(photoThumbKey('sessions/2026-09-05/photos/_MG_0397.JPEG'))
+      .toBe('sessions/2026-09-05/photos/_MG_0397_thumb.jpg')
+  })
+
+  it('returns NULL rather than the original when it cannot name a thumbnail', () => {
+    // The caller then falls back to the stored thumbnail_url, which is honest.
+    // Returning the input would hand a phone the full-resolution file.
+    for (const path of ['photos/p1.png', 'photos/p1.heic', 'photos/p1', 'photos/jpg', '']) {
+      expect(photoThumbKey(path)).toBeNull()
+    }
+    expect(photoThumbKey(null)).toBeNull()
+    expect(photoThumbKey(undefined)).toBeNull()
+  })
+
+  it('never returns its own input', () => {
+    for (const path of ['a.jpg', 'a.png', 'a', 'a.jpeg', 'x/y/z.JPG']) {
+      expect(photoThumbKey(path)).not.toBe(path)
     }
   })
 })

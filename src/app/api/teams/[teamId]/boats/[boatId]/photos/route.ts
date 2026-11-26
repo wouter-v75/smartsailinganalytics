@@ -6,16 +6,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase, getServiceSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 import { signBunnyUrl, bunnyConfigured } from '../../../../../../../lib/bunny-signed-url'
-import { scopedPhotoPrefix, legacySessionPrefix } from '@/lib/storageKeys'
+import { scopedPhotoPrefix, legacySessionPrefix, photoThumbKey } from '@/lib/storageKeys'
 import { storageHost } from '@/lib/bunnyStorageHost'
 
 // Serve thumbnails over the Bunny CDN (signed) instead of the slow per-request
 // Vercel image proxy — the thumb key is deterministic from the original key.
 function fastThumb(bunnyOriginalPath: string | null): string | null {
-  if (!bunnyOriginalPath || !bunnyConfigured()) return null
-  const thumbKey = bunnyOriginalPath.replace(/\.jpe?g$/i, '_thumb.jpg')
-  const signed = signBunnyUrl({ path: thumbKey, ttlSec: 6 * 3600 })
-  return signed?.url || null
+  if (!bunnyConfigured()) return null
+  const thumbKey = photoThumbKey(bunnyOriginalPath)
+  if (!thumbKey) return null
+  return signBunnyUrl({ path: thumbKey, ttlSec: 6 * 3600 })?.url || null
 }
 
 // ── Bunny Storage helpers (for the wipe) ──────────────────────────────────────
@@ -166,12 +166,13 @@ export async function POST(
     )
   }
 
-  // Dedupe by bunny_storage_path within boat.
-  let existing: { id: string } | null = null
+  // Dedupe by bunny_storage_path within boat. `analysis_data` comes back too,
+  // because an UPDATE has to MERGE into it rather than replace it — see below.
+  let existing: { id: string; analysis_data: Record<string, unknown> | null } | null = null
   if (body.bunny_storage_path) {
     const { data } = await supabase
       .from('photos')
-      .select('id')
+      .select('id, analysis_data')
       .eq('boat_id', params.boatId)
       .eq('bunny_storage_path', body.bunny_storage_path)
       .maybeSingle()
@@ -185,13 +186,45 @@ export async function POST(
     taken_utc: body.taken_utc ?? null,
     exif_data: body.exif_data ?? null,
     thumbnail_url: body.thumbnail_url ?? null,
-    bunny_storage_path: body.bunny_storage_path ?? null,
     bytes: body.bytes ?? null,
-    analysis_data: body.analysis_data ?? null,
     created_by_user_id: user.id,
+  }
+  // The locator, written only when supplied — never nulled by its absence. It
+  // is also the dedupe key above, so an UPDATE always has one; this guards the
+  // insert path and anything added later. Same rule as the videos route.
+  if (typeof body.bunny_storage_path === 'string' && body.bunny_storage_path) {
+    row.bunny_storage_path = body.bunny_storage_path
   }
 
   if (existing) {
+    // ── analysis_data is MERGED, not replaced ─────────────────────────────
+    // It is one JSON blob holding several independent things: `inst` (the
+    // instrument snapshot, written at import), `sails` / `raceTags` / `boat` /
+    // `location`, and `sailTrim` — the hand-marked sail geometry, which is the
+    // most expensive data in the app and the only one nothing can regenerate.
+    //
+    // Every client writer already SENDS a merge: `{ ...photo.analysis, sailTrim }`.
+    // But each merges into ITS OWN idea of what is stored, and that is where it
+    // broke. `savePhotoSailTrim` (the timeline) writes the shared row and
+    // nothing local; `photoStore.mirror()` — fired by a deferred original
+    // finally uploading on Wi-Fi — sends the IMPORTING DEVICE's `analysis`,
+    // which never heard about that measurement. The handler replaced the whole
+    // column, so the second write silently deleted the geometry. PhotosTab is
+    // safe only because `mergeCloudIntoLocal` folds the cloud's copy in first,
+    // and that function has exactly one caller.
+    //
+    // Per-caller workarounds are what `savePhotoSailTrim`'s own header warns
+    // about ("anything omitted is nulled… that is the trap here"). One caller
+    // eventually forgets. Merging here means none of them has to be careful.
+    //
+    // Shallow by design: the keys are independent blobs. Nothing in the app
+    // removes a key — every writer adds or replaces one — so a merge cannot
+    // lose an intended deletion today. A deliberate removal would need its own
+    // mechanism, and should not be smuggled in as an absence.
+    const incoming = (body.analysis_data ?? null) as Record<string, unknown> | null
+    if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
+      row.analysis_data = { ...(existing.analysis_data || {}), ...incoming }
+    }
     const { data, error } = await supabase
       .from('photos')
       .update(row)
@@ -204,6 +237,8 @@ export async function POST(
     return NextResponse.json({ photo: data, session_id: session.id, action: 'updated' })
   }
 
+  // Insert: there is nothing to merge into, so the blob goes in as given.
+  if (body.analysis_data != null) row.analysis_data = body.analysis_data
   const { data, error } = await supabase
     .from('photos')
     .insert(row)

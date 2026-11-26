@@ -347,12 +347,10 @@ export async function generateProxy(
   }
 }
 
-/** Estimate the resulting proxy size in bytes without doing a real transcode.
- *  Useful for showing "will upload ~N MB" before the user confirms. */
-export function estimateProxySize(durationSec: number): number {
-  // Derived from PROXY_VIDEO_BITRATE so it tracks the spec instead of restating
-  // it — this was hard-coded at 1.2 Mbps and would have kept reporting a
-  // quarter of the real size after the target moved.
-  const audioBps = 64_000
-  return Math.round((durationSec * (PROXY_VIDEO_BITRATE + audioBps)) / 8)
-}
+// There was an `estimateProxySize(durationSec)` here, for showing "will upload
+// ~N MB" before the user confirms. Nothing ever called it — not a component,
+// not a script, not a test — and no upload path in the app asks the user to
+// confirm a size. It had already been corrected once (it restated 1.2 Mbps and
+// under-reported by four times after the target moved), which is the cost of
+// keeping a function nothing exercises: it goes stale silently and the next
+// reader believes it.
