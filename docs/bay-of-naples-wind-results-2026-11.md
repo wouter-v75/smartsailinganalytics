@@ -4,9 +4,10 @@
 
 ## The answer in one page
 
-**The most likely race afternoon is a sea breeze.** It is light at the start: **about 7 kn at 11:00**, from the
+**The most likely race afternoon is a sea breeze.** Off Sorrento, where the masthead data was recorded, it is light at the start: **about 7 kn at 11:00**, from the
 S–SW. It **builds to 10–11 kn by 14:00–16:00** from **220–230°**, and is still about 10 kn at 17:00. Gusts at
-the masthead run **1.2× the mean** (10-minute peak over 10-minute mean).
+the masthead run **1.2× the mean** (10-minute peak over 10-minute mean). At Posillipo / Naples harbour
+(§2) the morning is the same, and from 14:00 the breeze is about 1 kn stronger: a typical 11–11.5 kn.
 
 | | |
 |---|---|
@@ -92,41 +93,53 @@ two.
 does not see the sea breeze. Its numbers are still computed, and its July/May ratio (0.97) falls inside the
 range of the others, but it does not vote.
 
-## 2. Race-week wind by hour (Q1)
+## 2. Race-week wind by hour (Q1), Posillipo / Naples harbour
+
+This section is for the **Posillipo / Naples harbour** area. It is the race-week simulation off Sorrento
+(the masthead's area) plus CERRA's offset from Sorrento to the Naples sea cell, taken separately for each
+hour and each weather type (§5). The Sorrento figures are in §5's area table and in the one-page summary.
 
 ```html
-<img src="naples-figs/fan_all.svg" style="width:100%">
+<img src="naples-figs/fan_all_naples.svg" style="width:100%">
 ```
 
 | local | P10 | P25 | **P50** | P75 | P90 | inside 6–25 kn | below 6 | ≥ 12 kn | ≥ 16 kn |
 |---|---|---|---|---|---|---|---|---|---|
-| 11:00 | 4.3 | 5.0 | **6.9** | 9.6 | 11.8 | 63 % | 37 % | 9 % | 2 % |
-| 12:00 | 4.3 | 5.6 | **7.5** | 10.7 | 13.0 | 68 % | 32 % | 15 % | 1 % |
-| 13:00 | 5.6 | 7.2 | **9.0** | 10.5 | 14.0 | 88 % | 12 % | 14 % | 4 % |
-| 14:00 | 6.2 | 8.6 | **10.3** | 12.9 | 15.0 | 91 % | 9 % | 33 % | 6 % |
-| 15:00 | 6.1 | 7.8 | **10.8** | 13.4 | 15.6 | 91 % | 9 % | 39 % | 7 % |
-| 16:00 | 5.9 | 7.5 | **10.7** | 13.4 | 15.3 | 89 % | 11 % | 37 % | 6 % |
-| 17:00 | 5.4 | 6.9 | **9.7** | 12.5 | 14.8 | 84 % | 16 % | 29 % | 5 % |
+| 11:00 | 4.1 | 4.8 | **6.6** | 9.3 | 11.7 | 58 % | 42 % | 7 % | 2 % |
+| 12:00 | 4.5 | 5.9 | **7.5** | 10.9 | 13.2 | 71 % | 29 % | 16 % | 1 % |
+| 13:00 | 6.1 | 7.7 | **9.5** | 11.1 | 14.2 | 91 % | 9 % | 17 % | 5 % |
+| 14:00 | 6.9 | 9.3 | **11.1** | 13.6 | 15.8 | 94 % | 6 % | 39 % | 9 % |
+| 15:00 | 7.0 | 8.6 | **11.4** | 14.2 | 16.4 | 98 % | 2 % | 44 % | 12 % |
+| 16:00 | 7.2 | 8.7 | **11.6** | 14.3 | 16.4 | 99 % | 1 % | 47 % | 14 % |
+| 17:00 | 7.0 | 8.4 | **11.0** | 13.6 | 15.8 | 99 % | 1 % | 40 % | 9 % |
 
-kn at 30 m off Sorrento, all race-week days mixed by their odds. The median at 14:00 is **10.3 kn
-(90 % interval 9.4–11.7)** and at 15:00 **10.8 kn (9.1–12.2)**.
+kn at 30 m, Posillipo / Naples harbour, all race-week days mixed by their odds. The median at 14:00 is
+**11.1 kn (90 % interval 10.0–12.4)**, and at 15:00 **11.4 kn (9.7–12.7)**.
 
-**For the race committee:** from 13:00 nine hours in ten are inside the limits. Before 13:00 it is one in
-three below 6 kn.
+**For the race committee:**
+- **From 13:00, nine hours in ten are inside the limits**, and from 15:00 it is almost every hour.
+- **Before 13:00 it is light:** 42 % of 11:00 hours and 29 % of 12:00 hours are below 6 kn, about the
+  same as off Sorrento.
+- **It ends stronger than it starts.** At 17:00 the typical wind is still 11 kn, and only 1 % of hours
+  are below 6 kn.
 
 ### By weather type
 
 ```html
-<img src="naples-figs/fan_seabreeze.svg" style="width:100%">
-<img src="naples-figs/fan_gradient.svg" style="width:100%">
+<img src="naples-figs/fan_seabreeze_naples.svg" style="width:100%">
+<img src="naples-figs/fan_gradient_naples.svg" style="width:100%">
 ```
 
 | P50 (P10–P90), kn | 11:00 | 12:00 | 13:00 | 14:00 | 15:00 | 16:00 | 17:00 |
 |---|---|---|---|---|---|---|---|
-| Sea breeze (70 %) | 6.2 (3.4–10.3) | 6.7 (4.2–12.7) | 9.0 (3.3–11.9) | 10.4 (5.3–15.3) | 10.4 (6.0–15.6) | 9.9 (5.7–14.8) | 8.1 (5.1–13.3) |
-| Gradient (23 %) | 8.7 (4.8–15.0) | 8.6 (4.7–14.1) | 9.2 (6.3–14.5) | 10.3 (7.5–15.1) | 11.0 (6.9–16.0) | 11.8 (7.3–16.9) | 11.8 (7.5–17.2) |
-| SB on a gradient (5 %) | 6.7 | 6.6 | 8.5 | 10.4 | 11.5 | 11.6 | 11.7 |
-| No breeze (3 %) | 9.4 | 8.1 | 7.9 | 9.0 | 8.3 | 8.3 | 9.3 |
+| Sea breeze (70 %) | 5.9 (3.1–10.0) | 7.1 (4.5–13.1) | 9.7 (4.1–12.7) | 11.4 (6.3–16.2) | 11.4 (7.0–16.6) | 11.3 (7.1–16.2) | 9.8 (6.9–15.1) |
+| Gradient (23 %) | 8.5 (4.6–14.8) | 8.4 (4.5–13.9) | 9.4 (6.5–14.6) | 10.5 (7.8–15.4) | 11.2 (7.1–16.2) | 12.2 (7.6–17.2) | 12.3 (7.9–17.7) |
+| SB on a gradient (5 %) | 6.5 | 6.8 | 8.9 | 10.9 | 12.2 | 12.5 | 12.7 |
+| No breeze (3 %) | 9.4 | 7.9 | 8.0 | 8.9 | 7.4 | 7.7 | 8.6 |
+
+On sea-breeze days Naples is about 1 kn stronger than Sorrento from 13:00 to 16:00, and on gradient days
+it is within half a knot. The offsets come from CERRA, and they match local knowledge for Naples (+1–2 kn,
+low confidence).
 
 ## 3. Direction, and when the breeze fills (Q3)
 
@@ -194,7 +207,7 @@ these numbers.
 
 ### The three areas hour by hour, 10:00–18:00
 
-Off **Sorrento** is the race-week wind of §2, extended to 10:00 and 18:00. For **Mid-bay** and
+Off **Sorrento** is the race-week simulation itself (the masthead's area), extended to 10:00 and 18:00. For **Mid-bay** and
 **Posillipo / Naples harbour**, CERRA's mean difference from Sorrento is added to every simulated hour,
 in speed and in direction. That difference is taken separately for each hour and each weather type,
 from Open-Meteo's CERRA at each area's sea cell over 16 summers.
@@ -301,8 +314,8 @@ direct, in-bay May → June factor a month before the start.
 
 - **Scripts** (`scripts/naples-study/`, read-only unless `--write`):
   - `classify_regimes.py`: the weather type of each day.
-  - `naples_results.py`: everything in §2–6.
-  - `naples_zones.py`: the three areas, 10:00–18:00 (bars and roses).
+  - `naples_results.py`: everything in §3–6, and the Sorrento summary.
+  - `naples_zones.py`: §2 (Naples) and the three areas, 10:00–18:00 (bars and roses).
   - `isd_fetch.py` and `ispra_fetch.py`: the station archives.
   - `station_map.py`: the map.
 - **Outputs**, in `naples-study-2027/results/`:

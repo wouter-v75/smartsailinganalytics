@@ -172,6 +172,7 @@ def fig_roses(rose, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fig-dir", type=Path)
+    ap.add_argument("--boot", type=int, default=200)
     a = ap.parse_args()
     reg = nr.regimes()
     n72 = nr.n72_hourly(reg)
@@ -208,6 +209,37 @@ def main():
     for z in AREAS:
         stats[z].to_csv(out / f"area_{z}_hourly_10_18.csv")
         rose[z].to_csv(out / f"area_{z}_rose_10_18.csv")
+    # Section 2 of the report for Posillipo / Naples harbour: the racing hours 11-17, all statistics
+    race = [h for h in HOURS if 11 <= h <= 17]
+    nap = areas["posillipo"][areas["posillipo"].lh.isin(race)]
+    nr.HOURS = race
+    s2 = nr.summarise(nap)
+    by_reg = {r: nr.summarise(g)["hourly"] for r, g in nap.groupby("broad")}
+    print("\nNAPLES, section 2, all days:\n", s2["hourly"].round(2))
+    for r, h in by_reg.items():
+        print(f"  {r}:", {k: f"{h.loc[k, .5]:.1f} ({h.loc[k, .1]:.1f}-{h.loc[k, .9]:.1f})" for k in race})
+    years = sorted(reg.index.year.unique())
+    keep = {14: [], 15: []}
+    for _ in range(a.boot):
+        ys = list(nr.rng.choice(years, len(years)))
+        ds = [sorted(prof)[i] for i in nr.rng.integers(len(prof), size=len(prof))]
+        nr.HOURS = HOURS
+        x = per_area(nr.simulate(reg, prof, e5, b["bias"], F, ys, ds), offs)["posillipo"]
+        for h in keep:
+            keep[h].append(float(x[x.lh == h].kn.median()))
+    ci = {h: (round(float(np.quantile(v, .05)), 1), round(float(np.quantile(v, .95)), 1)) for h, v in keep.items()}
+    print("  90 % interval of the median:", ci)
+    s2["hourly"].to_csv(out / "naples_section2_hourly.csv")
+    (out / "naples_section2.json").write_text(json.dumps(
+        {"hourly": s2["hourly"].round(3).to_dict(), "ci_p50": ci,
+         "by_regime": {r: h.round(2).to_dict() for r, h in by_reg.items()}}, indent=1, default=str))
+    if a.fig_dir:
+        nr.HOURS = race
+        nr.fig_fan(s2["hourly"], a.fig_dir / "fan_all_naples.svg",
+                   "Race week 29 Jun - 3 Jul: wind at 30 m, Posillipo / Naples harbour, all days")
+        nr.fig_fan(by_reg["sea breeze"], a.fig_dir / "fan_seabreeze_naples.svg", "Naples: sea-breeze days only (~70 % of race-week days)")
+        nr.fig_fan(by_reg["gradient"], a.fig_dir / "fan_gradient_naples.svg", "Naples: gradient days only (~23 %)")
+        nr.HOURS = HOURS
     if a.fig_dir:
         fig_bars(stats, a.fig_dir / "areas_hourly_bars.svg")
         fig_roses(rose, a.fig_dir / "areas_roses.svg")
