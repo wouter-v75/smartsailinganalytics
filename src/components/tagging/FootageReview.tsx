@@ -7,6 +7,7 @@ import {
 import { canWatchFolders, ensureFolderPermission } from '@/lib/watchFolder'
 import { FOOTAGE_FOLDER_PREF, getPref, setPref } from '@/lib/prefsStore'
 import { sessionClock } from '@/lib/tagging/clock'
+import { sectionFromMarks } from '@/lib/tagging/grabWindow'
 
 // Review the day's drone footage off the SSD, without moving a byte of it.
 //
@@ -48,10 +49,19 @@ export interface FootageReviewProps {
   onPlayhead?: (utc: number | null) => void
   /** Pressing G. The parent owns what a tag IS; this only says when. */
   onGrab?: (utc: number) => void
+  /**
+   * An in and an out, marked with I and O — the window somebody chose.
+   *
+   * Separate from onGrab because the two say different things and the cutter
+   * treats them differently: a grab is a moment it pads by ±30 s, a section is
+   * cut exactly as given and is never dropped for overlapping a start. Without
+   * this the only way to ask for three minutes was to press G six times.
+   */
+  onSection?: (fromUtc: number, toUtc: number) => void
 }
 
 export default function FootageReview({
-  date, tzOffsetMin = 0, seekToUtc, onPlayhead, onGrab,
+  date, tzOffsetMin = 0, seekToUtc, onPlayhead, onGrab, onSection,
 }: FootageReviewProps) {
   const [dir, setDir] = React.useState<Dir | null>(null)
   const [files, setFiles] = React.useState<FootageFile[]>([])
@@ -61,6 +71,11 @@ export default function FootageReview({
   const [stale, setStale] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const videoRef = React.useRef<HTMLVideoElement | null>(null)
+  // The in point, once marked, until an out point closes it or Esc drops it.
+  // State rather than a ref because the readout has to show it: an in point you
+  // cannot see is an in point you forget you set, and the next O then produces
+  // a section starting somewhere you have scrubbed away from.
+  const [markIn, setMarkIn] = React.useState<number | null>(null)
   // The seek a click asked for, held until the file it needs has loaded.
   const pendingSeek = React.useRef<number | null>(null)
 
@@ -186,6 +201,11 @@ export default function FootageReview({
     pendingSeek.current = null
   }
 
+  // A new file means a new in point. Left alone, an I marked in one clip and an
+  // O pressed in the next would span the gap between them — including whatever
+  // the drone was not recording, which is not footage that exists.
+  React.useEffect(() => { setMarkIn(null) }, [playing])
+
   const playheadUtc = React.useCallback((): number | null => {
     const v = videoRef.current
     if (!v || !playing) return null
@@ -210,10 +230,27 @@ export default function FootageReview({
         const at = playheadUtc()
         if (at != null) { e.preventDefault(); onGrab?.(at) }
       }
+      // I marks the in point, O closes it. Two keys, no dialog, no pause — the
+      // same bargain G strikes, and the same one every editor makes.
+      if (e.key === 'i' || e.key === 'I') {
+        const at = playheadUtc()
+        if (at != null) { e.preventDefault(); setMarkIn(at) }
+      }
+      if (e.key === 'o' || e.key === 'O') {
+        const at = playheadUtc()
+        if (at == null || markIn == null) return
+        e.preventDefault()
+        // Ordering and the too-short rule both live in grabWindow, with the
+        // cutter's half of the same decision.
+        const sec = sectionFromMarks(markIn, at)
+        if (sec) onSection?.(sec.from, sec.to)
+        setMarkIn(null)
+      }
+      if (e.key === 'Escape' && markIn != null) { e.preventDefault(); setMarkIn(null) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [playing, onGrab, playheadUtc])
+  }, [playing, onGrab, onSection, playheadUtc, markIn])
 
   React.useEffect(() => () => { if (url) URL.revokeObjectURL(url) }, [url])
 
@@ -277,6 +314,47 @@ export default function FootageReview({
             >
               Grab video here <span style={{ opacity: 0.7 }}>(G)</span>
             </button>
+            {/* In/out. Shown as one control that changes what it does, because
+                the two halves are one gesture and a pair of buttons invites
+                pressing Out first. */}
+            {markIn == null ? (
+              <button
+                onClick={() => { const at = playheadUtc(); if (at != null) setMarkIn(at) }}
+                style={btn}
+              >
+                Mark in <span style={{ opacity: 0.7 }}>(I)</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    const at = playheadUtc()
+                    if (at == null) return
+                    const sec = sectionFromMarks(markIn, at)
+                    if (sec) onSection?.(sec.from, sec.to)
+                    setMarkIn(null)
+                  }}
+                  style={{ ...btn, background: '#0E7490', color: '#E0F7FB' }}
+                >
+                  Cut to here <span style={{ opacity: 0.7 }}>(O)</span>
+                </button>
+                <span style={{ fontSize: 11, color: C.accent, fontVariantNumeric: 'tabular-nums' }}>
+                  in {sessionClock(markIn, tzOffsetMin)}
+                  {(() => {
+                    const at = playheadUtc()
+                    if (at == null) return null
+                    const sec = Math.round(Math.abs(at - markIn) / 1000)
+                    return ` · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
+                  })()}
+                </span>
+                <button
+                  onClick={() => setMarkIn(null)}
+                  style={{ ...btn, padding: '4px 8px', minHeight: 0, fontSize: 11, color: C.dim }}
+                >
+                  clear <span style={{ opacity: 0.7 }}>(esc)</span>
+                </button>
+              </>
+            )}
             <span style={{ fontSize: 10, color: C.dim }}>space plays and pauses</span>
           </div>
         </>

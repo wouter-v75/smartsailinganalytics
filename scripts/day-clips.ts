@@ -42,6 +42,7 @@ import { createClient } from '@supabase/supabase-js'
 // Plain JS, shared with the app, so the guns and roundings are read exactly
 // as the tagger reads them.
 import { parseXmlEvents } from '../src/lib/xmlEventParse.js'
+import { grabWindow } from '../src/lib/tagging/grabWindow'
 
 /** Only the parts of the parsed event file this script touches. Typed, rather
  *  than `any`, because making it OPTIONAL turned every `ev.` into a crash the
@@ -75,6 +76,13 @@ Usage:
                 pressed Grab video there. Repeatable or comma-separated. Use it
                 for the clip spotted after the day was cut — everything else is
                 already made, so only this one encodes.
+  --section FROM-TO  cut exactly this window, local HH:MM:SS-HH:MM:SS.
+                Repeatable or comma-separated. Not a moment with padding round
+                it — the in and out somebody chose, so the clip is the length
+                they asked for. The footage review writes these itself: a Grab
+                press with an in and an out marked arrives as a section, and one
+                without stays a ±30 s moment. Never dropped for overlapping a
+                start or a rounding, unlike --at.
   --finish TIME local HH:MM:SS, if SSA has no finish tag for the day
   --practice TIME  a gun that was a PRACTICE start: its start is cut, the
                 milling about after it is not. Repeatable or comma-separated.
@@ -200,15 +208,30 @@ const WINDOWS = [
  *  leadSec before the press, so the press itself is what goes to --at; and the
  *  database stores a true UTC instant, so it has to be brought into the event
  *  file's local frame, which is the one the cutter works in. */
-async function grabVideoTimes(offsetMin: number): Promise<string[]> {
+async function grabVideoTimes(
+  offsetMin: number
+): Promise<{ at: string[]; sections: string[] }> {
   const { data, error } = await sb
     .from('ssa_tag_events')
-    .select('t0, slug, rejected')
+    .select('t0, t1, slug, rejected')
     .eq('session_date', date).eq('slug', 'grab-video').eq('rejected', false)
     .order('t0')
   if (error) fail(`reading Grab video tags: ${error.message}`)
-  const LEAD_MS = 30_000
-  return (data || []).map((r) => clock(Date.parse(r.t0 as string) + LEAD_MS + offsetMin * 60_000))
+  const at: string[] = []
+  const sections: string[] = []
+  for (const r of data || []) {
+    // Moment or section — src/lib/tagging/grabWindow.ts owns that rule, and is
+    // imported rather than restated so the cutter and the review UI cannot come
+    // to disagree about what a stored window means.
+    const w = grabWindow({
+      t0: Date.parse(r.t0 as string),
+      t1: r.t1 ? Date.parse(r.t1 as string) : null,
+    })
+    const local = (ms: number) => clock(ms + offsetMin * 60_000)
+    if (w.kind === 'section') sections.push(`${local(w.from!)}-${local(w.to!)}`)
+    else at.push(local(w.at!))
+  }
+  return { at, sections }
 }
 
 /**
@@ -374,10 +397,23 @@ const main = async () => {
   const given: string[] = []
   args.forEach((a, i) => { if (a === '--at' && args[i + 1]) given.push(...args[i + 1].split(',')) })
   const extraAt = given.map((t) => t.trim()).filter(Boolean)
+  const givenSectionArgs: string[] = []
+  args.forEach((a, i) => { if (a === '--section' && args[i + 1]) givenSectionArgs.push(...args[i + 1].split(',')) })
+  const givenSections = givenSectionArgs.map((t) => t.trim()).filter(Boolean)
+  for (const t of givenSections) {
+    if (!/^\d{1,2}:\d{2}:\d{2}-\d{1,2}:\d{2}:\d{2}$/.test(t)) {
+      fail(`--section: ${t} is not local HH:MM:SS-HH:MM:SS`)
+    }
+  }
   for (const t of extraAt) {
     if (!/^\d{1,2}:\d{2}:\d{2}$/.test(t)) fail(`--at: ${t} is not a local HH:MM:SS`)
   }
-  const at = [...await grabVideoTimes(tz), ...extraAt].sort()
+  const grabbed = await grabVideoTimes(tz)
+  const at = [...grabbed.at, ...extraAt].sort()
+  // Windows somebody chose while watching the footage back, plus any given on
+  // the command line. Passed through untouched: the cutter is what knows how to
+  // turn a local HH:MM:SS into the day's instant.
+  const sections = [...grabbed.sections, ...givenSections].sort()
   const finish = await finishTime(tz, ev)
   // A rounding's lead is 20 s (baseTags), so t0 + 20 s is the moment itself.
   // `topmark` AND the generic `mark`. The tagger offers both — a Racing group
@@ -406,6 +442,11 @@ const main = async () => {
   console.log(`  clips    ${out}`)
   console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags on this day)'}` +
     (extraAt.length ? `   (${extraAt.join(', ')} given on the command line)` : ''))
+  if (sections.length) {
+    console.log(`  sections ${sections.join(', ')}` +
+      (givenSections.length ? `   (${givenSections.join(', ')} given on the command line)` : '') +
+      `   · cut exactly as marked, not padded`)
+  }
   console.log(`  finish   ${finish.time || '—'}  · ${finish.how}`)
   const tagged = starts.length || practiceTags.length || marks.length || gates.length
     || tacks.length || gybes.length
@@ -450,6 +491,7 @@ const main = async () => {
   if (practice) argv.push('--practice', practice)
   if (finish.time) argv.push('--finish', finish.time)
   if (at.length) argv.push('--at', at.join(','))
+  if (sections.length) argv.push('--section', sections.join(','))
   // The guns --racing works from are the starts AND the practice starts: a
   // practice start bounds the run-up to the first race, and leaving it out
   // would put its own clip outside every race and drop it.

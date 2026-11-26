@@ -451,6 +451,16 @@ export default function TaggerTab({
               const made = await t.apply(GRAB_VIDEO_SLUG, utc)
               if (made) await t.request(made.id, 'video', { mediaKind: grabMediaKind(made.labels) })
             }}
+            // An in and an out, marked while watching. The same tag and the same
+            // request as a Grab press — what differs is that the WINDOW is the
+            // one chosen rather than ±30 s round a moment, and scripts/day-clips
+            // cuts it exactly as given. ssa_tag_events has carried [t0, t1) since
+            // 0062 and the events route already prefers an explicit pair over
+            // `at`, so this needed nothing new underneath it.
+            onSection={async (from, to) => {
+              const made = await t.apply(GRAB_VIDEO_SLUG, from, { t0: from, t1: to })
+              if (made) await t.request(made.id, 'video', { mediaKind: grabMediaKind(made.labels) })
+            }}
           />
           </>
         ) : view === 'check' ? (

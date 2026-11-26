@@ -88,7 +88,7 @@ const opt = {
   photoLead: 30, photoLag: 30,      // 0:30 either side of a sail PhotoEvent — the
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, join: DEFAULT_JOIN_MS / 1000, noJoin: false, noTurns: false, noStarts: false, noTacks: false, noGybes: false,
-  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [], coverage: '',
+  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], sections: [], onlyAt: false, sources: [], coverage: '',
   racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], turns: { tack: [], gybe: [] }, have: [],
 }
 for (let i = 0; i < argv.length; i++) {
@@ -117,6 +117,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--gun') opt.guns.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--finish') opt.finish.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--at') opt.at.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
+  else if (a === '--section') opt.sections.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--no-photos') opt.noPhotos = true
   else if (a === '--no-turns') opt.noTurns = true
   else if (a === '--no-tacks') { opt.noTacks = true; opt.noTurns = false }
@@ -196,6 +197,13 @@ function usage() {
       --at HH:MM:SS   cut a clip around this LOCAL time too, as if it were a sail
                       photo. Repeatable, or comma-separated. Uses the photo
                       window (--photo-lead/--photo-lag), so 30/30 = a 60 s clip.
+      --section FROM-TO
+                      cut exactly this window, local HH:MM:SS-HH:MM:SS.
+                      Repeatable or comma-separated. Unlike --at this is not a
+                      moment with padding put round it — it is the in and out
+                      somebody chose while watching the footage back, so the
+                      clip is the length they asked for. A section is the one
+                      thing never dropped for overlapping a start or a rounding.
                       For moments the navigator did not mark in the event file.
       --only-at       cut ONLY the --at moments — ignore the guns, roundings,
                       manoeuvres and sail photos in the event file.
@@ -494,6 +502,11 @@ const KINDS = {
   tack:    { lead: () => opt.turnLead,  lag: () => opt.turnLag,  tag: 'tack',       name: 'tack' },
   gybe:    { lead: () => opt.turnLead,  lag: () => opt.turnLag,  tag: 'gybe',       name: 'gybe' },
   photo:   { lead: () => opt.photoLead, lag: () => opt.photoLag, tag: 'photo',      name: 'sail photo' },
+  // A section carries its OWN bounds, so its lead and lag are never read. The
+  // entry exists so SSA_TAG names it from the vocabulary rather than slugifying
+  // the kind, and as the reminder that a kind no GROUP names never reaches
+  // `merged` at all — see segmentsFor.
+  section: { lead: () => 0, lag: () => 0, tag: 'grab-video', name: 'section' },
 }
 let windows = []
 const addWindow = (utc, kind, label, valid = true, asked = false) => {
@@ -659,6 +672,31 @@ if (opt.at.length) {
     addWindow(utc, 'photo', `Photo ${t}`, true, true)
   }
 }
+// --section FROM-TO: a window somebody CHOSE — in and out — rather than a
+// moment with a window put round it.
+//
+// This is what reviewing the card produces. Watching it back, the coach knows
+// where the thing they want starts and where it stops, and a Grab press cannot
+// say so: it is one instant, and the cutter pads it by ±30 s. A three-minute
+// luffing match came out as the middle minute of itself.
+//
+// `asked` is set, as for --at, so --racing keeps it wherever it fell. Somebody
+// pressed a button for this one.
+if (opt.sections.length) {
+  for (const spec of opt.sections) {
+    const parts = String(spec).split('-')
+    if (parts.length !== 2) die(`--section: "${spec}" is not FROM-TO (local HH:MM:SS-HH:MM:SS)`)
+    const a0 = parts[0].trim(), a1 = parts[1].trim()
+    const from = atLocal(a0, '--section')
+    const to = atLocal(a1, '--section')
+    // Refused, not reordered. A reversed pair is far likelier to be a typo, or
+    // an out point marked before the in point, than a request for the window
+    // between them — and quietly swapping it cuts the right LENGTH of the wrong
+    // water, which is the kind of mistake nobody goes looking for.
+    if (!(to > from)) die(`--section: ${a0}-${a1} does not run forwards`)
+    windows.push({ at: from, from, to, kind: 'section', asked: true, label: `Section ${a0}` })
+  }
+}
 // --racing: keep only what happened inside a race.
 //
 // A day like 28 September is four hours of training and then one race, and its
@@ -780,7 +818,21 @@ function segmentsFor(c) {
   const photos = c.hits.filter((w) => w.kind === 'photo').map(clip).filter(usable)
     .filter((x) => !hard.some((a) => x.from <= a.to && x.to >= a.from))
     .sort(byTime)
-  const anchors = [...hard, ...photos]
+  // Sections are anchors of their own, and the ONE group nothing drops.
+  //
+  // A photo or a manoeuvre inside a start is dropped because the start already
+  // contains that footage. A section is not the same case: somebody watched the
+  // card and asked for exactly this window, so the overlap is a reason to keep
+  // it, not to discard it — a section that happens to straddle the gun is still
+  // the three minutes they asked for, and the start's own 90/90 is not.
+  //
+  // They do merge with each OTHER, since two sections marked a few seconds
+  // apart are one piece of water, and they stretch no other group's boundary
+  // because every group's spans are cut before any merging happens.
+  const sections = c.hits.filter((w) => w.kind === 'section').map(clip).filter(usable).sort(byTime)
+  // Counted as an anchor for what follows: a tack inside a section a coach
+  // asked for is already filmed, exactly as a tack inside a rounding is.
+  const anchors = [...hard, ...photos, ...sections]
 
   // A tack or gybe falling inside ANY anchor window is already filmed. Dropping it
   // beats the alternatives: stretching the anchor (the bug), or emitting a second
@@ -802,7 +854,7 @@ function segmentsFor(c) {
     }
     return out
   }
-  const merged = [...mergeRun(starts), ...mergeRun(marks), ...mergeRun(photos), ...mergeRun(others)].sort(byTime)
+  const merged = [...mergeRun(starts), ...mergeRun(marks), ...mergeRun(sections), ...mergeRun(photos), ...mergeRun(others)].sort(byTime)
 
   // A two-second sliver is not worth a file; give it a floor, inside the clip.
   for (const m of merged) {
@@ -928,7 +980,11 @@ const nameFor = (c, startMs, kinds) => {
 // start uploading first. Starts, then roundings, then manoeuvres — the clips the
 // debrief opens with are ready while the rest are still encoding, instead of the
 // whole card arriving at once an hour later.
-const RANK = { 'race-start': 0, topmark: 1, gate: 2, photo: 3, tack: 4, gybe: 4 }
+// A SECTION is ranked with the roundings, not last. Its tag is not in the
+// racing vocabulary, so the `?? 9` fallback would have put every hand-marked
+// section behind all 98 of a training day's tacks — the clips somebody asked
+// for by name arriving after the ones nobody did.
+const RANK = { 'race-start': 0, topmark: 1, 'grab-video': 1, gate: 2, photo: 3, tack: 4, gybe: 4 }
 const rankOf = (kinds) => Math.min(...(kinds.length ? kinds : ['zz']).map((k) => RANK[SSA_TAG(k)] ?? 9))
 const jobs = []
 for (const c of picked) {
