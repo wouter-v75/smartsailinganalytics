@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
+import { storageHost } from '@/lib/bunnyStorageHost'
 
 // Read/write key — separate from the read-only key used in /api/bunny/storage
 const STORAGE_WRITE_KEY = process.env.BUNNY_STORAGE_WRITE_KEY!;
@@ -32,9 +33,9 @@ export async function GET() {
   if (!STORAGE_WRITE_KEY || !STORAGE_ZONE)
     return NextResponse.json({ error: "Bunny Storage write key not configured" }, { status: 503 });
 
-  const host = STORAGE_REGION === "de"
-    ? "https://storage.bunnycdn.com"
-    : `https://${STORAGE_REGION}.storage.bunnycdn.com`;
+  // One implementation of the region → host rule, shared with the Stream fetch
+  // route, which now addresses Storage directly. Frankfurt has no prefix.
+  const host = storageHost(STORAGE_REGION);
 
   return NextResponse.json({
     accessKey: STORAGE_WRITE_KEY,

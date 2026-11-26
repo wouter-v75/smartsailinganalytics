@@ -15,24 +15,40 @@
 // Bunny reading its own CDN over its own network. Nothing extra leaves our
 // uplink, and it does not compete with the next clip's upload.
 //
-// The URL we hand over is token-signed and short-lived by CDN standards but long
-// by queue standards — a fetch can sit in Bunny's queue for a while, and a URL
-// that expires before the fetch runs fails silently, leaving a video stuck at
-// status 0 with no bytes. Hence the deliberately generous TTL below.
+// WHAT WE HAND OVER, and why it changed. This used to pass a token-signed
+// pull-zone URL with a 24 h TTL. It worked, and it was outside what the API
+// specifies: Bunny documents the fetch endpoint as taking "signed URLs,
+// expiring tokens, or time-limited access links are not supported". The whole
+// 720p path rested on that.
+//
+// The documented route to the same place is the `headers` field, which is for
+// static auth. So we give Bunny the object's STORAGE API url and the zone's
+// READ-ONLY access key, and it authenticates the way the API says to. Three
+// things get better as a side effect:
+//
+//   - no expiry, so a fetch that sits in Bunny's queue for hours can no longer
+//     be stranded by a dead link — which left videos at status 0 with no bytes
+//     and nothing to say why;
+//   - no dependency on the pull zone or on token auth being configured, so the
+//     adaptive encode cannot be blocked by CDN-side settings;
+//   - the key is read-only and server-side. It never reaches the browser, and
+//     it travels from us to Bunny over TLS to be used against Bunny's own
+//     storage.
 //
 // Reference: POST /library/{libraryId}/videos/fetch, body { url, title, headers? }
-// (bunny.net/docs/reference/video_fetchnewvideo, checked 2026-09-09).
+// (bunny.net/docs/reference/video_fetchnewvideo, re-read 2026-11-26).
 
 import { NextRequest, NextResponse } from 'next/server'
-import { signBunnyUrl, bunnyConfigured } from '../../../../lib/bunny-signed-url'
+import { storageObjectUrl } from '../../../../lib/bunnyStorageHost'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 const STREAM_KEY = process.env.BUNNY_STREAM_API_KEY!
 const LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID!
-
-// Long enough to outlive a slow transcode queue. The URL only grants read access
-// to one object we are deliberately handing to Bunny, so a long life is cheap.
-const FETCH_URL_TTL_SEC = 24 * 3600
+// READ-ONLY by design (see .env.example): this key is handed to Bunny's fetcher,
+// and fetching needs reading and nothing else. BUNNY_STORAGE_WRITE_KEY is the
+// zone password and must never be sent here.
+const STORAGE_READ_KEY = process.env.BUNNY_STORAGE_API_KEY
+const STORAGE_ZONE = process.env.BUNNY_STORAGE_ZONE
 
 interface Body {
   /** Path inside the storage zone, e.g. sessions/2026-09-08/originals/<id>.mp4 */
@@ -48,9 +64,9 @@ export async function POST(req: NextRequest) {
   if (!STREAM_KEY || !LIBRARY_ID) {
     return NextResponse.json({ error: 'Bunny Stream not configured' }, { status: 503 })
   }
-  if (!bunnyConfigured()) {
+  if (!STORAGE_READ_KEY || !STORAGE_ZONE) {
     return NextResponse.json(
-      { error: 'Bunny token auth not configured — cannot sign a fetch URL' },
+      { error: 'Bunny Storage read key/zone not configured — cannot authorise a fetch' },
       { status: 503 }
     )
   }
@@ -67,10 +83,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'title required' }, { status: 400 })
   }
 
-  const signed = signBunnyUrl({ path, ttlSec: FETCH_URL_TTL_SEC })
-  if (!signed) {
-    return NextResponse.json({ error: 'could not sign the storage URL' }, { status: 500 })
-  }
+  const sourceUrl = storageObjectUrl(STORAGE_ZONE, path)
 
   try {
     const res = await fetch(
@@ -78,7 +91,12 @@ export async function POST(req: NextRequest) {
       {
         method: 'POST',
         headers: { AccessKey: STREAM_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: signed.url, title }),
+        body: JSON.stringify({
+          url: sourceUrl,
+          title,
+          // Static auth, which is what `headers` is documented for.
+          headers: { AccessKey: STORAGE_READ_KEY },
+        }),
       }
     )
     const text = await res.text()

@@ -1715,9 +1715,15 @@ function SSAApp(){
                                 // on a 1080p encode to watch 720p.
                                 { resolutions: FAST_LADDER },
                               );
-                              if (!uploaded) {
-                                setMobileSyncState({ phase: 'error', message: 'Upload interrupted', progress: 0 });
-                                alert('Upload was interrupted — retry to resume.');
+                              if (!uploaded.ok) {
+                                // An expired upload cannot be resumed, so drop
+                                // the guid and say so — "retry to resume" would
+                                // send them round the same 404 for ever.
+                                if (uploaded.gone) clearPendingOrigStream(selectedVideo.id);
+                                setMobileSyncState({ phase: 'error', message: uploaded.gone ? 'Upload had expired' : 'Upload interrupted', progress: 0 });
+                                alert(uploaded.gone
+                                  ? 'That upload had expired, so it cannot be resumed. Press it again to start a fresh one.'
+                                  : 'Upload was interrupted — retry to resume.');
                                 return;
                               }
                               // Flip has_original=true + record the Stream GUID.

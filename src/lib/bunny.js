@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getVideoBlob, markVideoCloudSynced, markCloudSynced } from "./localStore";
+import { uploadIsGone } from './tusUploadError';
 import { hashLogPayload, hashXmlPayload } from "./contentHash";
 import { readSyncManifest, updateSyncManifest } from "./syncManifest";
 import { readCandidates, writeKey, SESSION_LEAVES, photoLeaves } from "./storageKeys";
@@ -114,6 +115,35 @@ function loadTus() {
   });
 }
 
+// Drop tus-js-client's resume record for an upload Bunny no longer has.
+//
+// Two ways, because the first uses the documented API and the second does not
+// depend on it: tus 3.x keys its localStorage entries `tus::<fingerprint>` and
+// stores the uploadUrl inside, so a dead URL can be matched directly. Both are
+// best-effort — failing to tidy up must never fail the clip.
+async function forgetTusUpload(tus, upload) {
+  try {
+    const store = tus?.defaultOptions?.urlStorage;
+    if (store?.removeUpload) {
+      for (const prev of await upload.findPreviousUploads()) {
+        try { await store.removeUpload(prev.urlStorageKey); } catch { /* next */ }
+      }
+    }
+  } catch { /* fall through to the sweep */ }
+  try {
+    const dead = upload?.url;
+    if (!dead || typeof window === 'undefined') return;
+    for (const k of Object.keys(window.localStorage)) {
+      if (!k.startsWith('tus::')) continue;
+      try {
+        if (JSON.parse(window.localStorage.getItem(k))?.uploadUrl === dead) {
+          window.localStorage.removeItem(k);
+        }
+      } catch { /* not ours to read */ }
+    }
+  } catch { /* localStorage unavailable — nothing to clear */ }
+}
+
 // ── Upload video directly from browser to Bunny Stream via tus-js-client ──────
 // The encoding ladder, per upload. Bunny bills Premium encoding per MINUTE PER
 // RUNG and `status: 4` — which the player waits for — only arrives when EVERY
@@ -159,7 +189,7 @@ export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}
   });
   if (!credRes.ok) {
     console.error("Failed to get stream credentials:", await credRes.json());
-    return false;
+    return { ok: false, gone: false };
   }
   const { signature, expiry, libraryId } = await credRes.json();
   const tus = await loadTus();
@@ -182,8 +212,21 @@ export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}
       onProgress(bytesUploaded, bytesTotal) {
         onProgress?.(Math.round((bytesUploaded / bytesTotal) * 100));
       },
-      onSuccess() { resolve(true); },
-      onError(err) { console.error("tus upload error:", err); resolve(false); },
+      onSuccess() { resolve({ ok: true, gone: false }); },
+      async onError(err) {
+        // An EXPIRED upload is not a failed one. Bunny holds a TUS upload until
+        // its AuthorizationExpire (two hours here) and then answers 404 for
+        // ever — and re-signing does not extend it. Resuming it again is the
+        // one thing guaranteed never to work, so say which kind of failure this
+        // was and let the caller forget the video guid.
+        const gone = uploadIsGone(err);
+        console.error(gone ? "tus upload is gone (expired):" : "tus upload error:", err);
+        // The resume record is keyed on the FILE, not the video, so clearing
+        // our own guid is not enough: findPreviousUploads would hand the next
+        // attempt the same dead URL against a brand-new video object.
+        if (gone) await forgetTusUpload(tus, upload);
+        resolve({ ok: false, gone });
+      },
     });
     upload.findPreviousUploads().then(previous => {
       if (previous.length) upload.resumeFromPreviousUpload(previous[0]);
@@ -312,7 +355,12 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       const uploaded = await uploadFileToStream(
         uploadInfo, file, pct => status(`Uploading ${video.name}… ${pct}%`)
       );
-      if (!uploaded) { status(`⚠ Stream upload failed for ${video.name}`); continue; }
+      if (!uploaded.ok) {
+        status(uploaded.gone
+          ? `⚠ Stream upload for ${video.name} had expired — it will start fresh next time`
+          : `⚠ Stream upload failed for ${video.name}`);
+        continue;
+      }
 
       result.streamIds[video.id] = uploadInfo.streamId;
       await markVideoCloudSynced(video.id, uploadInfo.streamId);

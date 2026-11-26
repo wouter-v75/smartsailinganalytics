@@ -305,8 +305,18 @@ export function useCloudSync({
             // two paths then ask for exactly what each is for.
             { resolutions: FULL_LADDER }
           );
-          if (!uploaded) {
-            console.warn('[originals] Stream upload interrupted for', item.videoId);
+          if (!uploaded.ok) {
+            // GONE vs interrupted. An interrupted upload is resumed next run
+            // from the guid we kept; an EXPIRED one can only ever answer 404,
+            // so the guid has to go or every future run re-signs a dead upload
+            // and gets nowhere. That is how a 0-byte Stream video comes to sit
+            // beside a finished encode of the same clip (see migration 0108).
+            if (uploaded.gone) {
+              clearPendingOrigStream(item.videoId);
+              addLog(`↻ ${label}: the resumable upload had expired — starting fresh next time.`);
+            } else {
+              console.warn('[originals] Stream upload interrupted for', item.videoId);
+            }
             originalsSyncRef.current.done = idx; continue;
           }
 
