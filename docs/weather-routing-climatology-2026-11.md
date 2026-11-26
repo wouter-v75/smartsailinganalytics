@@ -48,13 +48,14 @@ land in `~/routing/msr/results`: `report.html`, `summary.json`, `elapsed.csv`,
 | `--day-factor` / `--night-factor` | 0.95 / 0.90 | share of the polar sailed in daylight / darkness (§4) |
 | `--dark-below` | −0.833° | sun altitude below which it is dark (sunset; −6 = civil dusk) |
 | `--radius` | 0.25 nm | mark rounding radius |
-| `--step` | 30 min | isochrone time step |
-| `--sector-nm` | 0.5 nm | isochrone pruning resolution (§3.4) |
+| `--step` | 90 min | isochrone time step (30 for a short inshore race); on 8 Transpac starts 90 min moved the mean −0.06 % against 30 |
+| `--sector-nm` | 2 nm | isochrone pruning resolution (§3.4); 0.5 with `--step 30` |
 | `--window` / `--every` | 0 d / 48 h | extra starts either side of the date, and their spacing |
 | `--cell` / `--stencil` | 2 nm / 32 | grid lattice spacing and directions |
 | `--max-nodes` | 400,000 | grid lattice cap; an ocean leg needs a coarser `--cell` or more (Transpac: `--cell 4 --max-nodes 1500000`) |
 | `--method` | both | `iso`, `grid` or both |
 | `--convergence` | off | re-route the first year finer and report the change |
+| `--workers` | 1 | route the years in N parallel processes; identical routes, each holds one year's wind (~0.5–1 GB), so 4 on an 8 GB laptop |
 
 ## 2. Pipeline
 

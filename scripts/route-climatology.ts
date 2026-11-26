@@ -81,8 +81,8 @@ if (flag('help') || !arg('data') || !arg('gpx') || !arg('polar') || !arg('start'
   --sailchart FILE       the boat's crossover chart: SSA's chart JSON (Boat → Sail chart) or Expedition XML;
                          adds hours per sail and the chart itself to the report
   --radius NM            mark rounding radius (default 0.25)
-  --step MIN             isochrone step (default 30)
-  --sector-nm NM         isochrone pruning resolution (default 0.5)
+  --step MIN             isochrone step (default 90; --step 30 --sector-nm 0.5 for a short inshore race)
+  --sector-nm NM         isochrone pruning resolution (default 2)
   --cell NM --stencil N  grid lattice spacing (default 2) and directions (16|32|48, default 32)
   --max-nodes N          grid lattice cap (default 400000); an ocean leg needs a coarser --cell or more nodes
   --no-land              ignore the land mask
@@ -107,7 +107,10 @@ const course = parseCourseGpx(fs.readFileSync(home(arg('gpx')!), 'utf8'), { radi
 // Expedition carries a route's name over when a route is copied, so a GPX can
 // arrive titled after another race; --name says what this one is.
 if (arg('name')) course.name = arg('name')!
-const isoOpts = { stepMin: Number(arg('step', '30')), sectorNm: Number(arg('sector-nm', '0.5')) }
+// 90 min / 2 nm by default: the wind is ERA5 at 0.25° and hourly, and on 8
+// Transpac starts 90/2 differed from 30/0.5 by -0.06 % on the mean (1.1 h at most
+// on one start) for a fraction of the time. A short inshore race wants --step 30.
+const isoOpts = { stepMin: Number(arg('step', '90')), sectorNm: Number(arg('sector-nm', '2')) }
 // Day/night performance: the share of the polar the crew sails, switched on the
 // sun's altitude at the BOAT (daylight.ts). 95 % by day and 90 % by night is the
 // standard offshore set-up here; --day-factor 1 --night-factor 1 routes the raw polar.
