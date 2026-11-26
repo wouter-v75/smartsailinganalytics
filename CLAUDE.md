@@ -535,6 +535,53 @@ top-bin error is unchanged from raw. The bars and the measurement live in
 `src/lib/mosFit` so every venue's refit gets them, with the result pinned in
 `src/lib/__tests__/mosTail.test.ts`.
 
+**An upsert that hands ONE row object to both `insert` and `update` deletes
+whatever the caller did not know to send.** Every field written `x ?? null`,
+which is right for an insert and destructive for an update. Swept every route
+that calls `.update()` on 26 Nov 2026: exactly **three** had the shape, and all
+three were losing real data.
+
+| route | what it erased |
+|---|---|
+| `boats/[boatId]/videos` | `bunny_storage_path` — the ONLY playback source a pre-proxy row has. A rename or a tag edit could un-play a clip, because `toLegacyVideoShape` never exposed the field, so every caller sent `null` |
+| `boats/[boatId]/photos` | **`analysis_data`**, which holds `sailTrim` — hand-marked geometry, the most expensive data in the app and the only part nothing regenerates |
+| `boats/[boatId]/backfill-from-bunny` | the same `analysis_data`, plus video **tags** — with the service key, over a whole boat's history, from one admin button |
+
+The photos case is the one to understand, because every client writer was
+already *trying* to merge — `{ ...photo.analysis, sailTrim }` — but each merged
+into **its own idea of what is stored**. `savePhotoSailTrim` (the timeline)
+writes the shared row and nothing local; `photoStore.mirror()`, fired when a
+deferred original finally uploads on Wi-Fi, sends the IMPORTING DEVICE's
+`analysis`, which never heard of that measurement. Import on cellular, measure
+from the timeline, come back to Wi-Fi — geometry gone, no error, no trace.
+PhotosTab escaped only because `mergeCloudIntoLocal` folds the cloud's copy in
+first, and that function has **one caller**. `savePhotoSailTrim`'s own header
+names the trap and works around it by sending the whole row back; a trap every
+caller must remember is one a caller eventually forgets.
+
+**Merge server-side, and know which side is newer.** The live photos route
+merges the INCOMING write over the stored row (the client is making the
+change). `backfill-from-bunny` merges the other way — stored wins per key —
+because its source is a `photos.json` snapshot that can only be OLDER than the
+row. Getting that backwards is silent. **`campaign/conditions` is the pattern
+done right** and is the one to copy: read the stored blob, spread it, and patch
+only the keys the body actually names (`if ('details' in body)`).
+
+**A clips:day RE-RUN for a day already uploaded inserts a whole second set of
+rows.** The upsert dedupes on `bunny_stream_id`, then on `external_id` — and
+`external_id` is the importing DEVICE's IndexedDB key, minted fresh every
+import, so nothing matches. Live on 26 Nov: 367 rows, **11 redundant across 7
+clips** (four pairs on 29 Sept from a re-cut, seven rows for two clips on 12
+July from repeated imports). `npx vite-node scripts/video-row-dedupe.ts` lists
+them; it is read-only and has no `--write`, because **the tags go the other
+way**: all four 29 Sept pairs have the renditions on one row and every tag on
+the other (`renditions 2 / tags 0` beside `renditions 1 / tags 11`), so "keep
+the playable one, delete the rest" throws away eleven tags a person typed. It
+prints the tag merge first. Its grouping key includes the TITLE, which is
+load-bearing: on 10 Sept two rows share a start time to the second and are
+different clips — `…day8 drone` (146 MB) and `…day8 Camera` (36 MB), two
+cameras on one moment.
+
 **A target shape must be scoped to the boat it belongs to.**
 `northstarConditions()` fell back to Northstar 76's sailmaker sheet for ANY sail
 with no override, so Baraka's mainsail scans were drawn against another boat's
