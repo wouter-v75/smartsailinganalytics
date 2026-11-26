@@ -8,7 +8,8 @@
 // Sailing Performance crossover tool and PredictWind use. North's charts put the
 // axes the other way round, which crews regularly ask to invert; this does not.
 //
-// Import/export is Expedition's `<crossoverchart>` XML, so a chart can go from
+// Import is Expedition's `<crossoverchart>` XML or the older nav sail table
+// (grid.ts converts it to shapes); export is always the XML, so a chart can go from
 // SSA back into the nav computer and round-trip without losing a field we read:
 //
 //   <element name="J3" group="Headsails" type="NotSet">

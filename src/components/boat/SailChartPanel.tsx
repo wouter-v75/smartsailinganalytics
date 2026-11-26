@@ -31,6 +31,7 @@ import {
   outline, contains, insertIndex, apparent, bspAt, awsIsoline, awaIsoline, vmgLine, levels, type Range,
 } from '../../lib/sailchart/geometry'
 import { autoLink, matchSail, sailCode, type InventorySail } from '../../lib/sailchart/match'
+import { parseSailGrid, gridToChart } from '../../lib/sailchart/grid'
 
 const C = {
   card: '#071624', border: '#1E3A5A', accent: '#06B6D4', plot: '#f8fafc', grid: '#e2e8f0',
@@ -179,14 +180,18 @@ export default function SailChartPanel({
   const importFile = async (f: File) => {
     setErr(''); setMsg('')
     try {
-      const parsed = parseCrossoverXml(await f.text(), f.name)
+      // Either an Expedition crossover XML, or the older nav table (TWS rows ×
+      // TWA columns, a sail per cell), which is converted into curved shapes.
+      const text = await f.text()
+      const isXml = /<\s*crossoverchart\b/i.test(text)
+      const parsed = isXml ? parseCrossoverXml(text, f.name) : gridToChart(parseSailGrid(text), f.name)
       if (chart.sails.length && !window.confirm(`Replace the current chart (${chart.sails.length} sails) with ${f.name} (${parsed.sails.length})? Nothing is stored until you press Save.`)) return
       const r = autoLink(parsed.sails, sails)
       pushHistory()
       setChart({ ...parsed, sails: r.sails })
       setSelId(null)
       const names = r.unmatched.map(id => r.sails.find(s => s.id === id)?.name).filter(Boolean)
-      setMsg(`Imported ${parsed.sails.length} sails; linked ${r.linked} to the inventory.` +
+      setMsg(`Imported ${parsed.sails.length} sail shapes${isXml ? '' : ' (converted from the sail table — check the edges, then Save)'}; linked ${r.linked} to the inventory.` +
         (names.length ? ` ${names.length} need you below: ${names.join(', ')}.` : ''))
     } catch (e: any) { setErr(e?.message || String(e)) }
   }
@@ -398,9 +403,9 @@ export default function SailChartPanel({
         <span style={{ flex: 1 }} />
         {canEdit && (
           <>
-            <input ref={fileRef} type="file" accept=".xml,text/xml,application/xml" style={{ display: 'none' }}
+            <input ref={fileRef} type="file" accept=".xml,.txt,.csv,.tsv,text/xml,application/xml,text/plain,text/csv" style={{ display: 'none' }}
               onChange={e => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = '' }} />
-            <button style={btn('#0F2A45', C.head)} onClick={() => fileRef.current?.click()}>⇪ Import XML</button>
+            <button style={btn('#0F2A45', C.head)} onClick={() => fileRef.current?.click()}>⇪ Import chart</button>
           </>
         )}
         {chart.sails.length > 0 && <button style={btn('#0F2A45', C.head)} onClick={exportXml}>⇩ Export XML</button>}
@@ -420,7 +425,9 @@ export default function SailChartPanel({
       {chart.sails.length === 0 && (
         <div style={{ border: `1px dashed ${C.border}`, borderRadius: 10, padding: '18px 16px', color: C.dim, fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.head, marginBottom: 4 }}>No sail chart yet</div>
-          Import an Expedition crossover chart (<code>&lt;crossoverchart&gt;</code> XML){canEdit ? ', or add sails one by one below and draw them' : ''}.
+          Import an Expedition crossover chart (<code>&lt;crossoverchart&gt;</code> XML) or an older nav sail table
+          (TWS rows × TWA columns, a sail name per cell — .txt or .csv, either way round), which is converted into
+          curved shapes{canEdit ? '; or add sails one by one below and draw them' : ''}.
           {!polar && ' The boat has no polar on the Targets tab, so the AWA/AWS and VMG lines will not be drawn.'}
         </div>
       )}
