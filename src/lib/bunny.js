@@ -166,7 +166,12 @@ async function forgetTusUpload(tus, upload) {
 // nothing else, so a video brought in storage-first inherits the LIBRARY
 // default. That is why the fast path's ladder is a library setting and the
 // evening full-res upload, which comes through TUS, carries its own.
-export const FAST_LADDER = '360p,720p'                        // 720p to the team
+// The rungs the TEAM watches. Nothing in this codebase can ask for them: the
+// proxy reaches Stream through videos/fetch, which takes no encoding options, so
+// these are the LIBRARY default and must be set in Stream -> library ->
+// Encoding. This constant is the written-down form of that dashboard setting —
+// the one place to look when wondering what the library is supposed to be.
+export const FAST_LADDER = '360p,720p'
 export const FULL_LADDER = '240p,360p,480p,720p,1080p'        // the archive copy
 
 /**

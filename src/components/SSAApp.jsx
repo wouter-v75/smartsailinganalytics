@@ -2,16 +2,15 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getActiveMembership } from '../lib/active-membership';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
-import { checkCloudStatus, createStreamUpload, FAST_LADDER, fetchCloudSession, listR2Sessions, syncSessionToCloud, updateCloudSessionMetadata, uploadFileToStream } from '../lib/bunny';
+import { checkCloudStatus, fetchCloudSession, listR2Sessions, syncSessionToCloud, updateCloudSessionMetadata } from '../lib/bunny';
 import { upsertPhotoCloud } from '../lib/cloud-photos';
 import { getSessionCloud, listSessionsCloud } from '../lib/cloud-sessions';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud } from '../lib/cloud-tag-list';
-import { ensureCloudVideoId, listVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape } from '../lib/cloud-videos';
+import { listVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape } from '../lib/cloud-videos';
 import { onWifi } from '../lib/connection';
 import { hasOpenableData } from '../lib/hasOpenableData';
 import { computeAutoTags, dedupeVideos, getAllVideos, getAllVideosForMembership, getLogData, getSessions, getSessionsForMembership, getSyncOffsets, getTagList, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced, markVideoOriginalUploaded, pruneInertVideos, saveSyncOffset, saveTagList, updateVideoBlobAndDuration, updateVideoStartUtc, updateVideoTags, venueTodayIso as TODAY } from '../lib/localStore';
 import { nearestRow } from '../lib/logRowLookup';
-import { clearPendingOrigStream, getPendingOrigStream, setPendingOrigStream } from '../lib/pendingOrigStreams';
 import { startAutoFlush as startPhotoAutoFlush, syncPending as syncPendingPhotos } from '../lib/photoStore';
 import { canShareVideos } from '../lib/shareRoles';
 import { requestPersistentStorage } from '../lib/storagePersist';
@@ -224,7 +223,7 @@ function SSAApp(){
 
 
   const {
-    batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, handleBatchSaveToDisk, handleBatchUploadCompressed, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy,
+    batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, handleBatchSaveToDisk, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy,
   } = useBatchActions({
     allVideos, setAllVideos, selectedVideo, setSelectedVideo, activeDate,
     setMobileSyncState, addLog,
@@ -1416,14 +1415,9 @@ function SSAApp(){
                             ⟲ Sync {batchSelected.size}
                           </button>
                           <button onClick={handleBatchSaveToDisk}
-                            title="Download each selected clip's local file to disk for external ffmpeg compression"
+                            title="Download each selected clip to disk as an MP4. Copies for you — nothing in the cloud changes."
                             style={{background:"#06B6D420",border:"1px solid #06B6D450",borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
                             ↓ Save {batchSelected.size} to disk
-                          </button>
-                          <button onClick={handleBatchUploadCompressed}
-                            title="Upload compressed copies (from disk) for each selected clip — matched by filename stem. Local HD blobs are left untouched."
-                            style={{background:"#8B5CF620",border:"1px solid #8B5CF650",borderRadius:6,padding:"5px 12px",color:"#A78BFA",cursor:"pointer",fontSize:11,fontWeight:700}}>
-                            ↑ Upload {batchSelected.size} compressed
                           </button>
                           <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} video${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDelete();}}
                             style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"5px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:700}}>
@@ -1654,103 +1648,6 @@ function SSAApp(){
                           } catch (e) {
                             alert(`Export failed: ${e?.message || e}`);
                           }
-                        }
-                      : undefined
-                  }
-                  // ↑ Upload compressed — file picker that pushes the
-                  // chosen file STRAIGHT to Bunny Stream as the cloud's
-                  // "original" rendition. The IDB blob is deliberately
-                  // not touched, so the coach can keep playing the full
-                  // HD locally (HD-local toggle) while teammates stream
-                  // the smaller compressed version's adaptive ladder.
-                  onUploadCompressed={
-                    perms.canSync && selectedVideo.hasLocalBlob
-                      ? () => {
-                          const input = document.createElement('input');
-                          input.type = 'file';
-                          input.accept = 'video/mp4,video/quicktime,.mp4,.mov,.m4v';
-                          input.onchange = async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            try {
-                              const supabase = getBrowserSupabase();
-                              const { data: { user } } = await supabase.auth.getUser();
-                              if (!user) { alert('You need to be signed in.'); return; }
-                              const cloudId = await ensureCloudVideoId({
-                                userId: user.id,
-                                video: selectedVideo,
-                                sessionDate: selectedVideo.sessionDate || activeDate,
-                              });
-                              if (!cloudId) {
-                                alert('No cloud row available — check your team membership.');
-                                return;
-                              }
-                              const label = selectedVideo.title || selectedVideo.name || cloudId;
-                              setMobileSyncState({ phase: 'pushing', message: `Uploading compressed · ${label}`, progress: 0 });
-                              // Reuse a pending Stream video object from a
-                              // half-finished attempt so the TUS client
-                              // resumes; otherwise create a fresh one.
-                              let streamId = getPendingOrigStream(selectedVideo.id);
-                              if (!streamId) {
-                                const created = await createStreamUpload(label, file.size);
-                                streamId = created?.streamId || null;
-                                if (streamId) setPendingOrigStream(selectedVideo.id, streamId);
-                              }
-                              if (!streamId) {
-                                setMobileSyncState({ phase: 'error', message: 'Stream create failed', progress: 0 });
-                                alert('Could not create a Stream video.');
-                                return;
-                              }
-                              const uploaded = await uploadFileToStream(
-                                { streamId },
-                                file,
-                                (pct) => setMobileSyncState({
-                                  phase: 'pushing',
-                                  message: `Uploading compressed · ${label}`,
-                                  progress: pct,
-                                }),
-                                // A hand-picked "compressed" file is a review
-                                // copy, so it gets the fast ladder: two rungs
-                                // instead of five, and the team is not waiting
-                                // on a 1080p encode to watch 720p.
-                                { resolutions: FAST_LADDER },
-                              );
-                              if (!uploaded.ok) {
-                                // An expired upload cannot be resumed, so drop
-                                // the guid and say so — "retry to resume" would
-                                // send them round the same 404 for ever.
-                                if (uploaded.gone) clearPendingOrigStream(selectedVideo.id);
-                                setMobileSyncState({ phase: 'error', message: uploaded.gone ? 'Upload had expired' : 'Upload interrupted', progress: 0 });
-                                alert(uploaded.gone
-                                  ? 'That upload had expired, so it cannot be resumed. Press it again to start a fresh one.'
-                                  : 'Upload was interrupted — retry to resume.');
-                                return;
-                              }
-                              // Flip has_original=true + record the Stream GUID.
-                              await fetch(
-                                `/api/videos/${encodeURIComponent(cloudId)}/renditions`,
-                                {
-                                  method: 'PATCH',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ original: { streamId } }),
-                                },
-                              ).catch(()=>{});
-                              clearPendingOrigStream(selectedVideo.id);
-                              setAllVideos(p => p.map(v => v.id === selectedVideo.id
-                                ? { ...v, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
-                                : v));
-                              setSelectedVideo(p => p && p.id === selectedVideo.id
-                                ? { ...p, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
-                                : p);
-                              setMobileSyncState({ phase: 'done', message: `✓ Compressed uploaded · ${label}`, progress: 100 });
-                              setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
-                            } catch (err) {
-                              console.error('[upload-compressed] failed', err);
-                              setMobileSyncState({ phase: 'error', message: err?.message || 'Upload failed', progress: 0 });
-                              alert(`Upload failed: ${err?.message || err}`);
-                            }
-                          };
-                          input.click();
                         }
                       : undefined
                   }

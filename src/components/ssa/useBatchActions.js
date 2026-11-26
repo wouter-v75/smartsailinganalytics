@@ -1,14 +1,10 @@
 'use client'
 import { useState, useCallback } from "react";
 import { deleteStreamVideo } from '../../lib/bunny';
-import { deleteVideosCloud, ensureCloudVideoId } from '../../lib/cloud-videos';
+import { deleteVideosCloud } from '../../lib/cloud-videos';
 import { cloudRowExternalId, cloudRowId } from '../video/DeleteButton';
-import { deleteVideo, getVideoBlob, getVideosForDate, markVideoOriginalUploaded } from '../../lib/localStore';
-import { clearPendingOrigStream } from '../../lib/pendingOrigStreams';
-import { currentStorageScope } from '../../lib/storageScope';
+import { deleteVideo, getVideoBlob, getVideosForDate } from '../../lib/localStore';
 import { getBrowserSupabase } from '../../lib/supabase/browser';
-import { sortForUpload } from '../../lib/uploadOrder';
-import { uploadOriginalStorageFirst } from '../../lib/video-rendition-sync';
 
 export function useBatchActions({
   allVideos, setAllVideos, selectedVideo, setSelectedVideo, activeDate,
@@ -179,120 +175,6 @@ export function useBatchActions({
   // selected clip by filename stem (case-insensitive prefix), then push
   // each to Bunny Stream as the cloud "original". The local IDB blobs
   // stay untouched so HD-local debrief playback still works.
-  const handleBatchUploadCompressed = useCallback(async () => {
-    if (!batchSelected.size) return;
-    const selected = allVideos.filter(v => batchSelected.has(v.id));
-    if (!selected.length) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.accept = 'video/mp4,video/quicktime,.mp4,.mov,.m4v';
-    input.onchange = async (e) => {
-      const files = Array.from(e.target.files || []);
-      if (!files.length) return;
-      // Match files to clips by filename stem (case-insensitive). Accepts
-      // "<stem>.mp4", "<stem>_<anything>.mp4", "<stem>-<anything>.mp4"
-      // — e.g. matches "Race1.mp4" → Race1.mp4 / Race1_720p.mp4 / Race1-720.mp4.
-      const norm = s => (s || '').replace(/\.[^.]+$/, '').toLowerCase().trim();
-      const pairs = [];
-      const usedFiles = new Set();
-      for (const v of selected) {
-        const clipStem = norm(v.title || v.name || v.id);
-        if (!clipStem) continue;
-        const match = files.find(f => {
-          if (usedFiles.has(f)) return false;
-          const fs = norm(f.name);
-          return fs === clipStem || fs.startsWith(clipStem + '_') || fs.startsWith(clipStem + '-');
-        });
-        if (match) {
-          pairs.push({ video: v, file: match });
-          usedFiles.add(match);
-        }
-      }
-      if (!pairs.length) {
-        alert('No picked files matched the selected clips by name.\n\nThe match looks at filename stem — e.g. a clip titled "Race1" matches Race1.mp4 / Race1_720p.mp4 / Race1-compressed.mp4. Re-export from "Save to disk" if you renamed them.');
-        return;
-      }
-      if (pairs.length < selected.length) {
-        if (!confirm(`Matched ${pairs.length} of ${selected.length} clips. Continue with those?`)) return;
-      }
-
-      // Upload in DEBRIEF order, not library order. Uploads are serial and each
-      // clip becomes watchable as its own bytes land, so this decides what the
-      // team sees first. `selected` follows allVideos, which is sorted newest
-      // first for display — on 8 Sept that sent the race start LAST, behind ten
-      // gybes, undoing the clip script's care in cutting starts first.
-      const ordered = sortForUpload(
-        pairs.map(p => ({ ...p, tags: p.video.tags, title: p.video.title || p.video.name || p.video.id }))
-      );
-      pairs.length = 0;
-      pairs.push(...ordered);
-
-      try {
-        const supabase = getBrowserSupabase();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) { alert('You need to be signed in.'); return; }
-
-        for (let i = 0; i < pairs.length; i++) {
-          const { video, file } = pairs[i];
-          const label = video.title || video.name || video.id;
-          try {
-            const cloudId = await ensureCloudVideoId({
-              userId: user.id,
-              video,
-              sessionDate: video.sessionDate || activeDate,
-            });
-            if (!cloudId) { console.warn('[batch-upload-compressed] no cloud row for', video.id); continue; }
-            setMobileSyncState({ phase: 'pushing', message: `Uploading ${i+1}/${pairs.length} · ${label}`, progress: 0 });
-            // STORAGE FIRST, then Bunny fetches it into Stream itself.
-            //
-            // Uploading straight to Stream left a clip unwatchable for 60-120
-            // minutes while it transcoded — longer than the trim and the upload
-            // put together, and the actual reason footage reached the team late.
-            // Landing it in Storage makes it playable as a progressive 720p MP4
-            // the moment the bytes arrive, per clip, and Bunny pulls it into
-            // Stream server-side so nothing crosses our uplink twice.
-            //
-            // KNOWN TRADE: the Storage PUT is a plain XHR and does NOT resume,
-            // where the old TUS path did. Clips are 7-80 MB apart from the start,
-            // so a retry is cheap, but a dropped connection on a big start clip
-            // restarts it. Revisit if that bites on the water.
-            const res = await uploadOriginalStorageFirst({
-              videoId: cloudId,
-              sessionDate: video.sessionDate || activeDate,
-              scope: await currentStorageScope(),
-              source: file,
-              title: label,
-              onProgress: (pr) => setMobileSyncState({
-                phase: 'pushing',
-                message: `Uploading ${i+1}/${pairs.length} · ${label}${pr.message ? ' · ' + pr.message : ''}`,
-                progress: Math.round((pr.pct || 0) * 100),
-              }),
-            });
-            if (!res.ok) { console.warn('[batch-upload-compressed] failed for', video.id, res.error); continue; }
-            // The ladder is an upgrade, not a precondition — a clip with only the
-            // Storage copy still plays, so this is a warning, not a failure.
-            if (res.streamError) console.warn('[batch-upload-compressed] adaptive encode not queued for', video.id, res.streamError);
-            clearPendingOrigStream(video.id);
-            // Persist it too, so a later Push to Cloud of this session skips it.
-            await markVideoOriginalUploaded(video.id, { originalPath: res.originalPath || null, originalStreamId: res.streamId || null });
-            setAllVideos(p => p.map(v => v.id === video.id
-              ? { ...v, hasOriginal: true, originalStreamId: res.streamId || null, streamProcessing: Boolean(res.streamId), cloudId }
-              : v));
-          } catch (err) {
-            console.error('[batch-upload-compressed] failed for', video.id, err);
-          }
-        }
-        setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${pairs.length} compressed clip${pairs.length===1?'':'s'}`, progress: 100 });
-        setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 4000);
-        clearBatch();
-      } catch (err) {
-        console.error('[batch-upload-compressed] outer failure', err);
-        setMobileSyncState({ phase: 'error', message: err?.message || 'Batch upload failed', progress: 0 });
-      }
-    };
-    input.click();
-  }, [batchSelected, allVideos, activeDate, clearBatch, setAllVideos, setMobileSyncState]);
 
   // Batch sync — admin + coach only. A pending offset (seconds) that can be
   // applied to every clip currently in batchSelected.
@@ -300,5 +182,5 @@ export function useBatchActions({
   const[batchSyncOpen,setBatchSyncOpen]=useState(false);
   const[batchSyncBusy,setBatchSyncBusy]=useState(false);
 
-  return { batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, handleBatchSaveToDisk, handleBatchUploadCompressed, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy };
+  return { batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, handleBatchSaveToDisk, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy };
 }

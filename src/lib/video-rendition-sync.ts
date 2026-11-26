@@ -382,25 +382,3 @@ export async function syncProxyForVideo({
     return { ok: false, error: msg }
   }
 }
-
-export async function uploadOriginalStorageFirst({
-  videoId,
-  sessionDate,
-  scope,
-  source,
-  title,
-  onProgress,
-  signal,
-  retryBaseMs,
-}: BaseArgs & { title: string }): Promise<{
-  ok: boolean
-  originalPath?: string
-  streamId?: string
-  streamError?: string
-  error?: string
-}> {
-  const r = await putAndFetch({ videoId, sessionDate, scope, blob: source, title, kind: 'original', onProgress, signal, retryBaseMs })
-  return r.ok
-    ? { ok: true, originalPath: r.path, streamId: r.streamId, streamError: r.streamError }
-    : { ok: false, error: r.error }
-}
