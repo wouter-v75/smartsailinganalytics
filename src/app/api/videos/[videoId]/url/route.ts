@@ -111,7 +111,7 @@ export async function GET(
   const { data: v, error } = await ssr
     .from('videos')
     .select(
-      'id, has_proxy, has_original, bunny_proxy_path, bunny_proxy_stream_id, proxy_stream_status, bunny_original_path, bunny_original_stream_id, original_stream_status, bunny_storage_path, thumbnail_url, title'
+      'id, has_proxy, has_original, bunny_proxy_path, bunny_proxy_stream_id, proxy_stream_status, bunny_original_path, bunny_original_stream_id, original_stream_status, bunny_stream_id, bunny_storage_path, thumbnail_url, title'
     )
     .eq('id', params.videoId)
     .maybeSingle()
@@ -195,8 +195,20 @@ export async function GET(
     return null
   }
 
+  // The removed flow's STREAM video. A real, adaptive, still-playing copy, and
+  // the only one of that era's two columns with bytes behind it — see
+  // lib/renditionOrder for the measurement. Tried before the storage path.
+  const resolveLegacyStream = async (): Promise<Resolved | null> => {
+    if (!v.bunny_stream_id) return null
+    const s = await streamHls(v.bunny_stream_id)
+    return s.url ? { url: s.url, kind: 'hls', served: 'legacy', expires: null } : null
+  }
+
   const resolveLegacy = (): Resolved | null => {
-    // Rows that pre-date the proxy migration — only bunny_storage_path.
+    // Rows that pre-date the proxy migration — only bunny_storage_path. On 79
+    // rows this names an object that was never written; resolveLegacyStream
+    // above answers for every one of those that has a guid, so this is reached
+    // only by a row with a storage path and nothing else at all.
     if (v.bunny_storage_path) {
       const signed = signBunnyUrl({ path: v.bunny_storage_path })
       if (signed) {
@@ -212,6 +224,7 @@ export async function GET(
     originalHls: resolveOriginalHls,
     originalMp4: resolveOriginalMp4,
     proxy: resolveProxy,
+    legacyStream: resolveLegacyStream,
     legacy: resolveLegacy,
   }
   let result: Resolved | null = null
@@ -223,7 +236,7 @@ export async function GET(
   // Bunny Stream auto-generates a poster thumbnail for every uploaded video.
   // Hand it back so cloud clips get a card image + a player poster instead
   // of a black frame. Available once the clip has any rendition on Stream.
-  const thumbStreamId = v.bunny_original_stream_id || v.bunny_proxy_stream_id
+  const thumbStreamId = v.bunny_original_stream_id || v.bunny_proxy_stream_id || v.bunny_stream_id
   const thumbnail =
     thumbStreamId && CDN_HOST
       ? `https://${CDN_HOST}/${thumbStreamId}/thumbnail.jpg`
@@ -253,7 +266,7 @@ export async function GET(
   if (!result) {
     // A Stream rendition exists but hasn't finished encoding yet — tell the
     // UI to show the "processing" state and poll, rather than erroring.
-    if (v.bunny_proxy_stream_id || v.bunny_original_stream_id) {
+    if (v.bunny_proxy_stream_id || v.bunny_original_stream_id || v.bunny_stream_id) {
       return NextResponse.json({
         url: null,
         kind: 'processing',

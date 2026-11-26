@@ -10,7 +10,27 @@
 //   originalMp4   the original as ONE signed Storage MP4, no ABR. For a
 //                 clips:day cut that is a 720p file and perfectly watchable;
 //                 for 4K card footage it is gigabytes at one bitrate.
-//   legacy        rows predating the split, with only bunny_storage_path.
+//   legacyStream  the whole clip on Bunny Stream under `bunny_stream_id`, from
+//                 the upload flow removed in Nov 2026 (src/lib/uploadFlows.ts).
+//                 Real, adaptive, and still playing.
+//   legacy        the same era's `bunny_storage_path`, as a signed Storage MP4.
+//
+// WHY legacyStream OUTRANKS legacy, which is not the order it reads in. Both
+// belong to the removed flow, but only ONE of them has bytes behind it. That
+// flow sent the file to Bunny STREAM and then wrote a `bunny_storage_path` of
+// `sessions/<date>/videos/<id>/original` describing where it would have gone if
+// it had used Storage — a key nothing ever PUT. Measured 26 Nov 2026 on the live
+// zone: 79 rows carry such a path, every one of the invented shape, and every
+// one 404s. 37 of them have no proxy and no original, so `legacy` was the step
+// that answered — handing out a signed URL to nothing while the row's own live
+// Stream video sat in a column this route never read.
+//
+// The main player never saw it (it only calls this route when has_proxy or
+// has_original is set, and falls through to /api/stream/status otherwise), which
+// is why it stayed hidden. The standalone timeline's fallback player and
+// `resolveShareTarget` both call this route unconditionally — so the timeline
+// showed a dead video and SHARING one of those clips reported "playable" and
+// produced a link that 404s for the recipient.
 //
 // WHY `hlsOnly` REORDERS RATHER THAN FORBIDS. Mobile wants the original for the
 // 1080p rung, and that rung exists only in originalHls. The obvious rule —
@@ -25,7 +45,8 @@
 // being three `||` chains in the route.
 
 export type Prefer = 'original' | 'proxy' | 'auto'
-export type RenditionStep = 'originalHls' | 'proxy' | 'originalMp4' | 'legacy'
+export type RenditionStep =
+  | 'originalHls' | 'proxy' | 'originalMp4' | 'legacyStream' | 'legacy'
 
 /**
  * The forms to try, best first.
@@ -38,7 +59,7 @@ export type RenditionStep = 'originalHls' | 'proxy' | 'originalMp4' | 'legacy'
  *                 which already puts the proxy first.
  */
 export function renditionOrder(prefer: Prefer, hlsOnly = false): RenditionStep[] {
-  if (prefer === 'proxy') return ['proxy', 'originalHls', 'originalMp4', 'legacy']
-  if (hlsOnly) return ['originalHls', 'proxy', 'originalMp4', 'legacy']
-  return ['originalHls', 'originalMp4', 'proxy', 'legacy']
+  if (prefer === 'proxy') return ['proxy', 'originalHls', 'originalMp4', 'legacyStream', 'legacy']
+  if (hlsOnly) return ['originalHls', 'proxy', 'originalMp4', 'legacyStream', 'legacy']
+  return ['originalHls', 'originalMp4', 'proxy', 'legacyStream', 'legacy']
 }
