@@ -65,8 +65,22 @@ export interface RoutingPolar {
 const TWS_STEP = 0.5
 const NTWA = 181
 
-/** Fritsch-Carlson monotone cubic through (xs, ys), sampled at the integers lo..hi. */
-function pchipSample(xs: number[], ys: number[], lo: number, hi: number): Float64Array {
+/**
+ * Fritsch-Carlson monotone cubic through (xs, ys), sampled at the integers lo..hi.
+ *
+ * `targets`: indices of the row's beat and run VMG targets. An Expedition polar
+ * TABULATES those angles — read with straight lines between points, as the nav
+ * computer and the Targets / Sail chart tabs read it, the best VMG is exactly
+ * there. Plain PCHIP puts a zero slope at a local maximum, and the run target IS
+ * one (speed rises to it from the reach and falls away to 180°), so the curve
+ * stayed flat past the target and kept speed the polar does not have: Ryujin's
+ * downwind optimum came out at 153° against the file's 145.7° at 16 kn, and the
+ * router sailed every run ~7° deep. At a target the slope on each side is now
+ * limited so VMG cannot keep rising past it: VMG = v·cosθ is stationary where
+ * dv/dθ = v·tanθ, so the slope toward the target side stays >= that and the slope
+ * away from it <= that. A kink is allowed there, as it is in the file itself.
+ */
+function pchipSample(xs: number[], ys: number[], lo: number, hi: number, targets: number[] = []): Float64Array {
   const n = xs.length
   const out = new Float64Array(hi - lo + 1)
   if (n === 1) { out.fill(ys[0]); return out }
@@ -81,14 +95,21 @@ function pchipSample(xs: number[], ys: number[], lo: number, hi: number): Float6
       m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i])
     }
   }
+  // One slope arriving at each point (mL) and one leaving it (mR).
+  const mL = m.slice(), mR = m.slice()
+  for (const i of targets) {
+    const k = ys[i] * Math.tan((xs[i] * Math.PI) / 180) * (Math.PI / 180)   // kn per degree
+    mL[i] = Math.max(mL[i], k)
+    mR[i] = Math.min(mR[i], k)
+  }
   let k = 0
   for (let x = lo; x <= hi; x++) {
     if (x <= xs[0]) { out[x - lo] = ys[0]; continue }
     if (x >= xs[n - 1]) { out[x - lo] = ys[n - 1]; continue }
     while (k < n - 2 && x > xs[k + 1]) k++
     const t = (x - xs[k]) / h[k], t2 = t * t, t3 = t2 * t
-    out[x - lo] = (2 * t3 - 3 * t2 + 1) * ys[k] + (t3 - 2 * t2 + t) * h[k] * m[k]
-      + (-2 * t3 + 3 * t2) * ys[k + 1] + (t3 - t2) * h[k] * m[k + 1]
+    out[x - lo] = (2 * t3 - 3 * t2 + 1) * ys[k] + (t3 - 2 * t2 + t) * h[k] * mR[k]
+      + (-2 * t3 + 3 * t2) * ys[k + 1] + (t3 - t2) * h[k] * mL[k + 1]
   }
   return out
 }
@@ -108,7 +129,14 @@ export function buildRoutingPolar(entries: PolarEntry[], opts: PolarOptions = {}
     // SAILING angle as the no-go edge.
     const lo = Math.ceil(pts[0].twa)
     const full = new Float64Array(NTWA)
-    const s = pchipSample(pts.map(p => p.twa), pts.map(p => p.bsp), lo, 180)
+    // The row's tabulated beat and run targets: the points of best VMG.
+    let iu = -1, id = -1, bu = 0, bd = 0
+    pts.forEach((p, i) => {
+      const u = p.bsp * Math.cos((p.twa * Math.PI) / 180)
+      if (p.twa < 90 && u > bu) { bu = u; iu = i }
+      if (p.twa > 90 && -u > bd) { bd = -u; id = i }
+    })
+    const s = pchipSample(pts.map(p => p.twa), pts.map(p => p.bsp), lo, 180, [iu, id].filter(i => i >= 0))
     full.set(s, lo)
     rowBsp.push(full)
     rowMin.push(lo)

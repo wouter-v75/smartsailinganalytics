@@ -244,6 +244,7 @@ beat, island, multi-leg, the naive bias).
 | choice | why |
 |---|---|
 | PCHIP (monotone cubic) in TWA | Straight lines kink at every tabulated angle, so the beat angle snaps to a row of the file. A natural spline overshoots, inventing speed at the top of a reaching curve. PCHIP is smooth and never leaves the range of its neighbours. |
+| …held to the polar's own VMG targets | An Expedition polar tabulates its beat and run angles. Plain PCHIP is flat at a local maximum, and the run target is one, so the curve kept speed past it and the downwind optimum came out ~7° deep (Ryujin: 153° against the file's 145.7° at 16 kn) — every run sailed too deep and too fast. At each row's target the slope is limited on both sides to `v·tanθ`, where VMG is stationary, so the optimum is the file's (to ~1° up to 24 kn). |
 | linear in TWS | What Expedition, qtVlm and OpenCPN do |
 | below the lowest TWS row: proportional to 0 at 0 kn | Expedition's behaviour |
 | above the highest row: held | Extrapolating a polar's slope upward invents speed where a crew reefs. LuckGrib clamps too. |

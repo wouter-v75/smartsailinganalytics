@@ -521,7 +521,7 @@ function report(): string {
   const offTable = multi ? `<h2>By start date</h2><p class="dim">Each row is one start offset from ${esc(arg('start')!.slice(5, 10))}, over all years. Green is fast, red slow, across the whole table.</p><table><tr><th></th>${methods.map(m => `<th>${m} mean</th><th>median</th><th>min</th><th>max</th><th>n</th>`).join('')}</tr>${offRows}</table>` : ''
   // TWS down the side, TWA across: one row per 2 kn band reads as "in this
   // breeze, where on the dial was the boat".
-  const heat = (m: string) => heatTableHtml(ms[m].tableAtTargets, { label: m === 'iso' ? 'Isochrone' : 'Grid', mast, folded: ms[m].movedToTargets })
+  const heat = (m: string) => heatTableHtml(ms[m].tableAtTargets, { label: m === 'iso' ? 'Isochrone' : 'Grid', mast, folded: ms[m].movedToTargets, targetsFrom: "the polar's own tabulated targets" })
   const sailSec = sailChart ? sailSectionHtml(sailChart, methods.map(m => ({ key: m, label: m === 'iso' ? 'Isochrone' : 'Grid', sails: ms[m].sails, table: ms[m].tableAtTargets })),
     { mast, races: ms[methods[0]].elapsedHours.n }) : ''
   const maps = methods.map(routeMap).join('')

@@ -234,3 +234,22 @@ describe('day and night', () => {
     expect(makePerf({ dayFactor: 1, nightFactor: 1, darkBelowDeg: -0.833 })).toBeUndefined()
   })
 })
+
+describe('routing polar honours the tabulated VMG targets', () => {
+  // Ryujin's 16 kn row: the run target is 145.7°, tabulated, with 180° beyond it.
+  const text = `!Expedition polar
+12.0\t0.0\t0.00\t37.3\t9.24\t60.0\t10.23\t90.0\t11.65\t120.0\t12.39\t145.5\t11.81\t180.0\t6.93
+16.0\t0.0\t0.00\t35.7\t9.55\t60.0\t10.88\t90.0\t12.86\t120.0\t14.62\t145.7\t14.98\t180.0\t8.90
+20.0\t0.0\t0.00\t35.7\t9.57\t60.0\t11.38\t90.0\t14.02\t135.0\t17.28\t147.0\t17.71\t180.0\t10.48`
+  const p = parseRoutingPolar(text)
+  it('puts the downwind optimum at the file target, not deeper', () => {
+    expect(Math.abs(p.vmg(16).dnTwa - 145.7)).toBeLessThanOrEqual(1)   // plain PCHIP gave 153
+    expect(Math.abs(p.vmg(20).dnTwa - 147)).toBeLessThanOrEqual(1)
+    expect(Math.abs(p.vmg(16).upTwa - 35.7)).toBeLessThanOrEqual(1)
+  })
+  it('still passes through every tabulated speed and stays below the target speed past it', () => {
+    expect(p.speed(16, 145.7)).toBeCloseTo(14.98, 1)
+    expect(p.speed(16, 120)).toBeCloseTo(14.62, 1)
+    expect(p.speed(16, 155)).toBeLessThan(14.98)
+  })
+})
