@@ -258,15 +258,34 @@ export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
 // individual video finishes uploading to Bunny Stream (before the next one
 // starts). Used by the UI to mirror that video into Supabase straight away so
 // teammates see clips appear one-by-one instead of waiting for the whole batch.
-// Is this clip's original already in the cloud? Three ways it can be: the legacy
-// direct-to-Stream upload below (cloudSynced + streamId); the storage-first path
-// used by the watch folder and the Videos tab (originalUploadedAt, set even when
-// the Stream fetch failed — the bytes are up); or the library's own flag from
-// the cloud row (hasOriginal). Push to Cloud must skip all three, or it sends a
-// clip that is already up a second time.
+// Is this clip already in the cloud, so that Push to Cloud must not send it
+// again? Five ways it can be:
+//
+//   cloudSynced + streamId          the legacy direct-to-Stream upload below
+//   originalUploadedAt              storage-first, set even when the Stream
+//                                   fetch failed — the bytes are up
+//   hasOriginal                     the library's own flag from the cloud row
+//   proxyUploadedAt / hasProxy      the TEAM'S copy
+//
+// The last two were missing, and the watch folder walked straight into the gap
+// the moment it started sending proxies instead of originals: a day of racing
+// is ~150 clips that the team can already watch, every one of which this would
+// have re-sent in full to `bunny_stream_id` — the legacy column that
+// resolveLegacy() reaches only when there is no proxy AND no original, i.e.
+// never for these. That is exactly the 69.7 GB of unplayed duplicates
+// migration 0107 was written to clear.
+//
+// So the question this answers is "is the clip up", not "is the ORIGINAL up".
+// A clip with only a proxy is missing its archive copy, and that is the Upload
+// originals button's job — a separate, deliberate action — not something to
+// infer by re-uploading the whole clip down a third path.
 export function alreadyInCloud(video) {
   if (!video) return false;
-  return Boolean((video.cloudSynced && video.streamId) || video.originalUploadedAt || video.hasOriginal);
+  return Boolean(
+    (video.cloudSynced && video.streamId) ||
+    video.originalUploadedAt || video.hasOriginal ||
+    video.proxyUploadedAt || video.hasProxy
+  );
 }
 
 export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus, opts = {}) {

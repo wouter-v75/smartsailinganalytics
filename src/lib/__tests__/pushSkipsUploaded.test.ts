@@ -31,6 +31,12 @@ describe('alreadyInCloud', () => {
   it("recognises the library's own flag from the cloud row", () => {
     expect(alreadyInCloud({ hasOriginal: true })).toBe(true)
   })
+  it('recognises the PROXY — the copy the team actually watches', () => {
+    // The watch folder stopped sending originals and started sending proxies,
+    // which left a day of racing looking un-uploaded to Push to Cloud.
+    expect(alreadyInCloud({ proxyUploadedAt: '2026-11-26T10:00:00.000Z' })).toBe(true)
+    expect(alreadyInCloud({ hasProxy: true })).toBe(true)
+  })
 })
 
 describe('syncSessionToCloud', () => {
@@ -47,15 +53,17 @@ describe('syncSessionToCloud', () => {
     const msgs: string[] = []
     const res = await syncSessionToCloud('2026-09-11', null, null, [
       { id: 'up', name: 'start.mp4', size: 10, originalUploadedAt: 1 },
+      { id: 'prox', name: 'mark.mp4', size: 10, hasProxy: true },
       { id: 'new', name: 'gybe.mp4', size: 10 },
     ], (m: string) => msgs.push(m))
 
     // Only the unmarked clip reaches Stream.
     expect(calls.filter((u) => u.includes('/api/stream/create'))).toHaveLength(1)
     expect(msgs).toContain('↩ start.mp4 already in cloud — skipping')
+    expect(msgs).toContain('↩ mark.mp4 already in cloud — skipping')
     expect(msgs.some((m) => m.startsWith('Creating Bunny Stream video for start.mp4'))).toBe(false)
     expect(msgs.some((m) => m.startsWith('Creating Bunny Stream video for gybe.mp4'))).toBe(true)
     // …and the caller is told, so its progress row closes.
-    expect(res.skipped).toEqual(['up'])
+    expect(res.skipped).toEqual(['up', 'prox'])
   })
 })

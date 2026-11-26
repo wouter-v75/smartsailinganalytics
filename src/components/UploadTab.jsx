@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getActiveMembership } from '../lib/active-membership';
 import { setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
-import { syncSessionToCloud, waitForStreamReady } from '../lib/bunny';
+import { alreadyInCloud, syncSessionToCloud, waitForStreamReady } from '../lib/bunny';
 import { saveLogDataCloud, saveXmlDataCloud, sessionSyncBlocker } from '../lib/cloud-sessions';
 import { mergeTagListCloud } from '../lib/cloud-tag-list';
 import { ensureCloudVideoId, makeVideoMirrorCallback } from '../lib/cloud-videos';
@@ -1534,14 +1534,20 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                 {!cloudStatus?.available&&<span style={{fontSize:9,color:"#EF4444",background:"#EF444415",border:"1px solid #EF444430",borderRadius:3,padding:"1px 5px"}}>Not configured</span>}
                 {!perms.canSync&&<span style={{fontSize:9,color:"#F59E0B",background:"#F59E0B15",border:"1px solid #F59E0B30",borderRadius:3,padding:"1px 5px"}}>Coach required</span>}
               </div>
-              {/* While watching, the watcher is already uploading these clips — and
-                  Push to Cloud does not know that (it skips only clips marked
-                  cloudSynced locally), so it would send every one a second time. */}
-              {phase==="saved"&&watchOn&&<div style={{fontSize:10,color:"#6EE7B7",marginBottom:12}}>Clips from the watched folder upload by themselves — nothing to press. Push to Cloud is hidden while watching because it would send them a second time.</div>}
+              {/* Hidden while watching: the watcher is already sending these.
+                  This used to be the ONLY guard, and it was load-bearing — stop
+                  watching and the button came back offering to send them all
+                  again. alreadyInCloud() now counts the proxy too, so the
+                  hiding is politeness and the skip is the real protection. */}
+              {phase==="saved"&&watchOn&&<div style={{fontSize:10,color:"#6EE7B7",marginBottom:12}}>Clips from the watched folder upload by themselves — nothing to press.</div>}
               {phase==="saved"&&!watchOn&&cloudStatus?.available&&perms.canSync&&(
                 <div style={{marginBottom:12}}>
-                  <div style={{fontSize:10,color:"#475569",marginBottom:10}}>Uploads log + events to R2 and transcodes videos in Stream. All team roles can view once processing completes (~1–3 min per video).</div>
-                  <button onClick={pushCloud} style={{background:"#8B5CF6",border:"none",borderRadius:8,padding:"11px 0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",width:"100%"}}>② Push to Cloud — {savedVids.length} video{savedVids.length!==1?"s":""} + log + events</button>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:10}}>Uploads the day&apos;s log and event file. Clips already in the cloud are skipped — send the team&apos;s copies with <strong>Sync proxies</strong> and the archive copies with <strong>Upload originals</strong>, both in the Videos tab.</div>
+                  {/* Count what will actually be SENT, not what is in the day. A
+                      button promising "150 videos" that skips 150 of them reads
+                      as a failure the first time somebody watches it finish in
+                      two seconds. */}
+                  <button onClick={pushCloud} style={{background:"#8B5CF6",border:"none",borderRadius:8,padding:"11px 0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",width:"100%"}}>{(()=>{const n=savedVids.filter(v=>!alreadyInCloud(v)).length;return n?`② Push to Cloud — log + events + ${n} clip${n!==1?"s":""}`:"② Push to Cloud — log + events";})()}</button>
                 </div>
               )}
               {phase==="saved"&&!cloudStatus?.available&&<div style={{fontSize:10,color:"#334155",background:"#071624",borderRadius:6,padding:"8px 10px"}}>Cloud not configured. Set Bunny env vars in Vercel to enable sync. Session is fully usable from local storage.</div>}
