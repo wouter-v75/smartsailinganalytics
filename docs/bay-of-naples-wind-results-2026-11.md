@@ -2,6 +2,18 @@
 
 *Results · 26 Nov 2026 · for the 2027 maxi regatta · wind at 30 m over the course, 11:00–17:00 local (CEST)*
 
+## Executive summary
+
+**Naples and Mid-bay, 29 Jun – 3 Jul:** expect a sea breeze on about 7 days in 10. It is light and the
+same across the bay until noon (5–7.5 kn), then fills from SW–SSW to a typical **11.5–12 kn peak at
+15:00–16:00**. That is **about 1 kn more wind than off Sorrento at its peak** (10.8 kn), and it still blows
+10–11 kn at 18:00. Racing is likely on at least 4 of the 5 days, and the risk is too little wind before
+13:00, never too much.
+
+**Against the Sorrento regatta in May:** the afternoon breeze is about the same strength, because the
+stations show no measurable change from May to July. It is far more dependable: a sea breeze on 70 % of
+race-week days against 43 % in May, with half as many gradient days and fewer days lost.
+
 ## The answer in one page
 
 **The most likely race afternoon is a sea breeze.** Off Sorrento, where the masthead data was recorded, it is light at the start: **about 7 kn at 11:00**, from the
