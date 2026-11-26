@@ -7,6 +7,9 @@
 //                       configs link to these sails.
 //   • Sail shapes     — structured trim-stripe scans (ingested from North).
 //   • Polar           — target speed reference (design VPP, via lib/polarCalc).
+//   • Sail chart      — the crossover chart (which sail at each TWA × TWS),
+//                       imported from Expedition XML, drawn over the polar's
+//                       AWA/AWS + VMG lines, editable, linked to the inventory.
 //   • Battens         — the laminated batten card: stiffness + turns per batten
 //                       (numbered from the top) per wind band. Boat setup, so
 //                       the same TL3+ gate as the rest of this tab.
@@ -26,7 +29,7 @@ import SailScanCompare from './SailScanCompare'
 import LogProfilePanel from './LogProfilePanel'
 import SailDesignShapes from './SailDesignShapes'
 import targetsV14 from '../data/targets-v1.4.json'
-import { parsePolarText, parsePolarWorkbook, buildPolarData, type PolarVersion } from '../lib/polarFile'
+import { parsePolarText, parsePolarWorkbook, buildPolarData, polarFromData, type PolarVersion } from '../lib/polarFile'
 import { readXlsx } from '../lib/xlsxRead'
 import { sailPatchFrom } from '../lib/sailEdit'
 import { useUiNext } from '../lib/ui-flags'
@@ -34,6 +37,7 @@ import BoatConfigNext from './boat/BoatConfigNext'
 import BattenCardPanel from './boat/BattenCardPanel'
 import SailMediaPanel from './boat/SailMediaPanel'
 import DebriefVocabPanel from './boat/DebriefVocabPanel'
+import SailChartPanel from './boat/SailChartPanel'
 import { loadJsPdf } from '@/lib/cdnScript'
 
 interface Sail {
@@ -83,7 +87,7 @@ export default function BoatConfigTab({
   // instantly with the team's sails/scans/polar/rig; the effects below still
   // revalidate in the background.
   const pf = getPrefetchedBoatConfig(teamId, boatId)
-  const [view, setView] = useState<'inventory' | 'media' | 'shapes' | 'rig' | 'polar' | 'log' | 'battens' | 'vocab'>('inventory')
+  const [view, setView] = useState<'inventory' | 'media' | 'shapes' | 'chart' | 'rig' | 'polar' | 'log' | 'battens' | 'vocab'>('inventory')
   const [mediaSailId, setMediaSailId] = useState<string>('') // the sail the Sail media tab shows
   // sail id → { photos, scans, videos }, for the Media buttons. null = still counting.
   const [mediaCounts, setMediaCounts] = useState<Record<string, { photos: number; scans: number; videos: number }> | null>(null)
@@ -631,6 +635,8 @@ export default function BoatConfigTab({
   }
 
   const sailById = useMemo(() => Object.fromEntries(sails.map((s) => [s.id, s])), [sails])
+  // The active polar, prepared for the sail chart's AWA/AWS and VMG lines.
+  const chartPolar = useMemo(() => polarFromData(polar?.data), [polar])
   const targets: any = polar?.data || null  // { tws, twa, headline, matrices, matrix_meta }
 
   // ── sail-shapes list: TWS-band filter + sort (by sail / by date) ──
@@ -683,6 +689,7 @@ export default function BoatConfigTab({
         {subBtn('inventory', 'Sail inventory')}
         {mediaSailId && subBtn('media', 'Sail media')}
         {subBtn('shapes', 'Sail data')}
+        {subBtn('chart', 'Sail chart')}
         {canSeeTuning && subBtn('rig', 'Rig settings')}
         {canSeeTuning && subBtn('polar', 'Targets')}
         {canSeeTuning && subBtn('battens', 'Battens')}
@@ -696,6 +703,13 @@ export default function BoatConfigTab({
       {/* ── BATTENS ────────────────────────────────────────────────── */}
       {view === 'battens' && canSeeTuning && (
         <BattenCardPanel teamId={teamId} boatId={boatId} canEdit={canEdit} isMobile={isMobile} />
+      )}
+
+      {/* ── SAIL CHART (crossover) ──────────────────────────────────── */}
+      {view === 'chart' && (
+        <SailChartPanel teamId={teamId} boatId={boatId} canEdit={canEdit} isMobile={isMobile}
+          sails={sails} polar={chartPolar} polarName={polar?.name || null}
+          onCreateSail={(body) => createSailReturning(body)} />
       )}
 
       {/* ── DEBRIEF WORDS ──────────────────────────────────────────── */}
