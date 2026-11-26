@@ -3,7 +3,7 @@ import { useState, useCallback } from "react";
 import { deleteStreamVideo } from '../../lib/bunny';
 import { deleteVideosCloud } from '../../lib/cloud-videos';
 import { cloudRowExternalId, cloudRowId } from '../video/DeleteButton';
-import { deleteVideo, getVideoBlob, getVideosForDate } from '../../lib/localStore';
+import { deleteVideo, getVideosForDate } from '../../lib/localStore';
 import { getBrowserSupabase } from '../../lib/supabase/browser';
 
 export function useBatchActions({
@@ -94,82 +94,6 @@ export function useBatchActions({
   // again only honour the user's chosen folder for the first download;
   // subsequent ones go to the OS default. Progress is surfaced through
   // the existing sync state strip.
-  const handleBatchSaveToDisk = useCallback(async () => {
-    if (!batchSelected.size) return;
-    const selected = allVideos.filter(v => batchSelected.has(v.id) && v.hasLocalBlob);
-    if (!selected.length) { alert('None of the selected clips have a local file on this device.'); return; }
-
-    let dirHandle = null;
-    if ('showDirectoryPicker' in window) {
-      try {
-        dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-      } catch (e) {
-        // AbortError = user cancelled. Anything else, fall through to the
-        // single-prompt download path with a console warning.
-        if (e?.name === 'AbortError') return;
-        console.warn('[batch-save] showDirectoryPicker failed, falling back to downloads:', e);
-      }
-    }
-
-    setMobileSyncState({ phase: 'pushing', message: `Saving 0/${selected.length}…`, progress: 0 });
-    let saved = 0;
-    for (let i = 0; i < selected.length; i++) {
-      const v = selected[i];
-      const label = v.title || v.name || v.id;
-      try {
-        const blob = await getVideoBlob(v.id);
-        if (!blob) { console.warn('[batch-save] no local blob for', v.id); continue; }
-        const stem = (v.title || v.name || 'clip').replace(/\.[^.]+$/, '');
-        const name = `${stem}.mp4`;
-
-        if (dirHandle) {
-          // FS Access API — stream the blob straight into the picked
-          // folder, no per-file prompts, no Downloads-folder hijack.
-          const fh = await dirHandle.getFileHandle(name, { create: true });
-          const writable = await fh.createWritable();
-          try {
-            await blob.stream().pipeTo(writable);
-          } catch (e) {
-            try { await writable.abort(); } catch {}
-            throw e;
-          }
-        } else {
-          // Legacy anchor-download — only really useful for one file at
-          // a time. We still try in case the user is on Safari; they'll
-          // get the first file in their chosen folder and the rest in
-          // their default Downloads.
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = name;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
-          await new Promise(r => setTimeout(r, 400));
-        }
-
-        saved++;
-        setMobileSyncState({
-          phase: 'pushing',
-          message: `Saved ${saved}/${selected.length} · ${label}`,
-          progress: Math.round((saved / selected.length) * 100),
-        });
-      } catch (e) {
-        console.error('[batch-save] failed for', v.id, e);
-      }
-    }
-
-    setMobileSyncState({
-      phase: 'done',
-      message: `✓ Saved ${saved} of ${selected.length} to disk`,
-      progress: 100,
-    });
-    setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 4000);
-    if (saved < selected.length) {
-      alert(`Saved ${saved} of ${selected.length}. The rest failed (see console).${dirHandle ? '' : '\n\nTip: your browser does not support a single-folder picker. On Chrome/Edge the batch saves all clips to one folder; on Safari only the first goes where you asked.'}`);
-    }
-  }, [batchSelected, allVideos, setMobileSyncState]);
 
   // Batch ↑ Upload compressed — pick N compressed files, match each to a
   // selected clip by filename stem (case-insensitive prefix), then push
@@ -182,5 +106,5 @@ export function useBatchActions({
   const[batchSyncOpen,setBatchSyncOpen]=useState(false);
   const[batchSyncBusy,setBatchSyncBusy]=useState(false);
 
-  return { batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, handleBatchSaveToDisk, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy };
+  return { batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy };
 }

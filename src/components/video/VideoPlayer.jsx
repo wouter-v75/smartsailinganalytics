@@ -52,7 +52,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                       // NOT replaced — the HD-local debrief toggle still
                       // plays the full-fidelity local file. Both optional;
                       // the toolbar buttons only appear when wired.
-                      onExportToDisk}){
+                      }){
   const vidRef=useRef(null),hlsRef=useRef(null);
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
@@ -895,19 +895,6 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
               ? `Saving ${Math.round((cropProgress?.pct||0)*100)}%`
               : "💾 Save cropped video"}
           </button>
-        )}
-        {/* A plain export. It used to be half of a "compress on disk, upload
-            that as the cloud copy" round trip, whose other half has gone: the
-            team's copy is the proxy and the archive copy is the original, and a
-            third hand-made rendition only made has_original mean less. Getting
-            a file out is still worth a button on its own. */}
-        {onExportToDisk && (
-          <button
-            title="Save this clip to disk as an MP4. A copy for you — it changes nothing in the cloud."
-            onClick={onExportToDisk}
-            disabled={cropBusy}
-            style={{background:"#06B6D420",border:"1px solid #06B6D450",borderRadius:6,padding:"6px 9px",color:"#06B6D4",cursor:cropBusy?"not-allowed":"pointer",fontSize:11,fontWeight:600,opacity:cropBusy?0.5:1}}
-          >↓ Save to disk</button>
         )}
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}

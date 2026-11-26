@@ -223,7 +223,7 @@ function SSAApp(){
 
 
   const {
-    batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, handleBatchSaveToDisk, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy,
+    batchMode, setBatchMode, batchSelected, setBatchSelected, toggleBatchSelect, clearBatch, handleBatchDelete, clearDayBusy, clearDayArmed, setClearDayArmed, handleClearDay, batchSyncOffset, setBatchSyncOffset, batchSyncOpen, setBatchSyncOpen, batchSyncBusy, setBatchSyncBusy,
   } = useBatchActions({
     allVideos, setAllVideos, selectedVideo, setSelectedVideo, activeDate,
     setMobileSyncState, addLog,
@@ -1414,11 +1414,6 @@ function SSAApp(){
                             style={{marginLeft:"auto",background:batchSyncOpen?"#06B6D420":"#0A1929",border:`1px solid ${batchSyncOpen?"#06B6D450":"#1E3A5A"}`,borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
                             ⟲ Sync {batchSelected.size}
                           </button>
-                          <button onClick={handleBatchSaveToDisk}
-                            title="Download each selected clip to disk as an MP4. Copies for you — nothing in the cloud changes."
-                            style={{background:"#06B6D420",border:"1px solid #06B6D450",borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
-                            ↓ Save {batchSelected.size} to disk
-                          </button>
                           <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} video${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDelete();}}
                             style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"5px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:700}}>
                             🗑 Delete {batchSelected.size}
@@ -1617,36 +1612,6 @@ function SSAApp(){
                           } catch (e) {
                             setCropError(e?.message || String(e));
                             setCropBusy(false); setCropProgress(null);
-                          }
-                        }
-                      : undefined
-                  }
-                  // ↓ Save to disk — download the local blob as MP4 so the
-                  // user can run native ffmpeg + VideoToolbox compression on
-                  // it (much faster than ffmpeg.wasm for multi-GB sources).
-                  onExportToDisk={
-                    perms.canSync && selectedVideo.hasLocalBlob
-                      ? async () => {
-                          try {
-                            const blob = await getVideoBlob(selectedVideo.id);
-                            if (!blob) { alert('No local file to export.'); return; }
-                            // Strip any extension from the title (camera files
-                            // often end in .MP4) and tack on .mp4 so the
-                            // downloaded file is unambiguous.
-                            const stem = (selectedVideo.title || selectedVideo.name || 'clip').replace(/\.[^.]+$/, '');
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `${stem}.mp4`;
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            // Browsers need the URL alive for the duration of
-                            // the streaming download. 60s is generous for any
-                            // realistic SSD write speed.
-                            setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
-                          } catch (e) {
-                            alert(`Export failed: ${e?.message || e}`);
                           }
                         }
                       : undefined
