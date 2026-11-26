@@ -115,7 +115,42 @@ function loadTus() {
 }
 
 // ── Upload video directly from browser to Bunny Stream via tus-js-client ──────
-export async function uploadFileToStream(uploadInfo, file, onProgress) {
+// The encoding ladder, per upload. Bunny bills Premium encoding per MINUTE PER
+// RUNG and `status: 4` — which the player waits for — only arrives when EVERY
+// enabled rung has finished. So asking for five rungs makes the team wait for a
+// 1080p encode in order to watch 720p.
+//
+// These are the two documented places to set it per video (checked against
+// Bunny's API reference, Nov 2026):
+//
+//   • the TUS `EnabledResolutions` / `JitEnabled` headers — used here;
+//   • the PUT upload's `enabledResolutions` / `jitEnabled` query string.
+//
+// NOT on video CREATE: `CreateVideoModel` is `additionalProperties: false` and
+// documents only title/collectionId/thumbnailTime. /api/stream/create has been
+// sending `enabledResolutions` in the create body, which may or may not be
+// honoured — the observed ladders are equally consistent with the library
+// default. The header below is the one that is documented to work.
+//
+// And NOT on `videos/fetch` at all: its body takes url/headers/title and
+// nothing else, so a video brought in storage-first inherits the LIBRARY
+// default. That is why the fast path's ladder is a library setting and the
+// evening full-res upload, which comes through TUS, carries its own.
+export const FAST_LADDER = '360p,720p'                        // 720p to the team
+export const FULL_LADDER = '240p,360p,480p,720p,1080p'        // the archive copy
+
+/**
+ * @param {{streamId: string}} uploadInfo
+ * @param {File|Blob} file
+ * @param {(pct: number) => void} [onProgress]
+ * @param {{resolutions?: string, jit?: boolean}} [opts]
+ *   resolutions — comma-separated rungs; omit to inherit the library default.
+ *   jit         — Just-in-Time encoding. Premium only, and Bunny warn it "is
+ *                 only supported by the Bunny player", so it is off unless
+ *                 asked for explicitly and is worth testing against the app's
+ *                 own hls.js player before being relied on.
+ */
+export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}) {
   const { streamId } = uploadInfo;
   const credRes = await fetch("/api/stream/upload", {
     method: "POST",
@@ -137,6 +172,11 @@ export async function uploadFileToStream(uploadInfo, file, onProgress) {
         AuthorizationExpire:    expiry,
         VideoId:                streamId,
         LibraryId:              libraryId,
+        // Bunny reads the encoding headers from the request that COMPLETES the
+        // upload, so tus-js-client sending them on every PATCH is correct.
+        // Unknown resolution values are ignored by Bunny rather than refused.
+        ...(opts.resolutions ? { EnabledResolutions: opts.resolutions } : {}),
+        ...(opts.jit ? { JitEnabled: 'true' } : {}),
       },
       metadata: { filetype: file.type, title: file.name },
       onProgress(bytesUploaded, bytesTotal) {

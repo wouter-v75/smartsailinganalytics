@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getActiveMembership } from '../lib/active-membership';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
-import { checkCloudStatus, createStreamUpload, fetchCloudSession, listR2Sessions, syncSessionToCloud, updateCloudSessionMetadata, uploadFileToStream } from '../lib/bunny';
+import { checkCloudStatus, createStreamUpload, FAST_LADDER, fetchCloudSession, listR2Sessions, syncSessionToCloud, updateCloudSessionMetadata, uploadFileToStream } from '../lib/bunny';
 import { upsertPhotoCloud } from '../lib/cloud-photos';
 import { getSessionCloud, listSessionsCloud } from '../lib/cloud-sessions';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud } from '../lib/cloud-tag-list';
@@ -1709,6 +1709,11 @@ function SSAApp(){
                                   message: `Uploading compressed · ${label}`,
                                   progress: pct,
                                 }),
+                                // A hand-picked "compressed" file is a review
+                                // copy, so it gets the fast ladder: two rungs
+                                // instead of five, and the team is not waiting
+                                // on a 1080p encode to watch 720p.
+                                { resolutions: FAST_LADDER },
                               );
                               if (!uploaded) {
                                 setMobileSyncState({ phase: 'error', message: 'Upload interrupted', progress: 0 });

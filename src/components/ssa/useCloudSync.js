@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getActiveMembership } from '../../lib/active-membership';
-import { createStreamUpload, listR2Sessions, syncSessionToCloud, uploadFileToStream } from '../../lib/bunny';
+import { createStreamUpload, FULL_LADDER, listR2Sessions, syncSessionToCloud, uploadFileToStream } from '../../lib/bunny';
 import { listSessionsCloud } from '../../lib/cloud-sessions';
 import { ensureCloudVideoId, makeVideoMirrorCallback } from '../../lib/cloud-videos';
 import { connInfo, onWifi } from '../../lib/connection';
@@ -297,7 +297,13 @@ export function useCloudSync({
                 message: `Uploading HD ${idx}/${total} · ${label}`,
                 progress: pct,
               });
-            }
+            },
+            // This is the archive copy, so it carries the whole ladder. The
+            // FAST path cannot set one — it arrives through videos/fetch, which
+            // takes no encoding options — so its rungs are the LIBRARY default.
+            // Set that to FAST_LADDER in Stream -> library -> Encoding, and the
+            // two paths then ask for exactly what each is for.
+            { resolutions: FULL_LADDER }
           );
           if (!uploaded) {
             console.warn('[originals] Stream upload interrupted for', item.videoId);

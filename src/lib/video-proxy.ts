@@ -47,8 +47,21 @@ export interface ProxyResult {
 }
 
 // Proxy target spec — shared by both engines so output is consistent.
+//
+// 4.8 Mbps, not the 1.2 it was. Two measurements settled that:
+//
+//   • Cloudflare publish 4.8 Mbps as their recommended INGEST bitrate for 720p
+//     (1080p 8, 480p 2.4, 360p 1). 1.2 was a quarter of that, on water, wake
+//     and spray — the worst content for a low bitrate, not the best.
+//   • The drone clips `clips:day` produces are 720p at a measured MEAN of
+//     6.10 Mbps, four of fifteen pinned against its `--maxrate 8M` cap. A
+//     1.2 Mbps proxy was a 5× cut of that; 4.8 is a modest one.
+//
+// It is also inside Mux's published "standard input" envelope (H.264, <= 1080p,
+// average under 8 Mbps, closed GOP), which platforms use to skip a mezzanine
+// transcode on ingest.
 const PROXY_HEIGHT = 720
-const PROXY_VIDEO_BITRATE = 1_200_000 // bits/sec
+const PROXY_VIDEO_BITRATE = 4_800_000 // bits/sec — see above
 const PROXY_FPS = 30
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -234,7 +247,16 @@ async function generateProxyFFmpeg({
 
     // Speed-tuned for field upload. -vf scale=-2:720,fps=30 caps height +
     // framerate; -preset ultrafast -tune zerolatency for a fast encode;
-    // ~1.2 Mbps target; +faststart so the file is streamable.
+    // +faststart so the file is streamable.
+    //
+    // The bitrate args are derived from PROXY_VIDEO_BITRATE rather than written
+    // out, so the two engines cannot drift — they used to be '1200k' here and a
+    // constant there, and only one of them would have been changed.
+    //
+    // `-g` pins a 2-second keyframe interval and `-x264-params scenecut=0`
+    // keeps the GOP closed: both are part of Mux's published "standard input"
+    // envelope, which lets a platform skip its own mezzanine pass on ingest.
+    const kbps = Math.round(PROXY_VIDEO_BITRATE / 1000)
     await ff.exec([
       '-i', inputName,
       '-vf', `scale=-2:${PROXY_HEIGHT},fps=${PROXY_FPS}`,
@@ -243,9 +265,11 @@ async function generateProxyFFmpeg({
       '-level', '3.1',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
-      '-b:v', '1200k',
-      '-maxrate', '1500k',
-      '-bufsize', '3000k',
+      '-b:v', `${kbps}k`,
+      '-maxrate', `${Math.round(kbps * 1.25)}k`,
+      '-bufsize', `${Math.round(kbps * 2.5)}k`,
+      '-g', String(PROXY_FPS * 2),
+      '-x264-params', 'scenecut=0',
       '-c:a', 'aac',
       '-b:a', '64k',
       '-pix_fmt', 'yuv420p',
@@ -326,6 +350,9 @@ export async function generateProxy(
 /** Estimate the resulting proxy size in bytes without doing a real transcode.
  *  Useful for showing "will upload ~N MB" before the user confirms. */
 export function estimateProxySize(durationSec: number): number {
-  // ~1.2 Mbps video + audio ≈ 1.3 Mbps total ≈ ~165 KB/s.
-  return Math.round(durationSec * 165 * 1024)
+  // Derived from PROXY_VIDEO_BITRATE so it tracks the spec instead of restating
+  // it — this was hard-coded at 1.2 Mbps and would have kept reporting a
+  // quarter of the real size after the target moved.
+  const audioBps = 64_000
+  return Math.round((durationSec * (PROXY_VIDEO_BITRATE + audioBps)) / 8)
 }

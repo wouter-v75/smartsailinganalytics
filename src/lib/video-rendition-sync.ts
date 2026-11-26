@@ -86,7 +86,13 @@ interface BaseArgs {
  *  a proxy in all but name. */
 export const PROXY_MAX_HEIGHT = 720
 /** A 720p file can still be absurdly fat (a 40 Mbps intra-frame export). Above
- *  this it is worth re-encoding even at 720p; our own trim script caps at 8. */
+ *  this it is worth re-encoding even at 720p; our own trim script caps at 8.
+ *
+ *  Left at 12 after the proxy target moved from 1.2 to 4.8 Mbps (Nov 2026).
+ *  It is deliberately ABOVE clips:day's 8 Mbps cap, so the drone clips — mean
+ *  6.10 Mbps measured, four of fifteen pinned at the cap — pass through
+ *  untouched rather than being re-encoded to something a fifth smaller and a
+ *  generation worse. */
 export const PROXY_MAX_MBPS = 12
 
 /**
