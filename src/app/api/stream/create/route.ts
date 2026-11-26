@@ -30,11 +30,20 @@ export async function POST(req: NextRequest) {
           AccessKey: STREAM_KEY,
           "Content-Type": "application/json",
         },
-        // Encode the full ladder so adaptive streaming has low rungs to drop
-        // to on weak wifi. Bunny only produces renditions up to the source
-        // resolution, so a 720p proxy yields 240–720p and a full original
-        // yields 240–1080p — listing 1080p here is harmless for the proxy.
-        body: JSON.stringify({ title: fileName, enabledResolutions: "240p,360p,480p,720p,1080p" }),
+        // ONLY the title. This used to send `enabledResolutions` here with a
+        // comment saying it set the full ladder, and it never did: Bunny's
+        // CreateVideoModel documents exactly title / collectionId /
+        // thumbnailTime and is declared `additionalProperties: false`, so the
+        // field was dropped on the floor. Every ladder this app has ever got
+        // from this path came from the LIBRARY default instead.
+        //
+        // Where the ladder is actually chosen: the `EnabledResolutions` HEADER
+        // on the TUS upload (src/lib/bunny.js — Bunny reads the encoding
+        // headers from the request that completes the upload), or the
+        // `enabledResolutions` QUERY parameter on a direct PUT. Neither is a
+        // create-time option, and `videos/fetch` has no equivalent at all,
+        // which is why the proxy path takes the library default.
+        body: JSON.stringify({ title: fileName }),
       }
     );
     if (!createRes.ok)

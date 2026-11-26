@@ -82,6 +82,22 @@ export async function POST(req: NextRequest) {
       }
     )
     const text = await res.text()
+    // 429 is a QUEUE limit, not a failure. Bunny documents the fetch API as
+    // supporting "a limited number of queued fetch requests per user at a
+    // time", varying "by region, time, current load", and returns 429 when it
+    // is reached. The bytes are already in Storage and the clip is already
+    // playable from there, so the only thing missing is the adaptive encode —
+    // which is worth asking for again later, not reporting as a lost upload.
+    //
+    // This matters more since the watch folder started sending a proxy for
+    // every clip: a day of racing is ~150 fetches in a row, where it used to be
+    // whatever somebody pressed a button for.
+    if (res.status === 429) {
+      return NextResponse.json(
+        { error: 'Bunny fetch queue is full', retryable: true, detail: text.slice(0, 300) },
+        { status: 429 }
+      )
+    }
     if (!res.ok) {
       return NextResponse.json(
         { error: `Bunny fetch HTTP ${res.status}`, detail: text.slice(0, 300) },
