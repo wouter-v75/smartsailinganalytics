@@ -632,6 +632,39 @@ played them: 69.7 GB, cleared by 0107. It is gone, that function is
 tree — a failure there means a new upload path appeared, which is how every
 bug in this area has started.
 
+**The `ssa-videos` pull zone refuses a LOCALHOST referrer, so half the media
+is 403 in local dev and fine in production.** Measured 26 Nov 2026 on one
+signed document URL:
+
+| `Referer:` sent | |
+|---|---|
+| *(none — curl, a server-side fetch, `/_next/image`)* | **200** |
+| `https://ssa.wvsailing.co.uk/…` | **200** |
+| `http://localhost:3000/` | **403** |
+| anything else | **403** |
+
+That is Bunny's **Allowed Referrers** list (Pull Zones → ssa-videos →
+Security), which passes an EMPTY referrer and blocks any set referrer not on
+it — not "Block Direct URL Access", which does the opposite. Which is exactly
+why it has never been noticed: everything that reads Storage server-side sends
+no referrer and sails through.
+
+It hits anything the BROWSER fetches from `signBunnyUrl()`
+(`BUNNY_PULL_HOST` + `BUNNY_TOKEN_AUTH_KEY` — nothing to do with
+`storageHost()`, which addresses the Storage API): regatta documents (an
+iframe/img straight at the signed URL, the visible symptom), a photo's
+thumbnail_url and original_url, a proxy/original served as a signed Storage
+MP4, and `/api/share/<token>`. It does NOT hit **video playback**, which comes
+off the *Stream* zone `vz-894f7919-3e6.b-cdn.net` — a different zone that does
+allow localhost (206 from the page) — nor photo thumbnails drawn through
+`/api/bunny/image`, which proxies the Storage API with the AccessKey and has no
+referrer check at all. So "photos fine, documents broken" is the signature.
+
+Fix for dev parity: add `localhost` to that zone's Allowed Referrers. The URLs
+are token-signed with an expiry regardless, so the list is a second lock on a
+locked door. Do NOT instead proxy media through the app — a PDF would fit, a
+photo original or a clip would not (Vercel's ~4.5 MB response cap).
+
 ## Bunny credentials
 
 `BUNNY_STORAGE_API_KEY` is **read-only**; `BUNNY_STORAGE_WRITE_KEY` is the
