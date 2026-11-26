@@ -38,6 +38,8 @@
 // table-<method>-pct.csv and -hours.csv, routes.geojson, report.html.
 
 import fs from 'node:fs'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 import { parseRoutingPolar } from '../src/lib/routing/polar'
@@ -46,7 +48,7 @@ import { liftToHeight, type LiftMethod, type RawFields } from '../src/lib/routin
 import { routeIsochrone, type RouteResult } from '../src/lib/routing/isochrone'
 import { routeGrid } from '../src/lib/routing/gridRouter'
 import { elapsedStats, twaTwsTable, tableCsv, localStartToUtc, pointOfSail, bootstrapBlocks, foldToTargets } from '../src/lib/routing/climatology'
-import { heatTableHtml } from '../src/lib/routing/heatTable'
+import { heatTableHtml, dh } from '../src/lib/routing/heatTable'
 import { offsetFromCoords } from '../src/lib/tzFromCoords'
 import { makePerf, isDark } from '../src/lib/routing/daylight'
 import { normaliseSailChart, parseCrossoverXml, type SailChart } from '../src/lib/sailchart/model'
@@ -67,6 +69,7 @@ if (flag('help') || !arg('data') || !arg('gpx') || !arg('polar') || !arg('start'
   --years 2006-2025      default: every year in DIR/era5
   --window D --every H   also start D days either side of the date, every H hours (default 0 / 48)
   --method both|iso|grid default both
+  --workers N            route the years in N parallel processes (each holds one year's wind, ~0.5-1 GB)
   --mast M               polar reference height, m (default 10)
   --lift power|mo|neutral|none   default power (none when --mast 10)
   --tack S --gybe S      manoeuvre losses, seconds (default 60 / 45)
@@ -145,8 +148,13 @@ function loadLand(): LandMask | null {
 const yearsAvail = fs.readdirSync(path.join(dataDir, 'era5')).map(f => /^(\d{4})\.bin$/.exec(f)?.[1]).filter(Boolean).map(Number).sort()
 let years = yearsAvail
 if (arg('years')) {
-  const [a, b] = arg('years')!.split('-').map(Number)
-  years = yearsAvail.filter(y => y >= a && y <= (b || a))
+  // "2006-2025", "2006,2010,2014" or a mix ("2006-2008,2012").
+  const want = new Set<number>()
+  for (const part of arg('years')!.split(',')) {
+    const [a, b] = part.split('-').map(Number)
+    for (let y = a; y <= (b || a); y++) want.add(y)
+  }
+  years = yearsAvail.filter(y => want.has(y))
 }
 if (!years.length) throw new Error(`no years in ${dataDir}/era5`)
 const land = loadLand()
@@ -183,7 +191,8 @@ console.log(`start ${String(DD).padStart(2, '0')}/${String(MM).padStart(2, '0')}
 
 const failed = (reason: string): RouteResult => ({ ok: false, reason, elapsedSec: null, legSec: [], path: [], sailedNm: 0, tacks: 0, gybes: 0 } as unknown as RouteResult)
 let convergence: Record<string, number> | null = null
-for (const y of years) {
+function routeYears(ys: number[]) {
+for (const y of ys) {
   const raw = loadYear(y)
   const { grid, stats } = liftToHeight(raw, mast, lift)
   liftLog.push({ year: y, ...stats })
@@ -215,6 +224,63 @@ for (const y of years) {
       console.log(`  convergence ${startLocal}: iso at half step/sector/fan ${(half / 3600).toFixed(3)} h (${convergence.isoChangePct.toFixed(2)} %), grid at half cell / 48 dir ${(g / 3600).toFixed(3)} h (${convergence.gridFineVsIsoPct.toFixed(2)} % vs iso)`)
     }
   }
+}
+}
+
+// ── parallel ────────────────────────────────────────────────────────────────
+// --workers N: the starts are independent, so the YEARS are dealt round-robin to
+// N child processes of this same script (each loads only its own years' wind, so
+// memory is N x one year, ~0.5-1 GB each) and the parent merges what they route.
+// A child gets --shard FILE and writes its routes there instead of a report; only
+// the child holding the first year runs --convergence, as a serial run would.
+const workers = Math.max(1, Math.min(years.length, Number(arg('workers', '1'))))
+const shardFile = arg('shard')
+async function runSharded(): Promise<void> {
+  const groups: number[][] = Array.from({ length: workers }, () => [])
+  years.forEach((y, i) => groups[i % workers].push(y))
+  const script = fileURLToPath(import.meta.url)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'route-shards-'))
+  const base: string[] = []
+  for (let i = 0; i < argv.length; i++) {
+    const k = argv[i]
+    if (k === '--years' || k === '--workers' || k === '--out' || k === '--shard') { i++; continue }
+    if (k === '--convergence') continue
+    base.push(k)
+  }
+  console.log(`  ${workers} workers: ${groups.map(g => g.join(',')).join(' | ')}`)
+  const t0 = Date.now()
+  await Promise.all(groups.map((g, w) => new Promise<void>((resolve, reject) => {
+    const file = path.join(tmp, `shard-${w}.json`)
+    const args = ['vite-node', script, '--', ...base, '--years', g.join(','), '--shard', file, ...(g.includes(years[0]) && flag('convergence') ? ['--convergence'] : [])]
+    const child = spawn('npx', args, { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'inherit'] })
+    let buf = ''
+    child.stdout.on('data', (d: Buffer) => {
+      buf += d.toString()
+      const lines = buf.split('\n'); buf = lines.pop()!
+      for (const l of lines) if (/^\s+\d{4}-|convergence|FAILED/.test(l)) console.log(l)
+    })
+    child.on('exit', code => {
+      if (code !== 0) return reject(new Error(`worker ${w} (years ${g.join(',')}) exited ${code}`))
+      const sh = JSON.parse(fs.readFileSync(file, 'utf8'))
+      for (const m of Object.keys(sh.results)) results[m].push(...sh.results[m])
+      liftLog.push(...sh.liftLog)
+      if (sh.convergence) convergence = sh.convergence
+      resolve()
+    })
+  })))
+  const order = (a: Run, b: Run) => a.year - b.year || a.offsetH - b.offsetH
+  for (const m of Object.keys(results)) results[m].sort(order)
+  liftLog.sort((a, b) => a.year - b.year)
+  fs.rmSync(tmp, { recursive: true, force: true })
+  console.log(`  routed in ${((Date.now() - t0) / 60e3).toFixed(1)} min`)
+}
+
+void (async () => {
+if (workers > 1 && !shardFile) await runSharded()
+else routeYears(years)
+if (shardFile) {
+  fs.writeFileSync(shardFile, JSON.stringify({ results, liftLog, convergence }))
+  process.exit(0)
 }
 
 // ── results ─────────────────────────────────────────────────────────────────
@@ -301,11 +367,6 @@ fs.writeFileSync(path.join(outDir, 'report.html'), report())
 console.log(`\nwritten: ${outDir}/report.html, summary.json, elapsed.csv, table-*.csv, routes.geojson`)
 
 /** Hours as days and hours, rounded to the hour: 294.4 -> "12d6h", 14 -> "14h". */
-function dh(hours: number): string {
-  if (!Number.isFinite(hours)) return '–'
-  const t = Math.round(hours), d = Math.floor(t / 24), r = t % 24
-  return d ? `${d}d${r}h` : `${r}h`
-}
 
 // ── route map ───────────────────────────────────────────────────────────────
 // Equirectangular at the mid latitude (true shape at that latitude, which is
@@ -544,3 +605,4 @@ ${sailSec}${offTable}<h2>Per year</h2><p class="dim">Green is fast, red slow, ac
 <p class="dim">ERA5 (C3S) hourly 0.25°; wind sampled bilinear in space, linear in time, direction from u/v and speed preserved. Arrival at each mark solved exactly from every front point (no isochrone quantisation). Marks routed leg by leg, which is exact for point marks.</p>
 </body></html>`
 }
+})().catch(e => { console.error(e); process.exit(1) })
