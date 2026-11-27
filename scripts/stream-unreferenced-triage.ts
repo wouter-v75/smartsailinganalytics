@@ -56,13 +56,21 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { retryingFetch, why } from './lib/netFetch'
 import { sameClip, titleIndex } from '../src/lib/clipTitle'
 
 const args = process.argv.slice(2)
 const verbose = args.includes('--verbose')
 const emitOf = () => { const i = args.indexOf('--emit'); return i >= 0 && args[i + 1] ? args[i + 1] : null }
-const emit = emitOf()   // A | B | C | derived | originals -> bare guids, one per line
+const emit = emitOf()   // -> bare guids, one per line
 const fail: (m: string) => never = (m) => { console.error(`✕ ${m}`); process.exit(1) }
+
+// Checked before any network call, so a typo costs nothing and is not reported
+// as a transport failure.
+const EMIT_GROUPS = ['twinned', 'untwinned', 'A', 'B', 'C', 'derived', 'originals']
+if (emit && !EMIT_GROUPS.includes(emit)) {
+  fail(`--emit takes ${EMIT_GROUPS.join(', ')} (got ${JSON.stringify(emit)})`)
+}
 
 // Same .env.local handling as the rest of scripts/ — dotenv is not a dependency.
 const envPath = resolve(process.cwd(), '.env.local')
@@ -79,10 +87,11 @@ for (const k of [
 
 const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
+  global: { fetch: retryingFetch },
 })
 const LIB = env.BUNNY_STREAM_LIBRARY_ID
 const api = (path: string) =>
-  fetch(`https://video.bunnycdn.com/library/${LIB}${path}`, {
+  retryingFetch(`https://video.bunnycdn.com/library/${LIB}${path}`, {
     headers: { AccessKey: env.BUNNY_STREAM_API_KEY },
   })
 
@@ -326,4 +335,4 @@ async function main() {
   console.log(`together — it has no way to delete only A.`)
 }
 
-main().catch((e) => { console.error(e); process.exit(1) })
+main().catch((e) => { console.error(`\u2715 ${why(e)}`); process.exit(1) })

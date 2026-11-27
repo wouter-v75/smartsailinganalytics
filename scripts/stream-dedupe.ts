@@ -42,6 +42,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { retryingFetch, why } from './lib/netFetch'
 
 const args = process.argv.slice(2)
 const has = (f: string) => args.includes(f)
@@ -69,12 +70,38 @@ for (const k of [
 
 const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
+  global: { fetch: retryingFetch },
 })
+
+// The GUID list is read and checked HERE, before a single network call. It used
+// to be checked inside the from-list branch, which runs after the library
+// listing and the row scan — so a path that did not exist came back as
+// "fetch failed" from an unrelated transport blip, and the real problem (the
+// redirect that wrote the file never ran, because the `git pull` before it
+// failed) was invisible.
+const listedGuids: string[] | null = (() => {
+  if (!fromList) return null
+  if (!existsSync(fromList)) {
+    fail(`list not found: ${fromList}\n` +
+      `  create it with:  npx vite-node scripts/stream-unreferenced-triage.ts --emit twinned > ${fromList}`)
+  }
+  const out = Array.from(new Set(
+    readFileSync(fromList, 'utf8').split('\n').map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'))
+  ))
+  if (!out.length) fail(`${fromList} has no GUIDs in it — the redirect probably never ran`)
+  const bad = out.filter((g) => !/^[0-9a-f-]{32,36}$/i.test(g))
+  if (bad.length) {
+    fail(`${fromList} has ${bad.length} line(s) that are not GUIDs, e.g. ${JSON.stringify(bad[0])}\n` +
+      `  --emit writes bare GUIDs; a file with report text in it is the wrong file`)
+  }
+  return out
+})()
 
 const LIB = env.BUNNY_STREAM_LIBRARY_ID
 const KEY = env.BUNNY_STREAM_API_KEY
 const api = (path: string, init?: RequestInit) =>
-  fetch(`https://video.bunnycdn.com/library/${LIB}${path}`, {
+  retryingFetch(`https://video.bunnycdn.com/library/${LIB}${path}`, {
     ...init,
     headers: { AccessKey: KEY, ...(init?.headers || {}) },
   })
@@ -185,12 +212,8 @@ const main = async () => {
   // database HERE, at delete time, not trusted from the file. A row could have
   // been written between the triage and this run, and a list is a thing that
   // gets edited by hand.
-  if (fromList) {
-    if (!existsSync(fromList)) fail(`list not found: ${fromList}`)
-    const wanted = Array.from(new Set(
-      readFileSync(fromList, 'utf8').split('\n').map((l) => l.trim())
-        .filter((l) => l && !l.startsWith('#'))
-    ))
+  if (listedGuids) {
+    const wanted = listedGuids
     const byGuid = new Map(vids.map((v) => [v.guid, v]))
     const go: Vid[] = []
     let refused = 0, missing = 0
