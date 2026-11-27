@@ -570,17 +570,48 @@ only the keys the body actually names (`if ('details' in body)`).
 **A clips:day RE-RUN for a day already uploaded inserts a whole second set of
 rows.** The upsert dedupes on `bunny_stream_id`, then on `external_id` — and
 `external_id` is the importing DEVICE's IndexedDB key, minted fresh every
-import, so nothing matches. Live on 26 Nov: 367 rows, **11 redundant across 7
+import, so nothing matches. Live on 27 Nov: 453 rows, **11 redundant across 7
 clips** (four pairs on 29 Sept from a re-cut, seven rows for two clips on 12
 July from repeated imports). `npx vite-node scripts/video-row-dedupe.ts` lists
 them; it is read-only and has no `--write`, because **the tags go the other
-way**: all four 29 Sept pairs have the renditions on one row and every tag on
-the other (`renditions 2 / tags 0` beside `renditions 1 / tags 11`), so "keep
-the playable one, delete the rest" throws away eleven tags a person typed. It
+way**: three of the four 29 Sept pairs have the live copies on one row and every
+tag on the other (`proxy✓ orig✓ / tags 0` beside `legacy✓ / tags 10`), so "keep
+the playable one, delete the rest" throws away ten tags a person typed. It
 prints the tag merge first. Its grouping key includes the TITLE, which is
 load-bearing: on 10 Sept two rows share a start time to the second and are
 different clips — `…day8 drone` (146 MB) and `…day8 Camera` (36 MB), two
 cameras on one moment.
+
+**The decision is `plan()` in `src/lib/videoRowDedupe.ts`, not the script**, and
+it has been wrong three times — every time because it counted non-null locator
+COLUMNS and called the number "renditions", and every time only real rows showed
+it. The seven live groups are pinned in its test:
+
+- **A column is not a copy.** Both `IMG 2894` rows read "1 rendition", both rest
+  on a legacy `bunny_stream_id` alone, and one of those guids points at a Stream
+  video Bunny has **deleted**. The count made the pair symmetrical, so a
+  tie-break decided it — and a tie-break cannot know which guid resolves, so it
+  could keep the dead row and delete the only one that plays. Every guid is now
+  resolved against the library listing and marked ✓ / ✕. A guid that exists but
+  holds **zero bytes** is ✕ too: an abandoned TUS upload leaves 192 such stubs.
+- **A different LENGTH is a different cut.** `20260929153553` is 95.5 MB / 100 s
+  on one row and 85.8 MB / **90 s** on the other. The other three 29 Sept pairs
+  really are one encode twice (bytes within 0.03 %); this is one moment cut with
+  two windows, so dropping the longer row loses ten seconds of footage. Over
+  `LENGTH_TOL` (2 %, encoder jitter) the group is held back and not planned.
+- **"Nothing plays" is not a dedupe question.** All four `11591` rows have no
+  copy anywhere. There is nothing to dedupe — the question is whether to keep
+  one row as the record of a clip that is not in the cloud. The old rule ranked
+  them anyway and picked the ONE row of the four with **no tags** over three
+  carrying seven each, because `created_at` was the only tie-break left.
+- **Count copies, don't test for one.** On the 29 Sept pairs both rows play, so
+  a yes/no liveness test ties and falls through to the tags — keeping the
+  legacy-only row and giving those clips worse playback than they have now, to
+  save an UPDATE that takes a second. **Tags carry forward; an HD ladder does
+  not.** So: most live copies, then unverified ones, then tags, then oldest.
+
+Held-back groups are kept OUT of the printed SQL, because the SQL is the thing
+that gets pasted. Storage paths are shape-checked, not probed, and shown `?`.
 
 **A target shape must be scoped to the boat it belongs to.**
 `northstarConditions()` fell back to Northstar 76's sailmaker sheet for ANY sail
