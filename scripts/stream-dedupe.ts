@@ -52,6 +52,7 @@ const orphansOnly = has('--orphans-only')
 const dupesOnly = has('--dupes-only')
 const legacyOnly = has('--legacy-only')
 const unreferenced = has('--unreferenced')
+const fromList = (() => { const i = args.indexOf('--from-list'); return i >= 0 && args[i + 1] ? args[i + 1] : null })()
 
 const envPath = resolve(process.cwd(), '.env.local')
 if (!existsSync(envPath)) fail('.env.local not found — run from the repo root')
@@ -175,6 +176,51 @@ const main = async () => {
   console.log(`database rows point at ${ref.size} distinct Stream GUIDs\n`)
 
   const doomed: Vid[] = []
+
+  // ── 0. An explicit GUID list ──────────────────────────────────────────────
+  // The unreferenced pass is all-or-nothing, and the triage split it into a
+  // part that is redundant and a part that is the only cloud copy of a day
+  // (41 videos of hand-named Sept 2025 footage, 27 Nov 2026). So a chosen
+  // subset has to be deletable — and every guid is re-checked against the
+  // database HERE, at delete time, not trusted from the file. A row could have
+  // been written between the triage and this run, and a list is a thing that
+  // gets edited by hand.
+  if (fromList) {
+    if (!existsSync(fromList)) fail(`list not found: ${fromList}`)
+    const wanted = Array.from(new Set(
+      readFileSync(fromList, 'utf8').split('\n').map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('#'))
+    ))
+    const byGuid = new Map(vids.map((v) => [v.guid, v]))
+    const go: Vid[] = []
+    let refused = 0, missing = 0
+    for (const g of wanted) {
+      const v = byGuid.get(g)
+      if (!v) { console.log(`  \u2014 ${g} is not in the library (already gone)`); missing++; continue }
+      if (ref.has(g)) {
+        console.log(`  \u2715 REFUSED ${g} — a database row points at it (${v.title})`)
+        refused++; continue
+      }
+      go.push(v)
+    }
+    const bytesGo = go.reduce((s2, v) => s2 + (v.storageSize || 0), 0)
+    console.log(`\n${wanted.length} guid(s) listed: ${go.length} deletable · ${gb(bytesGo)}` +
+      `${refused ? `, ${refused} REFUSED (still referenced)` : ''}` +
+      `${missing ? `, ${missing} already gone` : ''}`)
+    for (const v of go) {
+      console.log(`  ${write ? 'DELETE' : 'would delete'} ${v.guid}  ${mb(v.storageSize)}  ` +
+        `${v.height || '?'}p  ${(v.dateUploaded || '').slice(0, 10)}  ${v.title}`)
+    }
+    if (!write) {
+      console.log(`\nDry run. Re-run with --write to delete the ${go.length} above.`)
+      console.log(`Bunny has no trash — a delete here cannot be undone.`)
+      return
+    }
+    let ok = 0
+    for (const v of go) if (await remove(v)) ok++
+    console.log(`\n${ok} of ${go.length} deleted · ${gb(bytesGo)} reclaimed`)
+    return
+  }
 
   // ── 1. Duplicate groups ───────────────────────────────────────────────────
   if (!orphansOnly && !legacyOnly) {

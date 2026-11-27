@@ -31,8 +31,26 @@
 // A title with no parseable date is reported separately rather than guessed at.
 // One of them is literally the string `undefined`, 3.5 GB of it.
 //
+// WHAT GROUP A DOES NOT SAY. "The day has playable clips" is not "this file's
+// content is in them". A whole-card original is continuous footage; the cut
+// clips are selections out of it. So A means redundant-by-day, not
+// redundant-by-content, and the sharper signal is printed beside it: how many
+// unreferenced files the day has against how many playable rows. Where the rows
+// are at least as many, each unreferenced file plausibly has a live counterpart
+// and is a superseded encode. Where they are FEWER, some of those files cover
+// moments nothing in the app does — 2026-05-19 has 16 unreferenced against 10
+// rows, so six of them are unaccounted for.
+//
 //   npx vite-node scripts/stream-unreferenced-triage.ts
 //   npx vite-node scripts/stream-unreferenced-triage.ts --verbose   # every file
+//
+// --emit prints bare GUIDs, one per line, for one group — so a subset can be
+// deleted. `stream-dedupe.ts --unreferenced --write` takes all three groups
+// together and has no way to take one.
+//
+//   ... --emit derived > ~/reclaim.txt     # 720p-or-smaller, day covered
+//   ... --emit A | --emit B | --emit C | --emit originals
+//   npx vite-node scripts/stream-dedupe.ts --from-list ~/reclaim.txt
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync, readFileSync } from 'fs'
@@ -41,6 +59,8 @@ import { createClient } from '@supabase/supabase-js'
 
 const args = process.argv.slice(2)
 const verbose = args.includes('--verbose')
+const emitOf = () => { const i = args.indexOf('--emit'); return i >= 0 && args[i + 1] ? args[i + 1] : null }
+const emit = emitOf()   // A | B | C | derived | originals -> bare guids, one per line
 const fail: (m: string) => never = (m) => { console.error(`✕ ${m}`); process.exit(1) }
 
 // Same .env.local handling as the rest of scripts/ — dotenv is not a dependency.
@@ -163,8 +183,10 @@ async function main() {
 
   const orphans = vids.filter((v) => !ref.has(v.guid) && (v.storageSize || 0) > 0)
   const total = orphans.reduce((s, v) => s + v.storageSize, 0)
-  console.log(`library ${LIB}: ${vids.length} videos · ${rows.length} database rows`)
-  console.log(`${orphans.length} unreferenced videos holding ${gb(total)}\n`)
+  if (!emit) {
+    console.log(`library ${LIB}: ${vids.length} videos · ${rows.length} database rows`)
+    console.log(`${orphans.length} unreferenced videos holding ${gb(total)}\n`)
+  }
 
   // What the app holds per session day, and how much of it can actually play.
   const appByDay = new Map<string, { rows: number; playable: number; tagged: number }>()
@@ -202,12 +224,17 @@ async function main() {
     const g = (byDay.get(d) || []).sort((a, b) => b.storageSize - a.storageSize)
     const app = appByDay.get(d)
     const bytes = g.reduce((s, v) => s + v.storageSize, 0)
-    const proxies = g.filter(looksLikeProxy).length
+    const derived = g.filter(looksLikeProxy).length
     console.log(`\n── ${d}  ${g.length} unreferenced · ${gb(bytes)}` +
-      (proxies ? `  (${proxies} look like proxies)` : ''))
+      (derived ? `  (${derived} are 720p or smaller)` : ''))
     console.log(`   the app holds: ` + (app
       ? `${app.rows} row${app.rows === 1 ? '' : 's'}, ${app.playable} playable, ${app.tagged} tagged`
       : `NOTHING for this day`))
+    // The sharper test: a live row per unreferenced file, or not.
+    if (app && app.playable < g.length) {
+      console.log(`   \u26a0 ${g.length - app.playable} MORE unreferenced file(s) than playable rows — ` +
+        `some of these cover footage nothing in the app does`)
+    }
     const list = verbose ? g : g.slice(0, 4)
     for (const v of list) {
       console.log(`     ${v.guid.slice(0, 8)}  ${mb(v.storageSize).padStart(7)}  ` +
@@ -215,6 +242,21 @@ async function main() {
         `up ${(v.dateUploaded || '').slice(0, 10)}  ${v.title}`)
     }
     if (!verbose && g.length > list.length) console.log(`     … and ${g.length - list.length} more (--verbose)`)
+  }
+
+  if (emit) {
+    // Bare guids only: this is piped into a file, so nothing else may be printed
+    // on stdout. The counts go to stderr so they are still seen.
+    const pick: Vid[] =
+      emit === 'A' ? covered.flatMap((d) => byDay.get(d) || [])
+      : emit === 'B' ? bare.flatMap((d) => byDay.get(d) || [])
+      : emit === 'C' ? undated
+      : emit === 'derived' ? covered.flatMap((d) => (byDay.get(d) || []).filter(looksLikeProxy))
+      : emit === 'originals' ? covered.flatMap((d) => (byDay.get(d) || []).filter((v) => !looksLikeProxy(v)))
+      : fail(`--emit takes A, B, C, derived or originals (got ${emit})`)
+    for (const v of pick) console.log(v.guid)
+    console.error(`${pick.length} guid(s) · ${gb(pick.reduce((s2, v) => s2 + v.storageSize, 0))} · group ${emit}`)
+    return
   }
 
   console.log('═══ A. THE DAY IS IN THE APP — the raw file is redundant ═══')
