@@ -84,6 +84,36 @@ export const counts = (cs: Copy[]) => ({
   maybe: cs.filter((c) => c.state === 'unverified').length,
 })
 
+/** Every locator VALUE a row names, whatever column it sits in. */
+export function locatorValues(r: DedupeRow): string[] {
+  return [
+    r.bunny_proxy_stream_id, r.bunny_original_stream_id, r.bunny_stream_id,
+    r.bunny_proxy_path, r.bunny_original_path,
+  ].map((v) => (typeof v === 'string' ? v.trim().replace(/^\/+/, '') : ''))
+    .filter((v) => v.length > 0)
+}
+
+/**
+ * Locators that more than one row in the group names — one object, several rows.
+ *
+ * This is the shape that makes a tidy-up dangerous. The three real 29 Sept pairs
+ * each have two rows carrying the SAME `bunny_original_stream_id`, and
+ * `stream-dedupe.ts` confirms it from the other side: 0 duplicate clip names in
+ * the library. So deleting the redundant row through the app used to purge the
+ * Stream video the KEPT row depends on — delete succeeds, purge succeeds, and
+ * the survivor's guid resolves to nothing. `splitPurge` in videoPurge.ts now
+ * withholds them, but a deployment running an older bundle does not.
+ */
+export function sharedLocators(group: DedupeRow[]): string[] {
+  const seen = new Map<string, number>()
+  for (const r of group) {
+    for (const v of Array.from(new Set(locatorValues(r)))) {
+      seen.set(v, (seen.get(v) || 0) + 1)
+    }
+  }
+  return Array.from(seen.entries()).filter(([, n]) => n > 1).map(([v]) => v)
+}
+
 export type Verdict = 'safe' | 'lengths-differ' | 'nothing-plays'
 
 export interface Plan {
@@ -92,6 +122,8 @@ export interface Plan {
   why: string
   /** Tags that exist only on rows being dropped. Carry them BEFORE deleting. */
   tagsToCarry: string[]
+  /** Locators the keeper SHARES with a row being dropped — see sharedLocators. */
+  shared: string[]
   note: string
 }
 
@@ -125,6 +157,7 @@ export function plan(group: DedupeRow[], bytesOf: StreamBytes): Plan {
     if (lo > 0 && (hi - lo) / lo > LENGTH_TOL) {
       return {
         verdict: 'lengths-differ', keep: null, why: '', tagsToCarry: [],
+        shared: sharedLocators(group),
         note: `lengths differ ${(lo / 1000).toFixed(0)} s vs ${(hi / 1000).toFixed(0)} s ` +
           `(${(((hi - lo) / lo) * 100).toFixed(1)} %) — two different CUTS of one moment, ` +
           `not one clip filed twice. Dropping the longer row loses footage.`,
@@ -135,37 +168,68 @@ export function plan(group: DedupeRow[], bytesOf: StreamBytes): Plan {
   if (!group.some((r) => any(r) > 0)) {
     return {
       verdict: 'nothing-plays', keep: null, why: '', tagsToCarry: [],
+      shared: sharedLocators(group),
       note: 'no row here has a copy in the cloud, so there is no dedupe to do. ' +
         'The question is whether to keep one row as the record or drop the clip.',
     }
   }
 
+  // WHERE AN UNVERIFIED LOCATOR SITS IN THE ORDER depends on whether anything
+  // here is known to play, and the real 29 Sept rows are why.
+  //
+  // Both rows of each pair read `orig✓` and name the SAME guid, so playback is
+  // identical whichever survives. The only differences are an extra
+  // `origFile?` — a storage path this script does not probe — on one, and ten
+  // tags on the other. Ranking the unprobed path above the tags kept the
+  // tagless row and made three UPDATEs load-bearing, to gain a fallback that
+  // may not exist. Tags are certain and human-made; an unverified path is a
+  // guess. So when something live exists, tags come first.
+  //
+  // When NOTHING is live, the order has to flip: tags-first would then keep a
+  // row with no locator at all over one that at least names a file.
+  const anyLive = group.some((r) => cnt(r).live > 0)
   const ranked = [...group].sort((a, b) => {
     const d = cnt(b).live - cnt(a).live
     if (d) return d
-    const m = cnt(b).maybe - cnt(a).maybe
-    if (m) return m
-    // Tags are typed by a person and the carry-forward UPDATE can be skipped.
-    const t = (b.tags?.length || 0) - (a.tags?.length || 0)
-    if (t) return t
+    const tags = (b.tags?.length || 0) - (a.tags?.length || 0)
+    const maybe = cnt(b).maybe - cnt(a).maybe
+    if (anyLive) { if (tags) return tags; if (maybe) return maybe }
+    else { if (maybe) return maybe; if (tags) return tags }
     // Then the oldest, which any share link already handed out points at.
     return (a.created_at || '').localeCompare(b.created_at || '')
   })
   const keep = ranked[0]
   const keptCopies = info.get(keep.id) || []
-  const why = cnt(keep).live > cnt(ranked[1]).live
+  // The reason must name the comparison that actually decided it. The maybe
+  // tier used to break ties invisibly, and the line still read "the oldest" —
+  // while keeping the NEWER row. An explanation that is wrong about itself is
+  // worse than none, because it is what gets read instead of the table.
+  const next = ranked[1]
+  const nTags = keep.tags?.length || 0
+  const why = cnt(keep).live > cnt(next).live
     ? `most copies in the cloud (${describe(keptCopies)})`
-    : (keep.tags?.length || 0) > (ranked[1].tags?.length || 0)
-      ? `equal copies — the one carrying ${keep.tags?.length} tags`
-      : 'equal copies and labels — the oldest, which any shared link points at'
+    : anyLive && nTags > (next.tags?.length || 0)
+      ? `equal live copies — the one carrying ${nTags} tag${nTags === 1 ? '' : 's'}`
+      : cnt(keep).maybe > cnt(next).maybe
+        ? `no live copy either side — the one that at least names a file (${describe(keptCopies)})`
+        : !anyLive && nTags > (next.tags?.length || 0)
+          ? `equal locators — the one carrying ${nTags} tag${nTags === 1 ? '' : 's'}`
+          : 'equal copies and labels — the oldest, which any shared link points at'
 
   const kept = new Set(keep.tags || [])
   const tagsToCarry = Array.from(new Set(
     group.filter((r) => r.id !== keep.id).flatMap((r) => r.tags || [])
   )).filter((t) => !kept.has(t))
 
+  // Only what the KEEPER shares with a row that would go: a locator shared
+  // between two dropped rows purges once and harms nothing.
+  const keptValues = new Set(locatorValues(keep))
+  const shared = Array.from(new Set(
+    group.filter((r) => r.id !== keep.id).flatMap((r) => locatorValues(r))
+  )).filter((v) => keptValues.has(v))
+
   return {
-    verdict: 'safe', keep, why, tagsToCarry,
+    verdict: 'safe', keep, why, tagsToCarry, shared,
     note: counts(keptCopies).live === 0
       ? 'the keeper rests on a STORAGE PATH this script does not probe — confirm it plays before deleting the rest'
       : '',

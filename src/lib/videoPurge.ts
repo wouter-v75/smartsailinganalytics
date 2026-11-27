@@ -78,3 +78,65 @@ export function planPurge(rows: readonly DeletedVideoRow[]): PurgePlan {
   }
   return { streamIds: Array.from(streamIds), storageKeys: Array.from(storageKeys) }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WHAT A SURVIVING ROW STILL NEEDS.
+//
+// `planPurge` answers "what did these rows name?", which is not the same as
+// "what is now unreferenced". It de-duplicates WITHIN the deleted set — two
+// deleted rows sharing a proxy purge it once — and has no idea what the rows
+// that are still there point at.
+//
+// That gap is reachable, and the duplicate-row audit of 27 Nov 2026 walks
+// straight into it. The three real 29 Sept pairs are two rows for one clip, and
+// both carry the SAME `bunny_original_stream_id` — one Stream video, two rows.
+// `stream-dedupe.ts` confirms it from the other side: 0 duplicate clip names in
+// the library. Deleting the redundant row through the app therefore purges the
+// Stream video the row you KEPT depends on, and the clip you were tidying up
+// becomes unplayable. No error anywhere: the delete succeeds, the purge
+// succeeds, and the survivor's guid now resolves to nothing.
+//
+// A re-upload that reuses a proxy is the same shape, which is why the fix is
+// not specific to duplicates.
+//
+// The caller deletes the rows FIRST and then asks what is left — so anything
+// that matches is genuinely a surviving row, not the row being removed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What rows OTHER than the deleted ones still point at. */
+export interface StillReferenced {
+  streamIds: Iterable<string>
+  storageKeys: Iterable<string>
+}
+
+export interface PurgeSplit {
+  /** Safe to delete from Bunny: nothing else points at these. */
+  purge: PurgePlan
+  /** Held back because a surviving row needs them. */
+  withheld: PurgePlan
+}
+
+/**
+ * Split a purge plan into what may go and what a surviving row still needs.
+ *
+ * Storage keys are compared normalised, because the same object is stored with
+ * and without a leading slash depending on which uploader wrote the row — and a
+ * comparison that misses makes a needed object look unreferenced, which is the
+ * one direction that loses data.
+ */
+export function splitPurge(plan: PurgePlan, kept: StillReferenced): PurgeSplit {
+  // Array.from, not for..of: this tsconfig's target cannot iterate a bare
+  // Iterable (TS2802), and the signature stays Iterable so a Set passes.
+  const keepStream = new Set<string>()
+  for (const s of Array.from(kept.streamIds)) { const v = clean(s); if (v) keepStream.add(v) }
+  const keepKeys = new Set<string>()
+  for (const k of Array.from(kept.storageKeys)) { const v = storageKey(k); if (v) keepKeys.add(v) }
+
+  const purge: PurgePlan = { streamIds: [], storageKeys: [] }
+  const withheld: PurgePlan = { streamIds: [], storageKeys: [] }
+
+  for (const id of plan.streamIds) (keepStream.has(id) ? withheld : purge).streamIds.push(id)
+  for (const k of plan.storageKeys) (keepKeys.has(storageKey(k)) ? withheld : purge).storageKeys.push(k)
+
+  return { purge, withheld }
+}

@@ -211,3 +211,54 @@ describe('a storage path is reported as unverified, never as proof', () => {
     expect(counts(copies(r, NONE))).toEqual({ live: 0, maybe: 0 })
   })
 })
+
+describe('the real 29 Sept shape — one video, two rows', () => {
+  // What Bunny actually says, 27 Nov 2026: BOTH rows read `orig✓`, and the
+  // library has 0 duplicate clip names, so it is one Stream video with two rows
+  // pointing at it. Playback is identical whichever survives. The differences
+  // are an extra unprobed `origFile?` on one and ten tags on the other.
+  const ORIG = 'one-and-only-original'
+  const tagged = {
+    id: '734cf00c', duration_ms: 81_000, bytes: 77_200_000, tags: ST.concat(['a2_b 2026']),
+    created_at: '2026-09-30T07:36:00Z', bunny_original_stream_id: ORIG,
+  }
+  const pathed = {
+    id: 'f6f0d998', duration_ms: 81_000, bytes: 77_200_000, tags: [],
+    created_at: '2026-10-02T15:07:00Z',
+    bunny_original_stream_id: ORIG, bunny_original_path: 'originals/f6f0d998.mp4',
+  }
+
+  it('keeps the TAGGED row, not the one with an unverified extra path', () => {
+    // Ranking the unprobed path first kept the tagless row and made the tag
+    // UPDATE load-bearing, to gain a fallback that may not exist.
+    const p = plan([tagged, pathed], lib(ORIG))
+    expect(p.verdict).toBe('safe')
+    expect(p.keep?.id).toBe(tagged.id)
+    expect(p.why).toContain('10 tags')
+    expect(p.tagsToCarry).toEqual([])
+  })
+
+  it('names the shared video, because deleting the other row purges it', () => {
+    const p = plan([tagged, pathed], lib(ORIG))
+    expect(p.shared).toEqual([ORIG])
+  })
+
+  it('gives a reason that matches the comparison that decided it', () => {
+    // The line used to read "the oldest" while keeping the NEWER row, because
+    // the unverified tier broke the tie and the explanation never mentioned it.
+    const p = plan([tagged, pathed], lib(ORIG))
+    expect(p.why).not.toContain('oldest')
+  })
+
+  it('still prefers a real extra copy when nothing is verified', () => {
+    const p = plan([{ ...tagged, bunny_original_stream_id: null }, pathed], () => 0)
+    expect(p.keep?.id).toBe(pathed.id)
+    expect(p.why).toContain('names a file')
+    expect(p.tagsToCarry).toEqual(tagged.tags)
+  })
+
+  it('reports no sharing when the two rows name different videos', () => {
+    const other = { ...pathed, bunny_original_stream_id: 'a-different-one' }
+    expect(plan([tagged, other], lib(ORIG, 'a-different-one')).shared).toEqual([])
+  })
+})

@@ -17,7 +17,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
-import { PURGE_COLUMNS, planPurge, type DeletedVideoRow } from '../../../../../../../lib/videoPurge'
+import {
+  PURGE_COLUMNS, planPurge, splitPurge, storageKey,
+  type DeletedVideoRow, type PurgePlan,
+} from '../../../../../../../lib/videoPurge'
 import { storageHost } from '@/lib/bunnyStorageHost'
 
 // Bunny Stream auto-generates a poster thumbnail for every uploaded video.
@@ -321,16 +324,75 @@ interface PurgeReport {
   failed: string[]
   /** Not attempted, because Bunny is not configured for writes here. */
   skipped: string[]
+  /** Deliberately NOT removed: a row that still exists points at them. */
+  withheld: string[]
 }
 
-const emptyPurge = (): PurgeReport => ({ ok: [], failed: [], skipped: [] })
+const emptyPurge = (): PurgeReport => ({ ok: [], failed: [], skipped: [], withheld: [] })
 
 // A 404 counts as purged: the object is not there, which is the state we wanted.
 const gone = (status: number) => status === 404 || (status >= 200 && status < 300)
 
-async function purgeBunny(rows: readonly DeletedVideoRow[]): Promise<PurgeReport> {
-  const plan = planPurge(rows)
+/**
+ * What rows that are STILL THERE point at, out of a candidate purge plan.
+ *
+ * Asked after the delete, so a match is always a survivor. Six separate `in`
+ * queries rather than one `or`: a storage key contains slashes and commas, and
+ * PostgREST's `or` syntax is comma-separated, so building that filter from
+ * stored paths is a quoting bug waiting to happen.
+ *
+ * Keys are matched with AND without a leading slash, because the same object is
+ * stored both ways depending on which uploader wrote the row.
+ */
+async function survivingReferences(
+  supabase: ReturnType<typeof getServerSupabase>,
+  plan: PurgePlan
+): Promise<{ streamIds: string[]; storageKeys: string[] }> {
+  const streamIds: string[] = []
+  const storageKeys: string[] = []
+
+  const STREAM_COLS = ['bunny_stream_id', 'bunny_proxy_stream_id', 'bunny_original_stream_id'] as const
+  const PATH_COLS = ['bunny_storage_path', 'bunny_proxy_path', 'bunny_original_path'] as const
+
+  if (plan.streamIds.length) {
+    for (const col of STREAM_COLS) {
+      const { data } = await supabase.from('videos').select(col).in(col, plan.streamIds)
+      for (const r of (data || []) as Record<string, string | null>[]) {
+        const v = r[col]
+        if (v) streamIds.push(v)
+      }
+    }
+  }
+
+  if (plan.storageKeys.length) {
+    const variants = Array.from(new Set(
+      plan.storageKeys.flatMap((k) => [storageKey(k), `/${storageKey(k)}`])
+    ))
+    for (const col of PATH_COLS) {
+      const { data } = await supabase.from('videos').select(col).in(col, variants)
+      for (const r of (data || []) as Record<string, string | null>[]) {
+        const v = r[col]
+        if (v) storageKeys.push(v)
+      }
+    }
+  }
+
+  return { streamIds, storageKeys }
+}
+
+async function purgeBunny(
+  supabase: ReturnType<typeof getServerSupabase>,
+  rows: readonly DeletedVideoRow[]
+): Promise<PurgeReport> {
+  const candidate = planPurge(rows)
   const report = emptyPurge()
+
+  // A clip is not always one row. Two rows for one clip — a clips:day re-run, a
+  // re-import, a re-upload that reused a proxy — share a locator, so purging
+  // everything the deleted row NAMED takes the bytes the surviving row needs
+  // and un-plays a clip nobody touched. See the note in videoPurge.ts.
+  const { purge: plan, withheld } = splitPurge(candidate, await survivingReferences(supabase, candidate))
+  report.withheld.push(...withheld.storageKeys, ...withheld.streamIds)
 
   for (const key of plan.storageKeys) {
     if (!STORAGE_WRITE_KEY || !STORAGE_ZONE) { report.skipped.push(key); continue }
@@ -434,6 +496,6 @@ export async function DELETE(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const rows = (data || []) as DeletedVideoRow[]
-  const purged = await purgeBunny(rows)
+  const purged = await purgeBunny(supabase, rows)
   return NextResponse.json({ deleted: rows.length, videos: rows, purged })
 }

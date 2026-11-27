@@ -198,12 +198,22 @@ async function main() {
       console.log(`   → keep ${p.keep.id.slice(0, 8)}: ${p.why}`)
       if (p.note) console.log(`   ⚠ ${p.note}`)
       for (const r of g) if (r.id !== p.keep.id) drop.push(r.id)
+      if (p.shared.length) {
+        console.log(`   ⚠ ONE OBJECT, TWO ROWS — the keeper SHARES ${p.shared.length} locator(s)`)
+        console.log(`     with a row that would go: ${p.shared.join(', ')}`)
+        console.log(`     Use the SQL below, NOT the app's delete, unless the deployment has`)
+        console.log(`     splitPurge (27 Nov 2026): the old route purges every locator the`)
+        console.log(`     deleted row NAMED, which takes the bytes the keeper depends on.`)
+      }
       if (p.tagsToCarry.length) {
         console.log(`   ⚠ ${p.tagsToCarry.length} tag(s) live ONLY on rows that would go: ${p.tagsToCarry.join(', ')}`)
         merges.push({ id: p.keep.id, tags: Array.from(new Set((p.keep.tags || []).concat(p.tagsToCarry))) })
       }
     } else {
       console.log(`   ⛔ HELD BACK — ${p.note}`)
+      if (p.shared.length) {
+        console.log(`   ⚠ and these rows SHARE ${p.shared.length} locator(s): ${p.shared.join(', ')}`)
+      }
       held.push({ date: d, title: g[0].title || '', note: p.note })
     }
   }
