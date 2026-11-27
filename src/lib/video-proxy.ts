@@ -183,7 +183,25 @@ async function generateProxyWebCodecs({
 
 let ffmpegInstance: any = null
 
+// WHOSE transcode the log line belongs to.
+//
+// The instance is a singleton and `ensureFFmpeg` returns early once it exists,
+// so an `onLog` passed on any later call used to be dropped on the floor — the
+// listener stayed bound to the FIRST caller's closure for the life of the page.
+// Every subsequent clip's ffmpeg output was therefore delivered to the first
+// clip's progress handler, which is how an upload log came to read:
+//
+//   ✓ 20261127120000 … — 720p is up, the team can watch it now
+//   ⟳ 20261127121500 … — encoding to 720p…
+//   ⟳ 20261127120000 … — encoding to 720p…     ← finished clip, second's output
+//
+// and why the second clip got no messages of its own at all. The sink is set
+// per RUN and cleared in the same finally that removes the progress listener,
+// so the log stream belongs to whichever transcode is actually running.
+let logSink: ((msg: string) => void) | null = null
+
 async function ensureFFmpeg(onLog?: (msg: string) => void): Promise<any> {
+  logSink = onLog || null
   if (ffmpegInstance) return ffmpegInstance
   // Dynamic imports so the heavy WASM bundle stays out of the initial route
   // chunk; only paid for when a proxy actually needs the fallback engine.
@@ -192,9 +210,7 @@ async function ensureFFmpeg(onLog?: (msg: string) => void): Promise<any> {
   const { FFmpeg } = ffMod
   const { toBlobURL } = utilMod
   const ff = new FFmpeg()
-  if (onLog) {
-    ff.on('log', ({ message }: { message: string }) => onLog(message))
-  }
+  ff.on('log', ({ message }: { message: string }) => logSink?.(message))
   // Load WASM core from the unpkg CDN as recommended by the ffmpeg.wasm docs.
   //
   // This is a RUNTIME fetch to a third party from the user's device. When it fails —
@@ -290,6 +306,7 @@ async function generateProxyFFmpeg({
     return { blob, bytes: blob.size, type: 'video/mp4', engine: 'ffmpeg' }
   } finally {
     ff.off('progress', onProgressEv)
+    logSink = null
   }
 }
 
