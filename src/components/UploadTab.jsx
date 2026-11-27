@@ -1156,10 +1156,17 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           onProgress:pr=>{
             const f=Math.max(0,Math.min(1,pr.pct||0));
             const ph=pr.phase||"uploading";
-            if(ph!==lastPhase){
-              lastPhase=ph;
-              if(ph==="transcoding")addLog(`⟳ ${label} — encoding to 720p…`);
-              if(ph==="uploading")  addLog(`⟳ ${label} — encoded, now uploading…`);
+            // "Queued" and "encoding" are the same PHASE but not the same
+            // thing, and a clip waiting its turn on the single ffmpeg instance
+            // was logged as "encoding to 720p…" — which is the kind of small
+            // untruth that makes a log useless for working out where time went.
+            const queued=/^Queued/.test(pr.message||"");
+            const step=queued?`${ph}-queued`:ph;
+            if(step!==lastPhase){
+              lastPhase=step;
+              if(queued)                 addLog(`⟳ ${label} — ${pr.message}`);
+              else if(ph==="transcoding")addLog(`⟳ ${label} — encoding to 720p…`);
+              else if(ph==="uploading")  addLog(`⟳ ${label} — encoded, now uploading…`);
             }
             if(ph==="transcoding"){
               setItem(v.id,{state:"processing",phase:ph,encodePct:Math.round(f*100),
