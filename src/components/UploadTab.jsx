@@ -1027,7 +1027,21 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     const setItem=(id,patch)=>{
       const idx=progressRef.items.findIndex(it=>it.id===id);
       if(idx===-1)return;
-      progressRef.items[idx]={...progressRef.items[idx],...patch};
+      const prev=progressRef.items[idx];
+      // A finished or failed item is FINAL. A late progress callback — a retry's
+      // first tick, an XHR event delivered after the await resolved — must not
+      // un-finish it. That is why a clip the log had already announced as up
+      // was still showing 5% LOCAL in the panel.
+      if((prev.state==="done"||prev.state==="error")&&patch.state&&patch.state!=="done"&&patch.state!=="error")return;
+      const next={...prev,...patch};
+      // Going BACKWARDS inside one phase means the transfer started over: the
+      // proxy PUT is a single request, so a dropped connection costs all of it.
+      // Say so rather than letting the bar silently reset.
+      if(prev.phase&&next.phase===prev.phase&&(next.pct||0)<(prev.pct||0)-10){
+        next.restarts=(prev.restarts||0)+1;
+        next.note=`${next.note||""} · restarted ${next.restarts}×`;
+      }
+      progressRef.items[idx]=next;
       const total=progressRef.items.length;
       progressRef.overall=Math.round(progressRef.items.reduce((s,it)=>s+(it.pct||0),0)/total);
       pushProgress();
@@ -1118,19 +1132,42 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           setItem(v.id,{state:"done",pct:100});
           continue;
         }
-        setItem(v.id,{state:"active",pct:5});
+        setItem(v.id,{state:"processing",pct:1,phase:"",encodePct:0,uploadPct:0,note:"preparing…"});
+        let lastPhase="";
         const res=await uploadClipProxy({
           video:v,
           sessionDate:savedDate,
           syncOffsets,
-          onProgress:pr=>setItem(v.id,{
-            state:"active",
-            pct:Math.max(5,Math.min(95,Math.round((pr.pct||0)*100))),
-          }),
+          // RenditionProgress.pct is 0..1 WITHIN the current phase, not overall.
+          // Treating it as overall is why the bar sat at 5% and then appeared to
+          // go backwards: transcoding ran 0→1, then uploading started again at 0.
+          // Each phase gets its own bar, and the aggregate gets one weighted
+          // number so it only ever moves forward.
+          onProgress:pr=>{
+            const f=Math.max(0,Math.min(1,pr.pct||0));
+            const ph=pr.phase||"uploading";
+            if(ph!==lastPhase){
+              lastPhase=ph;
+              if(ph==="transcoding")addLog(`⟳ ${label} — encoding to 720p…`);
+              if(ph==="uploading")  addLog(`⟳ ${label} — encoded, now uploading…`);
+            }
+            if(ph==="transcoding"){
+              setItem(v.id,{state:"processing",phase:ph,encodePct:Math.round(f*100),
+                pct:Math.round(f*40),note:pr.message||"encoding 720p"});
+            }else if(ph==="uploading"){
+              setItem(v.id,{state:"active",phase:ph,encodePct:100,
+                uploadPct:Math.round(f*100),pct:40+Math.round(f*55),
+                note:pr.message||"uploading"});
+            }else if(ph==="marking"){
+              setItem(v.id,{state:"active",phase:ph,encodePct:100,uploadPct:100,
+                pct:97,note:pr.message||"recording rendition"});
+            }
+          },
         });
         if(res.ok){
           nUploaded++;
-          setItem(v.id,{state:"done",pct:100,streamId:res.proxyStreamId||undefined});
+          setItem(v.id,{state:"done",pct:100,encodePct:100,uploadPct:100,note:"",
+            streamId:res.proxyStreamId||undefined});
           setSavedVids(p=>p.map(x=>x.id===v.id?{...x,
             cloudId:res.cloudId, hasProxy:true,
             proxyUploadedAt:new Date().toISOString(),
@@ -1141,11 +1178,18 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             : `✓ ${label} — 720p is up, the team can watch it now`);
         }else{
           nFailed++;
-          setItem(v.id,{state:"error",pct:0});
+          setItem(v.id,{state:"error",pct:0,note:res.error||"upload failed"});
           addLog(`✕ ${label}: ${res.error||"upload failed"}`);
         }
       }
 
+      // The retry already exists and nobody could tell: toUpload is filtered on
+      // alreadyInCloud, so pressing the button again sends ONLY what failed.
+      if(nFailed){
+        addLog(`↻ ${nFailed} clip${nFailed===1?"":"s"} did not get through — press ② Push to Cloud `
+          +`again and only ${nFailed===1?"that one":"those"} will be sent; `
+          +`anything already up is skipped.`);
+      }
       setPhase("done");
       progressRef.overall=100;pushProgress();
       // Say what landed. Every uploaded clip is already PLAYABLE at this point,

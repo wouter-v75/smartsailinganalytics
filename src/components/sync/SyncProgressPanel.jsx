@@ -63,14 +63,24 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
               </span>
               <span style={{flex:1,fontSize:10,color:"#94A3B8",overflow:"hidden",
                 textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.label}</span>
-              {(it.state==="active")&&(
-                <div style={{width:80,height:3,background:"#1E3A5A",borderRadius:2,overflow:"hidden",flexShrink:0}}>
-                  <div style={{height:"100%",background:"#06B6D4",
-                    width:`${it.pct||0}%`,borderRadius:2,transition:"width 0.4s ease"}}/>
+              {/* TWO bars, one per phase. A clip is encoded to 720p in the
+                  browser and only then uploaded, and RenditionProgress.pct is
+                  0..1 WITHIN a phase — so a single bar restarted at zero when
+                  the upload began and looked stuck, then looked like it had
+                  gone backwards. Showing both says which half you are waiting
+                  on, and an encode bar at 100% beside an upload bar at 12% is
+                  the difference between "my laptop is busy" and "my wifi is
+                  bad". */}
+              {(it.state==="active"||it.state==="processing")&&(
+                <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                  <PhaseBar label="enc" pct={it.encodePct||0} colour="#F59E0B"/>
+                  <PhaseBar label="up"  pct={it.uploadPct||0} colour="#06B6D4"/>
                 </div>
               )}
-              {(it.state==="processing")&&(
-                <span style={{fontSize:9,color:"#F59E0B",fontFamily:"monospace",flexShrink:0}}>encoding…</span>
+              {it.note&&it.state!=="done"&&(
+                <span style={{fontSize:9,color:it.state==="error"?"#EF4444":"#64748B",
+                  fontFamily:"monospace",flexShrink:0,maxWidth:160,overflow:"hidden",
+                  textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.note}</span>
               )}
               <span style={{fontSize:9,color:stateColor(it.state),fontFamily:"monospace",
                 width:32,textAlign:"right",flexShrink:0}}>
@@ -87,6 +97,21 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
           borderRadius:5,padding:"6px 10px"}}>{error}</div>
       )}
     </div>
+  );
+}
+
+/** One phase's bar, with the phase named beside it. */
+function PhaseBar({label,pct,colour}){
+  return(
+    <span style={{display:"flex",alignItems:"center",gap:3}}>
+      <span style={{fontSize:8,color:"#475569",fontFamily:"monospace"}}>{label}</span>
+      <span style={{width:40,height:3,background:"#1E3A5A",borderRadius:2,
+        overflow:"hidden",display:"inline-block"}}>
+        <span style={{display:"block",height:"100%",background:colour,
+          width:`${Math.max(0,Math.min(100,pct))}%`,borderRadius:2,
+          transition:"width 0.4s ease"}}/>
+      </span>
+    </span>
   );
 }
 
