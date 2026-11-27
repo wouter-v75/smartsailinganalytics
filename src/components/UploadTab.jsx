@@ -23,6 +23,8 @@ import { uploadClipProxy } from '../lib/uploadFlows';
 import { enrichVideo } from '../lib/videoEnrich';
 import { clipTimestampSettled, extractVideoCreationTime, probeVideo, resolveStartUtc } from '../lib/videoProbe';
 import { canWatchFolders, collectNewClips, ensureFolderPermission } from '../lib/watchFolder';
+import { checkDevice, verdict, probeEncoderCdn, probeLocalStore } from '../lib/uploadReadiness';
+import { webCodecsCanEncodeH264 } from '../lib/video-proxy';
 import { getPref, setPref, WATCH_FOLDER_PREF } from '../lib/prefsStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { SrcBadge } from './ssa/SrcBadge';
@@ -343,6 +345,28 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     getPref(WATCH_FOLDER_PREF).then((h) => { if (alive && h) setSavedDir(h); });
     return () => { alive = false; };
   }, []);
+
+  // "Does this laptop have everything?" — asked on the dock, not on the water.
+  // Nothing is INSTALLED for any of this: the encoder is either the browser's
+  // own hardware one or a runtime download from unpkg.com, and no folder has to
+  // exist. Which means every way it can fail is invisible until someone is
+  // already mid-import with a day's footage behind them.
+  const checkThisDevice = useCallback(async () => {
+    addLog("⟳ Checking this device…");
+    const checks = await checkDevice({
+      webCodecs: webCodecsCanEncodeH264,
+      encoderCdn: probeEncoderCdn,
+      directoryPicker: canWatchFolders,
+      localStore: probeLocalStore,
+      workspace: async () => Boolean(await currentStorageScope()),
+    });
+    const v = verdict(checks);
+    for (const c of checks) {
+      addLog(`${c.state === "ok" ? "✓" : c.state === "warn" ? "⚠" : "✕"} ${c.label} — ${c.detail}`);
+      if (c.fix) addLog(`    ${c.fix}`);
+    }
+    addLog(v.ready ? `✓ ${v.summary}` : `✕ ${v.summary}`);
+  }, [addLog]);
 
   const startWatching = useCallback(async () => {
     if (!canWatchFolders()) {
@@ -1289,6 +1313,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         <input type="checkbox" checked={watchAutoUpload} onChange={e=>setWatchAutoUpload(e.target.checked)} style={{cursor:"pointer"}} />
         upload as they arrive
       </label>
+      <button onClick={checkThisDevice} title="Can this device encode and upload? Checks the encoder, the folder picker, local storage and your boat workspace. Changes nothing." style={{background:"#1E293B",border:"1px solid #334155",borderRadius:5,color:"#94A3B8",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
+        Check this device
+      </button>
       <button onClick={watchOn ? stopWatching : startWatching} style={{background:watchOn?"#7F1D1D":"#0E7490",border:"none",borderRadius:5,color:"#fff",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
         {watchOn ? "Stop" : savedDir ? `Watch ${savedDir.name}` : "Watch folder…"}
       </button>

@@ -71,7 +71,15 @@ const PROXY_FPS = 30
 // One-shot capability probe: does this browser have a working H.264 video
 // encoder? Cached — the probe is cheap but we only need it once per page.
 let webCodecsProbe: Promise<boolean> | null = null
-function webCodecsCanEncodeH264(): Promise<boolean> {
+/**
+ * Can this browser encode H.264 in hardware?
+ *
+ * Exported for the dock-side readiness check (uploadReadiness.ts): the answer
+ * decides whether a device needs to download ffmpeg.wasm at all, which is the
+ * one part of the pipeline that needs the network before a clip can be made.
+ * Cached, so asking costs nothing after the first time.
+ */
+export function webCodecsCanEncodeH264(): Promise<boolean> {
   if (webCodecsProbe) return webCodecsProbe
   webCodecsProbe = (async () => {
     // Reference the globals defensively so this compiles regardless of the
