@@ -1176,7 +1176,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           return;
         }
         setItem(v.id,{state:"processing",pct:1,phase:"",encodePct:0,uploadPct:0,note:"preparing…"});
-        let lastPhase="", tEnc=0, tUp=0;
+        let lastPhase="", tEnc=0, tUp=0, engine="";
         const res=await uploadClipProxy({
           video:v,
           sessionDate:savedDate,
@@ -1193,6 +1193,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             // thing, and a clip waiting its turn on the single ffmpeg instance
             // was logged as "encoding to 720p…" — which is the kind of small
             // untruth that makes a log useless for working out where time went.
+            if(pr.engine) engine=pr.engine;
             const queued=/^Queued/.test(pr.message||"");
             const step=queued?`${ph}-queued`:ph;
             if(step!==lastPhase){
@@ -1227,7 +1228,11 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           // upload spans overlap is the pipeline working; two that do not is a
           // question worth asking.
           const secs=(a,b)=>a&&b?`${Math.max(0,Math.round((b-a)/1000))}s`:"—";
-          const spent=`encode ${secs(tEnc,tUp)}, upload ${secs(tUp,Date.now())}`;
+          // Name the ENGINE. Hardware and software differ by 5-20×, the fallback
+          // is silent, and a day that suddenly takes an hour longer is otherwise
+          // unexplainable.
+          const how=engine==="webcodecs"?" hardware":engine==="ffmpeg"?" SOFTWARE":"";
+          const spent=`encode${how} ${secs(tEnc,tUp)}, upload ${secs(tUp,Date.now())}`;
           addLog(res.streamError
             ? `[${at()}] ⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`
             : `[${at()}] ✓ ${label} — 720p is up (${spent})`);

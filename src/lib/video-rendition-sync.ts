@@ -70,6 +70,8 @@ export interface RenditionProgress {
   /** 0..1 within the current phase. */
   pct: number
   message?: string
+  /** Which transcode engine ran — hardware or the software fallback. */
+  engine?: 'webcodecs' | 'ffmpeg'
   bytesUploaded?: number
   bytesTotal?: number
   errorMessage?: string
@@ -413,6 +415,7 @@ export async function syncProxyForVideo({
             phase: 'transcoding',
             pct: pp.progress,
             message: pp.message,
+            engine: pp.engine,
           })
         },
       }), () => emit({ phase: 'transcoding', pct: 0,

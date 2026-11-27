@@ -22,6 +22,12 @@
 export interface ProxyProgress {
   /** 0..1 transcoding progress within the current job. */
   progress: number
+  /**
+   * Which engine is producing this. Worth reporting: hardware is 5-20× faster
+   * and needs no network, software needs a CDN download and turns a clip into
+   * a coffee break — and nothing used to say which one a device had fallen to.
+   */
+  engine?: 'webcodecs' | 'ffmpeg'
   /** Status line, useful for diagnostics / the progress UI. */
   message?: string
 }
@@ -160,6 +166,7 @@ async function generateProxyWebCodecs({
     onProgress?.({
       progress: Math.min(0.999, Math.max(0, p || 0)),
       message: 'Hardware transcode',
+      engine: 'webcodecs',
     })
   }
 
@@ -249,16 +256,20 @@ async function generateProxyFFmpeg({
   inputStem = 'src',
   onProgress,
 }: GenerateProxyArgs): Promise<ProxyResult> {
+  // A LOG LINE IS NOT PROGRESS. ffmpeg emits many log lines between progress
+  // events, and sending them as `progress: 0` rewound the bar to zero after
+  // every one — so the messages changed constantly while the bar never moved,
+  // which reads as "the encoder is stuck" when it is working perfectly. The
+  // last real figure is carried on the message instead.
+  let lastProgress = 0
   const ff = await ensureFFmpeg((msg) =>
-    onProgress?.({ progress: 0, message: msg })
+    onProgress?.({ progress: lastProgress, message: msg })
   )
 
   // Wire progress event → caller. ffmpeg emits 0..1 floats.
   const onProgressEv = ({ progress }: { progress: number }) => {
-    onProgress?.({
-      progress: Math.min(0.999, Math.max(0, progress)),
-      message: 'Software transcode',
-    })
+    lastProgress = Math.min(0.999, Math.max(0, progress))
+    onProgress?.({ progress: lastProgress, message: 'Software transcode', engine: 'ffmpeg' })
   }
   ff.on('progress', onProgressEv)
 
