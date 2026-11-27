@@ -158,7 +158,7 @@ async function main() {
     ` · ${lib.size} videos in the Stream library\n`)
   if (!rows.length) { console.log('nothing to check.'); return }
 
-  let aOk = 0, bOk = 0, servesNothing = 0, lying = 0, dayOff = 0
+  let aOk = 0, bOk = 0, servesNothing = 0, lying = 0, dayOff = 0, legacyOnly = 0
   for (const r of rows) {
     const A = liveGuid(r.bunny_proxy_stream_id) || realPath(r.bunny_proxy_path)
     const B = liveGuid(r.bunny_original_stream_id) || realPath(r.bunny_original_path)
@@ -182,8 +182,16 @@ async function main() {
     const titleDay = dayFromTitle(r.title)
     const dayMismatch = titleDay && titleDay !== date
 
+    // Served by a path that NO LONGER EXISTS. It plays, so a "serves a real
+    // rendition" test passes it — and that is what this check was blind to on
+    // its first live run: both supported routes delivered 0 of 2 and the
+    // verdict still read ✓, because a warm browser bundle had uploaded through
+    // the flow removed in 70dc9ba. A clip nothing current can reproduce is not
+    // a pass.
+    const viaRemovedFlow = !A && !B && (served === 'legacyStream' || served === 'legacy')
     if (A) aOk++
     if (B) bOk++
+    if (viaRemovedFlow) legacyOnly++
     if (!served) servesNothing++
     if (flagIssues.length) lying++
     if (dayMismatch) dayOff++
@@ -199,6 +207,11 @@ async function main() {
       `   ${r.bunny_original_stream_id ? `stream ${r.bunny_original_stream_id.slice(0, 8)}${liveGuid(r.bunny_original_stream_id) ? '✓' : '✕'}` : ''}` +
       `${r.bunny_original_path ? `  path ${realPath(r.bunny_original_path) ? '✓' : '✕'}` : ''}`)
     console.log(`   a player gets: ${served || '✕ NOTHING — every locator on this row is empty or dead'}`)
+    if (viaRemovedFlow) {
+      console.log(`   ⚠ delivered ONLY by the upload flow removed in 70dc9ba — it plays, but`)
+      console.log(`     nothing in the app can produce this any more. A warm browser bundle is`)
+      console.log(`     the usual cause: hard-reload (Cmd-Shift-R) and upload again.`)
+    }
     for (const f of flagIssues) console.log(`   ⚠ ${f}`)
     if (dayMismatch) {
       console.log(`   ⚠ the title says ${titleDay} but the row is filed under ${date}`)
@@ -208,13 +221,22 @@ async function main() {
   console.log(`\n════ VERDICT for ${date} ════`)
   console.log(`  Flow A (proxy)     ${aOk}/${rows.length} delivered`)
   console.log(`  Flow B (original)  ${bOk}/${rows.length} delivered`)
+  console.log(`  via a SUPPORTED route ${rows.length - legacyOnly - servesNothing}/${rows.length}` +
+    (legacyOnly ? `   ← ${legacyOnly} came ONLY via the REMOVED flow` : ''))
   console.log(`  playable           ${rows.length - servesNothing}/${rows.length}` +
     (servesNothing ? `   ← ${servesNothing} row(s) serve NOTHING` : ''))
   console.log(`  flags truthful     ${rows.length - lying}/${rows.length}` +
     (lying ? `   ← ${lying} row(s) claim a rendition they do not have` : ''))
   if (dayOff) console.log(`  ⚠ ${dayOff} row(s) filed under a different day than their own title`)
-  if (!servesNothing && !lying && !dayOff) {
-    console.log(`\n  ✓ every row on this day serves a real rendition and says so truthfully.`)
+  if (!servesNothing && !lying && !dayOff && !legacyOnly && aOk === rows.length) {
+    console.log(`\n  ✓ every row came through a supported route, serves a real rendition,`)
+    console.log(`    and says so truthfully.`)
+  } else if (rows.length && legacyOnly === rows.length) {
+    console.log(`\n  ✕ NOT A PASS: every clip here arrived by the REMOVED flow. The app in`)
+    console.log(`    that browser is not the app in this repo — hard-reload and upload again.`)
+  } else if (aOk < rows.length) {
+    console.log(`\n  ✕ NOT A PASS: ${rows.length - aOk} of ${rows.length} clip(s) have no proxy. Flow A is the`)
+    console.log(`    automatic route, so a clip without one is a clip the team waits on.`)
   }
   console.log(`\nNothing has been changed.`)
 }
