@@ -1127,6 +1127,15 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       // `toUpload` is already in debrief order — starts, then roundings, then
       // manoeuvres — and the locks are FIFO, so that order survives.
       let nUploaded=0, nFailed=0, nAlready=0;
+      // Elapsed since THIS push began, on every clip line. Without it the log
+      // cannot show whether clip N+1 started encoding while clip N uploaded —
+      // which is the whole point of the pipeline, and was unanswerable from the
+      // first run because the upload happened to be faster than the encode.
+      const pushT0=Date.now();
+      const at=()=>{
+        const s=Math.round((Date.now()-pushT0)/1000);
+        return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+      };
       const DEPTH=2;
       const inFlight=new Set();
       const runOne=async(row)=>{
@@ -1143,7 +1152,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           return;
         }
         setItem(v.id,{state:"processing",pct:1,phase:"",encodePct:0,uploadPct:0,note:"preparing…"});
-        let lastPhase="";
+        let lastPhase="", tEnc=0, tUp=0;
         const res=await uploadClipProxy({
           video:v,
           sessionDate:savedDate,
@@ -1164,9 +1173,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             const step=queued?`${ph}-queued`:ph;
             if(step!==lastPhase){
               lastPhase=step;
-              if(queued)                 addLog(`⟳ ${label} — ${pr.message}`);
-              else if(ph==="transcoding")addLog(`⟳ ${label} — encoding to 720p…`);
-              else if(ph==="uploading")  addLog(`⟳ ${label} — encoded, now uploading…`);
+              if(queued)                 addLog(`[${at()}] ⟳ ${label} — ${pr.message}`);
+              else if(ph==="transcoding"){tEnc=Date.now();addLog(`[${at()}] ⟳ ${label} — encoding to 720p…`);}
+              else if(ph==="uploading")  {tUp=Date.now(); addLog(`[${at()}] ⟳ ${label} — encoded, now uploading…`);}
             }
             if(ph==="transcoding"){
               setItem(v.id,{state:"processing",phase:ph,encodePct:Math.round(f*100),
@@ -1190,9 +1199,14 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             proxyUploadedAt:new Date().toISOString(),
             proxyPath:res.proxyPath||null, proxyStreamId:res.proxyStreamId||null,
           }:x));
+          // Where the time actually went, per clip. Two clips whose encode and
+          // upload spans overlap is the pipeline working; two that do not is a
+          // question worth asking.
+          const secs=(a,b)=>a&&b?`${Math.max(0,Math.round((b-a)/1000))}s`:"—";
+          const spent=`encode ${secs(tEnc,tUp)}, upload ${secs(tUp,Date.now())}`;
           addLog(res.streamError
-            ? `⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`
-            : `✓ ${label} — 720p is up, the team can watch it now`);
+            ? `[${at()}] ⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`
+            : `[${at()}] ✓ ${label} — 720p is up (${spent})`);
         }else{
           nFailed++;
           setItem(v.id,{state:"error",pct:0,note:res.error||"upload failed"});
