@@ -1,11 +1,14 @@
 // Two rows, one Stream video: deleting one must not purge the other's bytes.
 //
-// The real case, 27 Nov 2026. The three 29 Sept duplicate pairs each have two
-// rows carrying the SAME bunny_original_stream_id — `stream-dedupe.ts` reports 0
-// duplicate clip names in the library, so there is one video and two rows
-// pointing at it. Tidying up the redundant row through the app purged the video
-// the kept row depends on. The delete succeeded, the purge succeeded, and the
-// survivor's guid resolved to nothing.
+// The shape planPurge already names — "two rows sharing a proxy (a re-upload
+// that reused it)". Deleting one purges the object the other depends on; the
+// delete succeeds, the purge succeeds, and the survivor's locator resolves to
+// nothing, with no error anywhere.
+//
+// This is a guard, not a reproduction. The 29 Sept duplicate pairs looked like
+// the live case — both rows `orig✓`, 0 duplicate clip names in the library —
+// and sharedLocators(), comparing stored values instead of inferring, found
+// nothing shared in any of the seven groups. The guids differ and both resolve.
 
 import { describe, it, expect } from 'vitest'
 import { planPurge, splitPurge, storageKey } from '../videoPurge'

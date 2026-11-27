@@ -212,11 +212,14 @@ describe('a storage path is reported as unverified, never as proof', () => {
   })
 })
 
-describe('the real 29 Sept shape — one video, two rows', () => {
-  // What Bunny actually says, 27 Nov 2026: BOTH rows read `orig✓`, and the
-  // library has 0 duplicate clip names, so it is one Stream video with two rows
-  // pointing at it. Playback is identical whichever survives. The differences
-  // are an extra unprobed `origFile?` on one and ten tags on the other.
+describe('the real 29 Sept shape — two live copies, tags on one side', () => {
+  // What Bunny actually says, 27 Nov 2026: BOTH rows read `orig✓`. The
+  // differences are an extra unprobed `origFile?` on one and ten tags on the
+  // other, so playback is equally good whichever survives.
+  //
+  // The guids are modelled as SHARED here only to exercise that path. On the
+  // live rows they differ — sharedLocators() reports nothing shared in any of
+  // the seven groups, which is what refuted the one-video-two-rows reading.
   const ORIG = 'one-and-only-original'
   const tagged = {
     id: '734cf00c', duration_ms: 81_000, bytes: 77_200_000, tags: ST.concat(['a2_b 2026']),

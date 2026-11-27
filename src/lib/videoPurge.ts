@@ -87,17 +87,22 @@ export function planPurge(rows: readonly DeletedVideoRow[]): PurgePlan {
 // deleted rows sharing a proxy purge it once — and has no idea what the rows
 // that are still there point at.
 //
-// That gap is reachable, and the duplicate-row audit of 27 Nov 2026 walks
-// straight into it. The three real 29 Sept pairs are two rows for one clip, and
-// both carry the SAME `bunny_original_stream_id` — one Stream video, two rows.
-// `stream-dedupe.ts` confirms it from the other side: 0 duplicate clip names in
-// the library. Deleting the redundant row through the app therefore purges the
-// Stream video the row you KEPT depends on, and the clip you were tidying up
-// becomes unplayable. No error anywhere: the delete succeeds, the purge
-// succeeds, and the survivor's guid now resolves to nothing.
+// The shape is the one `planPurge` already names: "two rows sharing a proxy (a
+// re-upload that reused it)". For those, the delete succeeds, the purge
+// succeeds, and the SURVIVOR's locator resolves to nothing — no error anywhere.
 //
-// A re-upload that reuses a proxy is the same shape, which is why the fix is
-// not specific to duplicates.
+// NOT MEASURED ON THE LIVE DATA, and the first version of this comment claimed
+// it was. The duplicate-row audit of 27 Nov 2026 looked like the live example:
+// the three 29 Sept pairs each read `orig✓` on both rows, and `stream-dedupe.ts`
+// reports 0 duplicate clip NAMES in the library, so one video with two rows was
+// the obvious reading. `sharedLocators()` compares the stored values instead of
+// inferring, and it finds nothing shared in any of the seven groups — the guids
+// differ and both resolve, so those are two real encodes and stream-dedupe
+// simply groups on the Bunny title, which differs between them.
+//
+// So this is a GUARD against a shape the data does not currently exhibit, kept
+// because nothing stopped it and the failure is silent. `sharedLocators()` is
+// what checks; run the dedupe script before trusting a delete to be local.
 //
 // The caller deletes the rows FIRST and then asks what is left — so anything
 // that matches is genuinely a surviving row, not the row being removed.

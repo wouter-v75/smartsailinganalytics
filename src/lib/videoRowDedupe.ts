@@ -96,13 +96,18 @@ export function locatorValues(r: DedupeRow): string[] {
 /**
  * Locators that more than one row in the group names — one object, several rows.
  *
- * This is the shape that makes a tidy-up dangerous. The three real 29 Sept pairs
- * each have two rows carrying the SAME `bunny_original_stream_id`, and
- * `stream-dedupe.ts` confirms it from the other side: 0 duplicate clip names in
- * the library. So deleting the redundant row through the app used to purge the
- * Stream video the KEPT row depends on — delete succeeds, purge succeeds, and
- * the survivor's guid resolves to nothing. `splitPurge` in videoPurge.ts now
- * withholds them, but a deployment running an older bundle does not.
+ * This is the shape that makes a tidy-up dangerous: deleting the redundant row
+ * through the app purges the object the KEPT row depends on — delete succeeds,
+ * purge succeeds, and the survivor's locator resolves to nothing. `splitPurge`
+ * in videoPurge.ts withholds them as of 27 Nov 2026; an older deployed bundle
+ * does not.
+ *
+ * MEASURED 27 Nov 2026: no group shares anything. It was written because the
+ * 29 Sept pairs read `orig✓` on both rows while `stream-dedupe.ts` reports 0
+ * duplicate clip names, which made one-video-two-rows the obvious reading — and
+ * this function, comparing the stored values rather than inferring, refuted it.
+ * The guids differ and both resolve. That is the point of having it: the
+ * inference was wrong in the direction that would have looked fine.
  */
 export function sharedLocators(group: DedupeRow[]): string[] {
   const seen = new Map<string, number>()
