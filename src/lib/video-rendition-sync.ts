@@ -33,7 +33,7 @@ import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './b
 import { awaitUplink, uplinkBusy } from './uplinkPriority'
 import { transcodeLock, uploadLock } from './phaseLocks'
 import { chooseStrategy } from './uploadStrategy'
-import { measuredThroughput, recordEncode, recordUpload } from './uploadStats'
+import { likelyEngine, measuredThroughput, recordEncode, recordUpload } from './uploadStats'
 import { webCodecsCanEncodeH264 } from './video-proxy'
 // The RESUMABLE path, borrowed from Flow B. See the fallback in putAndFetch.
 import { createStreamUpload, uploadFileToStream, FAST_LADDER } from './bunny'
@@ -425,7 +425,12 @@ export async function syncProxyForVideo({
         // uploadStrategy.ts does that arithmetic from measurements this device
         // has taken. With no measurements it chooses the transcode, which is
         // what the app has always done.
-        const engine = (await webCodecsCanEncodeH264().catch(() => false)) ? 'webcodecs' : 'ffmpeg'
+        // The engine that RAN last, not merely the one the probe allows:
+        // generateProxy falls back to software on any throw, and predicting
+        // with a hardware figure that never materialises is optimistic by
+        // 5-20× in exactly the direction that skips a proxy the link needed.
+        const engine = await likelyEngine(await webCodecsCanEncodeH264().catch(() => false))
+          .catch(() => 'ffmpeg' as const)
         const { uplinkBps, encodeBps } = await measuredThroughput(engine).catch(
           () => ({ uplinkBps: null, encodeBps: null })
         )

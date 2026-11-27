@@ -24,6 +24,8 @@ import { enrichVideo } from '../lib/videoEnrich';
 import { clipTimestampSettled, extractVideoCreationTime, probeVideo, resolveStartUtc } from '../lib/videoProbe';
 import { canWatchFolders, collectNewClips, ensureFolderPermission } from '../lib/watchFolder';
 import { checkDevice, verdict, probeEncoderCdn, probeLocalStore } from '../lib/uploadReadiness';
+import { measurementSummary } from '../lib/uploadStats';
+import { chooseStrategy } from '../lib/uploadStrategy';
 import { webCodecsCanEncodeH264 } from '../lib/video-proxy';
 import { getPref, setPref, WATCH_FOLDER_PREF } from '../lib/prefsStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
@@ -366,6 +368,25 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       if (c.fix) addLog(`    ${c.fix}`);
     }
     addLog(v.ready ? `✓ ${v.summary}` : `✕ ${v.summary}`);
+
+    // What this device has MEASURED, and what it would therefore do next. The
+    // transcode decision is otherwise invisible — it happens per clip, inside
+    // the upload — and a decision nobody can inspect is one nobody can
+    // disagree with when it is wrong.
+    try{
+      const m = await measurementSummary();
+      const mbit = b => b ? `${((b*8)/1e6).toFixed(1)} Mbit/s` : "not measured yet";
+      const mbs  = b => b ? `${(b/1048576).toFixed(0)} MB/s of source` : "not measured yet";
+      addLog(`· uplink: ${mbit(m.uplinkBps)}`);
+      addLog(`· encoder: hardware ${mbs(m.hardwareBps)} · software ${mbs(m.softwareBps)}`
+        + (m.lastEngine ? ` · last ran: ${m.lastEngine === "webcodecs" ? "hardware" : "SOFTWARE"}` : ""));
+      const encodeBps = m.lastEngine === "ffmpeg" ? m.softwareBps : (m.hardwareBps ?? m.softwareBps);
+      // A 200 MB, 2-minute clip — a realistic middling case, so the answer
+      // means something rather than being a boundary curiosity.
+      const d = chooseStrategy({ sourceBytes: 200*1024*1024, durationSec: 120, height: 1080,
+        uplinkBps: m.uplinkBps, encodeBps });
+      addLog(`· a 200 MB 2-minute clip would go: ${d.strategy === "direct" ? "straight up, as it is" : "encoded to 720p first"} — ${d.why}`);
+    }catch{ addLog("· (no measurements stored on this device yet)"); }
   }, [addLog]);
 
   const startWatching = useCallback(async () => {

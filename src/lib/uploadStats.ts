@@ -30,6 +30,7 @@ export type Engine = 'webcodecs' | 'ffmpeg'
 
 const UPLINK_KEY = 'uplinkThroughput'
 const ENCODE_KEY = (e: Engine) => `encodeThroughput:${e}`
+const LAST_ENGINE_KEY = 'lastTranscodeEngine'
 
 // Read-through cache. The decision is made per clip and IndexedDB is async;
 // nothing here is worth an await in the middle of a queue.
@@ -70,6 +71,10 @@ export async function recordUpload(bytes: number, seconds: number): Promise<void
  */
 export async function recordEncode(sourceBytes: number, seconds: number, engine?: Engine | null): Promise<void> {
   if (!engine) return                      // unknown engine teaches nothing useful
+  // Remember WHICH engine ran even when the sample itself is too small to
+  // learn a rate from — the fallback having happened at all is the fact that
+  // matters most for the next prediction.
+  try { await setPref(LAST_ENGINE_KEY, engine) } catch { /* optimisation only */ }
   if (!usableSample(sourceBytes, seconds)) return
   await write(ENCODE_KEY(engine), addSample(await read(ENCODE_KEY(engine)), sourceBytes / seconds))
 }
@@ -82,6 +87,26 @@ export async function encodeBps(engine: Engine): Promise<number | null> {
   return estimate(await read(ENCODE_KEY(engine)))
 }
 
+/**
+ * Which engine will actually run — remembered, not merely probed.
+ *
+ * `generateProxy` tries WebCodecs and falls back to ffmpeg.wasm on ANY throw,
+ * so a device whose capability probe says "hardware" can still be encoding in
+ * software every time. Predicting with the hardware figure there would be
+ * optimistic by 5-20× in the one direction that matters: it would skip the
+ * proxy on a link that cannot carry the original.
+ *
+ * So the engine that ran LAST wins over the probe. The probe only answers for a
+ * device that has never transcoded anything.
+ */
+export async function likelyEngine(probeSaysHardware: boolean): Promise<Engine> {
+  try {
+    const last = await getPref(LAST_ENGINE_KEY)
+    if (last === 'ffmpeg' || last === 'webcodecs') return last
+  } catch { /* fall through to the probe */ }
+  return probeSaysHardware ? 'webcodecs' : 'ffmpeg'
+}
+
 /** Everything the strategy needs, for the engine that WILL run on this device. */
 export async function measuredThroughput(engine: Engine): Promise<{
   uplinkBps: number | null
@@ -89,6 +114,22 @@ export async function measuredThroughput(engine: Engine): Promise<{
 }> {
   const [u, e] = await Promise.all([uplinkBps(), encodeBps(engine)])
   return { uplinkBps: u, encodeBps: e }
+}
+
+/** What this device has learned, for the readiness check to show. */
+export async function measurementSummary(): Promise<{
+  uplinkBps: number | null
+  hardwareBps: number | null
+  softwareBps: number | null
+  lastEngine: Engine | null
+}> {
+  const [u, hw, sw] = await Promise.all([uplinkBps(), encodeBps('webcodecs'), encodeBps('ffmpeg')])
+  let lastEngine: Engine | null = null
+  try {
+    const v = await getPref(LAST_ENGINE_KEY)
+    if (v === 'ffmpeg' || v === 'webcodecs') lastEngine = v
+  } catch { /* nothing learned */ }
+  return { uplinkBps: u, hardwareBps: hw, softwareBps: sw, lastEngine }
 }
 
 /** For tests and for a device whose measurements have gone obviously wrong. */

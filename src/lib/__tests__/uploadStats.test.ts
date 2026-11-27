@@ -10,6 +10,7 @@ vi.mock('../prefsStore', () => ({
 
 import {
   recordUpload, recordEncode, uplinkBps, encodeBps, measuredThroughput, forgetCachedStats,
+  likelyEngine, measurementSummary,
 } from '../uploadStats'
 
 const MB = 1024 * 1024
@@ -103,5 +104,40 @@ describe('uploadStats', () => {
     store.set('uplinkThroughput', { nonsense: true })
     forgetCachedStats()
     expect(await uplinkBps()).toBeNull()
+  })
+})
+
+describe('likelyEngine — what will actually run, not what is allowed', () => {
+  it('falls back to the probe before anything has ever been encoded', async () => {
+    expect(await likelyEngine(true)).toBe('webcodecs')
+    expect(await likelyEngine(false)).toBe('ffmpeg')
+  })
+
+  it('believes the engine that RAN over the probe that says hardware', async () => {
+    // generateProxy falls back to software on ANY throw, so a device whose
+    // probe says "hardware" can still be encoding in software every time.
+    // Predicting with the hardware figure would be optimistic by 5-20×, in the
+    // direction that skips a proxy the link actually needed.
+    await recordEncode(100 * MB, 50, 'ffmpeg')
+    forgetCachedStats()
+    expect(await likelyEngine(true)).toBe('ffmpeg')
+  })
+
+  it('remembers the engine even when the sample was too small to learn a rate', async () => {
+    // The fallback HAVING HAPPENED is the fact that matters most for the next
+    // prediction, independently of whether the timing was usable.
+    await recordEncode(50 * 1024, 0.2, 'ffmpeg')     // far too small to time
+    expect(await encodeBps('ffmpeg')).toBeNull()      // learned no rate
+    expect(await likelyEngine(true)).toBe('ffmpeg')   // but learned the engine
+  })
+
+  it('summarises what the device has learned, for the readiness check', async () => {
+    await recordUpload(20 * MB, 4)
+    await recordEncode(100 * MB, 2, 'webcodecs')
+    const m = await measurementSummary()
+    expect(m.uplinkBps!).toBeCloseTo(5 * MB, -3)
+    expect(m.hardwareBps!).toBeCloseTo(50 * MB, -5)
+    expect(m.softwareBps).toBeNull()
+    expect(m.lastEngine).toBe('webcodecs')
   })
 })
