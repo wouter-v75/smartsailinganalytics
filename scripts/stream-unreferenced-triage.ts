@@ -108,10 +108,27 @@ const hhmm = (s: number) => `${Math.floor(s / 60)}m${String(Math.round(s % 60)).
 async function allVideos(): Promise<Vid[]> {
   const out: Vid[] = []
   const seen = new Set<string>()
+  // A page is retried as a WHOLE, because retryingFetch only covers the request:
+  // a body that resets while it is being read throws in res.json(), outside it.
+  // This listing is seven pages of 606 videos, which is the longest thing either
+  // script does and the most likely place for a link to drop.
+  const onePage = async (n: number): Promise<{ items?: Vid[]; totalItems?: number }> => {
+    let last: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await api(`/videos?page=${n}&itemsPerPage=100&orderBy=date`)
+        if (!res.ok) fail(`Bunny list HTTP ${res.status} on page ${n}`)
+        return (await res.json()) as { items?: Vid[]; totalItems?: number }
+      } catch (e) {
+        last = e
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
+      }
+    }
+    fail(`Bunny list page ${n}: ${why(last)}`)
+  }
+
   for (let page = 1; page <= 200; page++) {
-    const res = await api(`/videos?page=${page}&itemsPerPage=100&orderBy=date`)
-    if (!res.ok) fail(`Bunny list HTTP ${res.status} on page ${page}`)
-    const j = (await res.json()) as { items?: Vid[]; totalItems?: number }
+    const j = await onePage(page)
     const items = j.items || []
     if (!items.length) break
     let fresh = 0
@@ -186,7 +203,16 @@ const looksLikeProxy = (v: Vid) =>
 // the archive, and a false match calls unique footage superseded.
 
 async function main() {
-  const [vids, rows] = await Promise.all([allVideos(), allRows()])
+  // allSettled, not all: BOTH halves can fail on a flaky link, and Promise.all
+  // reports only the first — the other rejection then has no handler and Node
+  // prints its raw TypeError over the top of the formatted message. It also
+  // means neither side was ever NAMED, so "fetch failed" did not say whether
+  // Bunny or Supabase was unreachable.
+  const settled = await Promise.allSettled([allVideos(), allRows()])
+  if (settled[0].status === 'rejected') fail(`Bunny Stream library: ${why(settled[0].reason)}`)
+  if (settled[1].status === 'rejected') fail(`Supabase rows: ${why(settled[1].reason)}`)
+  const vids = settled[0].value
+  const rows = settled[1].value
 
   const ref = new Set<string>()
   for (const r of rows) {

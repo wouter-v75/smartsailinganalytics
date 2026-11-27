@@ -131,10 +131,27 @@ const mb = (b: number) => `${(b / 1e6).toFixed(0)} MB`
 async function allVideos(): Promise<Vid[]> {
   const out: Vid[] = []
   const seen = new Set<string>()
+  // A page is retried as a WHOLE, because retryingFetch only covers the request:
+  // a body that resets while it is being read throws in res.json(), outside it.
+  // This listing is seven pages of 606 videos, which is the longest thing either
+  // script does and the most likely place for a link to drop.
+  const onePage = async (n: number): Promise<{ items?: Vid[]; totalItems?: number }> => {
+    let last: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await api(`/videos?page=${n}&itemsPerPage=100&orderBy=date`)
+        if (!res.ok) fail(`Bunny list HTTP ${res.status} on page ${n}`)
+        return (await res.json()) as { items?: Vid[]; totalItems?: number }
+      } catch (e) {
+        last = e
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
+      }
+    }
+    fail(`Bunny list page ${n}: ${why(last)}`)
+  }
+
   for (let page = 1; page <= 200; page++) {
-    const res = await api(`/videos?page=${page}&itemsPerPage=100&orderBy=date`)
-    if (!res.ok) fail(`Bunny list HTTP ${res.status} on page ${page}`)
-    const j = (await res.json()) as { items?: Vid[]; totalItems?: number }
+    const j = await onePage(page)
     const items = j.items || []
     if (!items.length) break
     let fresh = 0
@@ -196,7 +213,16 @@ async function remove(v: Vid): Promise<boolean> {
 const main = async () => {
   console.log(write ? '● WRITE MODE — deletions are permanent\n' : '○ Dry run — nothing will be deleted (add --write)\n')
 
-  const [vids, ref] = await Promise.all([allVideos(), referenced()])
+  // allSettled, not all: BOTH halves can fail on a flaky link, and Promise.all
+  // reports only the first — the other rejection then has no handler and Node
+  // prints its raw TypeError over the top of the formatted message. It also
+  // means neither side was ever NAMED, so "fetch failed" did not say whether
+  // Bunny or Supabase was unreachable.
+  const settled = await Promise.allSettled([allVideos(), referenced()])
+  if (settled[0].status === 'rejected') fail(`Bunny Stream library: ${why(settled[0].reason)}`)
+  if (settled[1].status === 'rejected') fail(`Supabase rows: ${why(settled[1].reason)}`)
+  const vids = settled[0].value
+  const ref = settled[1].value
   const bytes = vids.reduce((s, v) => s + (v.storageSize || 0), 0)
   const secs = vids.reduce((s, v) => s + (v.length || 0), 0)
   console.log(`library ${LIB}: ${vids.length} videos · ${gb(bytes)} · ${(secs / 3600).toFixed(1)} h of footage`)
@@ -462,4 +488,4 @@ const main = async () => {
   if (bad) console.log('Re-run to retry the failures; deletion is idempotent (a gone video 404s).')
 }
 
-main().catch((e) => fail(e instanceof Error ? e.message : String(e)))
+main().catch((e) => fail(why(e)))   // why(), or the real reason stays in `cause`
