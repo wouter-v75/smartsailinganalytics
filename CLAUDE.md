@@ -736,6 +736,85 @@ mounts it: verifying a weather change means signing in.
 nothing like SSA and nothing in `src/components/weather/` affects it. Matching
 on the filename sent two sessions to the wrong page.
 
+**Flow A decides PER CLIP whether to transcode, from the measured link.** It
+used to always encode a 720p proxy in the browser first. That pays when BYTES
+are the bottleneck — a 2 GB card file over dock wifi becomes 60 MB, which is the
+difference between arriving and not — and is pure cost when they are not: on 27
+Nov 2026 a 35 s clip's "proxy" came out **the same size as its original**, after
+minutes of CPU, and was a worse copy than Bunny would have made from the
+full-quality source.
+
+`src/lib/uploadStrategy.ts` does the arithmetic, `uploadStats.ts` remembers the
+inputs. With S = source bytes, P = predicted proxy bytes, U = uplink B/s and
+E = encode throughput in bytes of SOURCE per second, sending as-is is faster
+exactly when **U > E·(1 − P/S)**. P is predicted from the duration and the
+encoder's own target bitrate, so the decision can be made BEFORE spending the
+CPU. A 1.25× margin biases toward transcoding, because being wrong about the
+uplink costs a long upload on a bad link while being wrong about the encoder
+costs some CPU on a good one.
+
+- **With no measurements it transcodes** — the old behaviour exactly. A first
+  upload on an unknown link is the worst moment to gamble.
+- **`DIRECT_MAX_BYTES` (600 MB) is a hard ceiling**, and not for speed: one
+  lucky sample off a 4 MB log upload can make cafe wifi look like a datacentre,
+  and acting on that with a 2 GB file is an upload that cannot finish.
+- **Throughput is a dual EWMA, fast and slow, and the LOWER is used** — the
+  trick adaptive-bitrate players use on segment downloads. The fast average
+  follows a link that genuinely changed; the slow one refuses to be talked into
+  optimism by one burst. `navigator.connection` is deliberately unused: absent
+  in Safari, a coarse bucket rather than a rate, and it describes the DOWNLINK.
+- **Encode throughput is kept PER ENGINE.** WebCodecs (hardware) and
+  ffmpeg.wasm (software) differ by 5-20×, and `generateProxy` falls back from
+  one to the other silently, so one average mixing them describes neither.
+- **It lives in `ssa-prefs`, not `ssa-db`** — a `DB_VER` bump is paid for by
+  every versionless reader in the app and is absurd for a throughput average.
+- A clip sent as-is is recorded as the **original** (`has_original`), because
+  that is what it is. `upload-acceptance.ts` therefore passes a row delivered by
+  EITHER route; demanding a proxy on every row reports the better outcome as the
+  worse one.
+
+**Why there is a browser transcode here at all**, when Mux, Cloudflare Stream,
+Vimeo, Frame.io and Wistia all take the original and transcode server-side:
+their users are not on a boat. Browser transcoding is the minority choice
+everywhere and is taken for one reason, an uplink that is the constraint. What
+the industry invests in instead is the TRANSFER — chunked, resumable, adapting
+to the network (Mux Uploader has a `dynamicChunkSize`; Cloudflare asks for 5 MiB
+chunks on a poor link and 50 MiB on a good one). **The local difference is
+Bunny's encoding queue**: free encoding "may take anywhere from several hours to
+multiple days" under load, so uploading the original and waiting for the ladder
+to produce a 720p rung is right for quality and wrong for getting the day
+watched. What makes a clip watchable here is the STORAGE copy, a progressive MP4
+playable the moment its bytes land — and both strategies produce one, which is
+what reduces the whole question to arithmetic.
+
+**Bunny never upscales** — renditions never exceed the source resolution — so a
+1080p upload with the full ladder yields 240p-1080p and the 720p rung comes free
+*eventually*. `EnabledResolutions` is settable only on the TUS path, and only
+the request that COMPLETES the upload is read.
+
+**Bunny Storage cannot resume a PUT.** `uploadBlobToStorage` retries the whole
+file three times with backoff and every attempt restarts from byte zero, so a
+link that drops every few MB never finishes a large clip — measured on field
+wifi, a 23.6 MB proxy failed twice. When the PUT gives up, Flow A falls back to
+**resumable TUS**, which resumes from the server's own offset. It stays a
+fallback: the Storage copy is what makes a clip watchable immediately, and
+uploading both ways would double the uplink on every good connection to help a
+bad one. An unfinished TUS upload survives until its `AuthorizationExpire` or
+~48 h idle, whichever comes first, then 404s for ever.
+
+**Encoding and uploading are PIPELINED** (`src/lib/phaseLocks.ts`): one
+transcode at a time and one upload at a time, so clip N+1 encodes while clip N
+uploads. The transcode lock is **required, not an optimisation** — ffmpeg.wasm
+is a single instance with one virtual filesystem, so two at once would write
+each other's files. Queue depth 2, because each clip waiting to upload holds a
+~20 MB proxy in memory.
+
+**Nothing is installed for any of this**, which is why **Check this device** (in
+the Upload tab) exists: the encoder is either the browser's own hardware one or
+a runtime download from unpkg.com, and no folder has to exist. Only the absence
+of BOTH encoders blocks; Safari is a warning (no folder picker, but Import files
+works); a private window blocks IndexedDB, which is fatal.
+
 **A clip reaches the cloud by exactly TWO flows, and `src/lib/uploadFlows.ts`
 is the whole architecture** — read it before touching anything that uploads.
 **A** is the proxy (720p; Storage PUT, then `videos/fetch` pulls it into Stream;

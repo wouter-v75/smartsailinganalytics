@@ -32,6 +32,9 @@ import { generateProxy, type ProxyProgress } from './video-proxy'
 import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './bunny-storage-upload'
 import { awaitUplink, uplinkBusy } from './uplinkPriority'
 import { transcodeLock, uploadLock } from './phaseLocks'
+import { chooseStrategy } from './uploadStrategy'
+import { measuredThroughput, recordEncode, recordUpload } from './uploadStats'
+import { webCodecsCanEncodeH264 } from './video-proxy'
 // The RESUMABLE path, borrowed from Flow B. See the fallback in putAndFetch.
 import { createStreamUpload, uploadFileToStream, FAST_LADDER } from './bunny'
 import { writeKey, proxyLeaf, originalLeaf, type StorageScope } from './storageKeys'
@@ -72,6 +75,12 @@ export interface RenditionProgress {
   message?: string
   /** Which transcode engine ran — hardware or the software fallback. */
   engine?: 'webcodecs' | 'ffmpeg'
+  /**
+   * Which route this clip is taking, announced once before any work starts.
+   * 'direct' means the file is going up as it is because the link is faster
+   * than the encoder; 'transcode' means shrinking it first is the quicker way.
+   */
+  strategy?: 'direct' | 'transcode'
   bytesUploaded?: number
   bytesTotal?: number
   errorMessage?: string
@@ -244,6 +253,7 @@ async function putAndFetch({
         { kind: 'storage'; bytes: number } | { kind: 'tus'; streamId: string }
       > => {
         emit({ phase: 'uploading', pct: 0, message: 'Uploading…' })
+        const upT0 = Date.now()
         try {
           const up = await uploadBlobToStorage({
             key: path, blob, contentType: blob.type || 'video/mp4', signal,
@@ -253,6 +263,7 @@ async function putAndFetch({
               bytesUploaded: u.bytesUploaded, bytesTotal: u.bytesTotal,
             }),
           })
+          void recordUpload(up.bytes, (Date.now() - upT0) / 1000).catch(() => {})
           return { kind: 'storage', bytes: up.bytes }
         } catch (e: unknown) {
           // ── RESUMABLE FALLBACK ────────────────────────────────────────────
@@ -394,8 +405,38 @@ export async function syncProxyForVideo({
         // eslint-disable-next-line no-console
         console.log(`[rendition] ${videoId}: source is already ${height}p at ` +
           `${((source.size * 8) / (durationSec || 1) / 1e6).toFixed(1)} Mbps — skipping transcode`)
-        emit({ phase: 'transcoding', pct: 1, message: `Already ${height}p — no transcode needed` })
+        emit({ phase: 'transcoding', pct: 1, strategy: 'direct',
+          message: `already ${height}p — nothing to re-encode` })
         proxyBlob = source
+      } else {
+        // ── IS THE ENCODE WORTH IT ON THIS CONNECTION? ───────────────────
+        // shouldSkipProxy above is a question about the FILE: a clip that is
+        // already a review copy gains nothing from being re-encoded. This is a
+        // question about the LINK, and it has a different answer on a dock and
+        // in a flat. Shrinking a clip before sending it pays when bytes are the
+        // bottleneck and costs minutes of CPU when they are not — and on the
+        // 27 Nov test the "proxy" came out the same size as its source, so the
+        // encode bought precisely nothing.
+        //
+        // Both strategies leave a progressive MP4 in Storage, so either way the
+        // clip is watchable the moment its bytes land — which is the part that
+        // matters locally, because Bunny's free encoding ladder can take hours.
+        // That makes this purely a question of which finishes sooner, and
+        // uploadStrategy.ts does that arithmetic from measurements this device
+        // has taken. With no measurements it chooses the transcode, which is
+        // what the app has always done.
+        const engine = (await webCodecsCanEncodeH264().catch(() => false)) ? 'webcodecs' : 'ffmpeg'
+        const { uplinkBps, encodeBps } = await measuredThroughput(engine).catch(
+          () => ({ uplinkBps: null, encodeBps: null })
+        )
+        const decision = chooseStrategy({
+          sourceBytes: source.size, durationSec, height, uplinkBps, encodeBps,
+        })
+        // eslint-disable-next-line no-console
+        console.log(`[rendition] ${videoId}: ${decision.strategy} — ${decision.why}`)
+        emit({ phase: 'transcoding', pct: decision.strategy === 'direct' ? 1 : 0,
+          strategy: decision.strategy, message: decision.why })
+        if (decision.strategy === 'direct') proxyBlob = source
       }
     }
 
@@ -422,6 +463,9 @@ export async function syncProxyForVideo({
         message: 'Queued — another clip is encoding' }))
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       proxyBlob = result.blob
+      // What it cost, in bytes of SOURCE per second, so the next clip can be
+      // decided on this device's real speed rather than on a default.
+      void recordEncode(source.size, (Date.now() - t0) / 1000, result.engine).catch(() => {})
       // eslint-disable-next-line no-console
       console.log(
         `[rendition] proxy generated for ${videoId} via ${

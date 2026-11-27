@@ -219,8 +219,9 @@ async function main() {
   }
 
   console.log(`\n════ VERDICT for ${date} ════`)
-  console.log(`  Flow A (proxy)     ${aOk}/${rows.length} delivered`)
-  console.log(`  Flow B (original)  ${bOk}/${rows.length} delivered`)
+  console.log(`  as a 720p proxy    ${aOk}/${rows.length}`)
+  console.log(`  at full size       ${bOk}/${rows.length}   ` +
+    `(Upload originals, or Flow A sending as-is on a fast link)`)
   console.log(`  via a SUPPORTED route ${rows.length - legacyOnly - servesNothing}/${rows.length}` +
     (legacyOnly ? `   ← ${legacyOnly} came ONLY via the REMOVED flow` : ''))
   console.log(`  playable           ${rows.length - servesNothing}/${rows.length}` +
@@ -228,15 +229,25 @@ async function main() {
   console.log(`  flags truthful     ${rows.length - lying}/${rows.length}` +
     (lying ? `   ← ${lying} row(s) claim a rendition they do not have` : ''))
   if (dayOff) console.log(`  ⚠ ${dayOff} row(s) filed under a different day than their own title`)
-  if (!servesNothing && !lying && !dayOff && !legacyOnly && aOk === rows.length) {
+  // A clip delivered by EITHER route is delivered. Flow A no longer always
+  // produces a proxy: on a link faster than the encoder it sends the file as it
+  // is, which is honestly recorded as the original (uploadStrategy.ts). A row
+  // with an original and no proxy is that clip, not a failure — and demanding a
+  // proxy on every row would report the better outcome as the worse one.
+  const delivered = rows.filter((r) =>
+    liveGuid(r.bunny_proxy_stream_id) || realPath(r.bunny_proxy_path) ||
+    liveGuid(r.bunny_original_stream_id) || realPath(r.bunny_original_path)).length
+  console.log(`  delivered          ${delivered}/${rows.length}` +
+    (delivered < rows.length ? `   \u2190 ${rows.length - delivered} arrived by NEITHER route` : ''))
+  if (!servesNothing && !lying && !dayOff && !legacyOnly && delivered === rows.length) {
     console.log(`\n  ✓ every row came through a supported route, serves a real rendition,`)
     console.log(`    and says so truthfully.`)
   } else if (rows.length && legacyOnly === rows.length) {
     console.log(`\n  ✕ NOT A PASS: every clip here arrived by the REMOVED flow. The app in`)
     console.log(`    that browser is not the app in this repo — hard-reload and upload again.`)
-  } else if (aOk < rows.length) {
-    console.log(`\n  ✕ NOT A PASS: ${rows.length - aOk} of ${rows.length} clip(s) have no proxy. Flow A is the`)
-    console.log(`    automatic route, so a clip without one is a clip the team waits on.`)
+  } else if (delivered < rows.length) {
+    console.log(`\n  \u2715 NOT A PASS: ${rows.length - delivered} of ${rows.length} clip(s) reached NEITHER route.`)
+    console.log(`    A row with no rendition is a clip the team cannot watch at all.`)
   }
   console.log(`\nNothing has been changed.`)
 }

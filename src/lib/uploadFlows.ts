@@ -6,20 +6,37 @@
 // third one does: there isn't a third one any more, and the note at the bottom
 // says what the one that used to exist cost.
 //
-// ── FLOW A · the proxy — "the team can watch it now" ────────────────────────
-//   what   a review copy: 720p, ~5 Mbps. Transcoded in the browser by
-//          ffmpeg.wasm, OR passed straight through when the source is already
-//          proxy-sized (shouldSkipProxy — clips:day output always is).
+// ── FLOW A · "the team can watch it now" ───────────────────────────────────
+//   what   whichever of these gets the clip up SOONER, decided per clip from
+//          measurements this device has taken (uploadStrategy.ts):
+//            • a 720p review copy at ~5 Mbps, transcoded in the browser —
+//              WebCodecs on the device's hardware encoder, ffmpeg.wasm if it
+//              has none; or
+//            • the file exactly as it is, when the link is faster than the
+//              encoder, or the source is already a review copy
+//              (shouldSkipProxy — clips:day output always is).
+//          Shrinking first pays when BYTES are the bottleneck, which on dock
+//          wifi with a 2 GB card file is the difference between arriving and
+//          not. It is pure cost when they are not: on a laptop on good wifi it
+//          spends minutes of CPU and produces a worse copy than Bunny would
+//          make from the full-quality source. Measured 27 Nov 2026, the "proxy"
+//          for a 35 s clip came out the same size as its original.
 //   how    Bunny STORAGE first, by direct browser PUT, then `videos/fetch` asks
 //          Bunny to pull it into Stream server-side. Storage first because the
-//          clip is watchable the moment its bytes land, as a progressive MP4,
-//          instead of waiting on a transcode; Bunny pulling rather than us
-//          uploading twice because the bytes then cross the boat's uplink once.
+//          clip is watchable the moment its bytes land, as a progressive MP4 —
+//          which matters more here than anywhere, because Bunny's own free
+//          encoding "may take anywhere from several hours to multiple days"
+//          under load. Bunny pulling rather than us uploading twice because the
+//          bytes then cross the boat's uplink once. When the PUT cannot finish
+//          — Storage has no resume, so each retry restarts from zero — it falls
+//          back to resumable TUS, the same protocol Flow B uses.
 //   ladder the LIBRARY DEFAULT (360p + 720p). `videos/fetch` takes no encoding
 //          options at all, so this is not settable from code — see FAST_LADDER
 //          in bunny.js, which is the written-down form of that dashboard value.
-//   lands  bunny_proxy_path, proxy_bytes, bunny_proxy_stream_id, has_proxy
-//   entry  uploadClipProxy() below. EVERY proxy upload goes through it.
+//   lands  bunny_proxy_path + has_proxy when it was shrunk; bunny_original_path
+//          + has_original when it went up as it is, because that is what it is.
+//          Either way a bunny_*_stream_id once the ladder exists.
+//   entry  uploadClipProxy() below. EVERY such upload goes through it.
 //
 // ── FLOW B · the original — "the archive copy, this evening" ────────────────
 //   what   the source file, untouched.
@@ -34,6 +51,17 @@
 //
 // Why A is automatic and B is a button: A is minutes and megabytes and is what
 // the crew want before dinner. B is hours and gigabytes and wants a hotel wifi.
+//
+// WHY THERE IS A BROWSER TRANSCODE HERE AT ALL, when Mux, Cloudflare Stream,
+// Vimeo, Frame.io and Wistia all take the original and transcode server-side:
+// because their users are not on a boat. Browser transcoding is the minority
+// choice everywhere, and it is taken for exactly one reason — when the uplink
+// is the constraint. What the industry invests in instead is the TRANSFER
+// (chunked, resumable, adapting to the network), and that argument is taken
+// here too: hence the TUS fallback above, and hence the decision being measured
+// rather than fixed. The local difference is Bunny's encoding queue, which is
+// why uploading the original and waiting for the ladder to make a 720p rung is
+// right for quality and wrong for getting the day watched.
 //
 // ── and the flow that used to exist ─────────────────────────────────────────
 // `syncSessionToCloud` also uploaded videos: create a Stream video, TUS the
