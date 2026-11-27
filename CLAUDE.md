@@ -567,6 +567,48 @@ row. Getting that backwards is silent. **`campaign/conditions` is the pattern
 done right** and is the one to copy: read the stored blob, spread it, and patch
 only the keys the body actually names (`if ('details' in body)`).
 
+**BUNNY IS THE ARCHIVE. Nothing is kept on the SSD cards** (Wouter, 27 Nov
+2026: "Bunny is a delivery player, then archive. No files are kept on the SSD
+drives"). So the cards are a transfer medium, and once a day is up and the card
+is reused Bunny holds **the only copy there is**. Every storage decision turns
+on this, in the direction that is easy to get wrong: "no database row points at
+it" means the app cannot REACH the footage, NOT that a copy exists somewhere
+else.
+
+`scripts/stream-dedupe.ts --unreferenced` found **163 videos holding 81.7 GB**
+that no row points at, and offers to delete all of them. Do not.
+`scripts/stream-unreferenced-triage.ts` (read-only, no `--write` at all) is what
+to read first. It groups by the footage day the camera's own FILENAME gives —
+not Stream's `dateUploaded`, which is seven months later on the 2025 material —
+and then asks the only question strong enough to delete on: **does a playable
+row exist for THIS clip, by title?**
+
+- **41 videos / 19.9 GB are September 2025**, uploaded April 2026, and
+  hand-named: `DJI_20250903151003_0067_WWL_hoist`, `_0003_Race3_start`,
+  `_0009_Monaci`, `race2_NS_gybe`. Somebody labelled those by hand, the app
+  holds **nothing** for those four days, and with no card copy they are the only
+  copy of last year's regatta. That is a RECOVERY job — give them rows — not a
+  cleanup one.
+- **"The day has clips" is far too weak**, and was nearly acted on. A
+  whole-card original is continuous footage and the cuts are selections out of
+  it, so deleting the original destroys whatever was never cut, with no way to
+  tell afterwards what went. 2026-05-19 has 16 unreferenced files against 10
+  playable rows.
+- **The per-file test is `src/lib/clipTitle.ts`**, with the real titles pinned
+  in its test, because a false match calls unique footage superseded and
+  superseded is what gets deleted. Separators are interchangeable
+  (`20260911135629_race-start_day9_drone.mp4` is the row's
+  `20260911135629 race-start day9 drone`) and a trailing `720p` marks a
+  rendition of the same clip — but `isUsableTitle` refuses a title that names a
+  category rather than a clip. **`undefined` is a real title in the library**,
+  on 3.5 GB of 1080p, so matching it against a row of the same name would have
+  deleted unidentified footage on the strength of a bug in a title field.
+- `--emit twinned|untwinned|A|B|C|derived|originals` prints bare guids, and
+  `stream-dedupe.ts --from-list <file>` deletes exactly those — **re-checking
+  every guid against the database at delete time** rather than trusting the
+  file, since a row can be written in between and a list is a thing that gets
+  hand-edited. A listed guid that is referenced is refused by name.
+
 **A clips:day RE-RUN for a day already uploaded inserts a whole second set of
 rows.** The upsert dedupes on `bunny_stream_id`, then on `external_id` — and
 `external_id` is the importing DEVICE's IndexedDB key, minted fresh every

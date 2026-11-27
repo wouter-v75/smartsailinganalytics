@@ -56,6 +56,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { sameClip, titleIndex } from '../src/lib/clipTitle'
 
 const args = process.argv.slice(2)
 const verbose = args.includes('--verbose')
@@ -171,6 +172,10 @@ function footageDay(title: string): string | null {
 const looksLikeProxy = (v: Vid) =>
   /_720p\b/i.test(v.title || '') || (v.height > 0 && v.height <= 720)
 
+// normTitle / sameClip / titleIndex live in src/lib/clipTitle.ts, with the real
+// library titles pinned in a test: this comparison decides what is deleted from
+// the archive, and a false match calls unique footage superseded.
+
 async function main() {
   const [vids, rows] = await Promise.all([allVideos(), allRows()])
 
@@ -199,6 +204,18 @@ async function main() {
     if (r.tags?.length) e.tagged++
     appByDay.set(d, e)
   }
+
+  // THE TEST THAT CAN BE DELETED ON. Bunny is the archive and nothing is kept
+  // on the cards (Wouter, 27 Nov 2026), so an unreferenced file may be the only
+  // copy there is, and "that day has clips" is far too weak a reason. The
+  // question has to be per FILE: is THIS clip in the app, playable, under this
+  // title?
+  //
+  // A twin means the footage is reachable and the unreferenced object is a
+  // superseded encode of it. No twin means unique content, whatever else the
+  // day holds — and that is a recovery job, not a cleanup one.
+  const twins = titleIndex(rows.map((r) => ({ title: r.title, playable: renditions(r) > 0 })))
+  const hasTwin = (v: Vid) => sameClip(v.title, twins)
 
   // Group the orphans by the day their filename names.
   const byDay = new Map<string, Vid[]>()
@@ -230,14 +247,12 @@ async function main() {
     console.log(`   the app holds: ` + (app
       ? `${app.rows} row${app.rows === 1 ? '' : 's'}, ${app.playable} playable, ${app.tagged} tagged`
       : `NOTHING for this day`))
-    // The sharper test: a live row per unreferenced file, or not.
-    if (app && app.playable < g.length) {
-      console.log(`   \u26a0 ${g.length - app.playable} MORE unreferenced file(s) than playable rows — ` +
-        `some of these cover footage nothing in the app does`)
-    }
+    const twinned = g.filter(hasTwin).length
+    console.log(`   per FILE: ${twinned} of ${g.length} have a playable row under the same title` +
+      (twinned < g.length ? `  \u2014 ${g.length - twinned} are UNIQUE CONTENT` : '  \u2014 all superseded'))
     const list = verbose ? g : g.slice(0, 4)
     for (const v of list) {
-      console.log(`     ${v.guid.slice(0, 8)}  ${mb(v.storageSize).padStart(7)}  ` +
+      console.log(`     ${hasTwin(v) ? 'twin' : ' \u2014  '}  ${v.guid.slice(0, 8)}  ${mb(v.storageSize).padStart(7)}  ` +
         `${String(v.height || '?').padStart(5)}p  ${hhmm(v.length || 0).padStart(7)}  ` +
         `up ${(v.dateUploaded || '').slice(0, 10)}  ${v.title}`)
     }
@@ -253,7 +268,11 @@ async function main() {
       : emit === 'C' ? undated
       : emit === 'derived' ? covered.flatMap((d) => (byDay.get(d) || []).filter(looksLikeProxy))
       : emit === 'originals' ? covered.flatMap((d) => (byDay.get(d) || []).filter((v) => !looksLikeProxy(v)))
-      : fail(`--emit takes A, B, C, derived or originals (got ${emit})`)
+      // The only group safe to delete when Bunny is the archive: this exact
+      // clip is in the app and playable, so the object is a spare encode.
+      : emit === 'twinned' ? orphans.filter(hasTwin)
+      : emit === 'untwinned' ? orphans.filter((v) => !hasTwin(v))
+      : fail(`--emit takes twinned, untwinned, A, B, C, derived or originals (got ${emit})`)
     for (const v of pick) console.log(v.guid)
     console.error(`${pick.length} guid(s) · ${gb(pick.reduce((s2, v) => s2 + v.storageSize, 0))} · group ${emit}`)
     return
@@ -284,6 +303,20 @@ async function main() {
     }
   }
 
+  const tw = orphans.filter(hasTwin)
+  const untw = orphans.filter((v) => !hasTwin(v))
+  const bytesIn = (vs: Vid[]) => vs.reduce((s2, v) => s2 + v.storageSize, 0)
+  console.log(`\n\u2550\u2550\u2550 PER-FILE VERDICT \u2014 the one to act on \u2550\u2550\u2550`)
+  console.log(`Bunny is the archive and nothing is kept on the cards, so an unreferenced`)
+  console.log(`file may be the only copy there is. The day having clips does not make THIS`)
+  console.log(`file redundant: a whole-card original is continuous footage and the cuts are`)
+  console.log(`selections out of it.\n`)
+  console.log(`  SUPERSEDED  ${String(tw.length).padStart(4)} files  ${gb(bytesIn(tw)).padStart(8)}  ` +
+    `\u2014 this exact clip is in the app, playable. Safe to delete.`)
+  console.log(`  UNIQUE      ${String(untw.length).padStart(4)} files  ${gb(bytesIn(untw)).padStart(8)}  ` +
+    `\u2014 no playable row under this title. KEEP, or give it a row.`)
+  console.log(`\n  ... --emit twinned > ~/reclaim.txt`)
+  console.log(`  npx vite-node scripts/stream-dedupe.ts --from-list ~/reclaim.txt`)
   console.log(`\n────────────────────────────────────────────────────────────────`)
   console.log(`A  redundant, day covered      ${String(count(covered)).padStart(4)} videos  ${gb(sum(covered)).padStart(8)}`)
   console.log(`B  day NOT in the app          ${String(count(bare)).padStart(4)} videos  ${gb(sum(bare)).padStart(8)}`)
