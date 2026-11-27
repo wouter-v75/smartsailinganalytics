@@ -1114,13 +1114,23 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       setItem("log",{state:"done",pct:100});
 
       // ── 2. FLOW A — the 720p copy the team watches ────────────────────────
-      // Serial: ffmpeg.wasm is single-instance per page, and because the upload
-      // is storage-first each clip becomes watchable as its own bytes land, so
-      // finishing one beats making progress on five. `toUpload` is already in
-      // debrief order — starts, then roundings, then manoeuvres.
+      // PIPELINED, two clips in flight. Not parallel uploads and not parallel
+      // transcodes: phaseLocks.ts serialises each PHASE, so what actually
+      // overlaps is clip N+1 ENCODING while clip N UPLOADS. Encoding is CPU and
+      // uploading is uplink, and doing them strictly in turn left one of the two
+      // idle the whole time — most of the wall-clock on a twenty-clip day.
+      //
+      // Depth 2 on purpose. The locks make a deeper queue harmless for
+      // correctness, but each clip waiting to upload is holding a ~20 MB proxy
+      // blob in memory, and a phone on a dock has not got twenty of those.
+      //
+      // `toUpload` is already in debrief order — starts, then roundings, then
+      // manoeuvres — and the locks are FIFO, so that order survives.
       let nUploaded=0, nFailed=0, nAlready=0;
-      for(const row of toUpload){
-        if(syncAbortRef.current) break;
+      const DEPTH=2;
+      const inFlight=new Set();
+      const runOne=async(row)=>{
+        if(syncAbortRef.current) return;
         // `toUpload` was filtered on the list in MEMORY, which lags: the watch
         // folder or the Videos tab may have uploaded a clip since it was saved.
         // _syncVids carries this device's fresh marks, so re-check against those
@@ -1130,7 +1140,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         if(alreadyInCloud(v)){
           nAlready++;
           setItem(v.id,{state:"done",pct:100});
-          continue;
+          return;
         }
         setItem(v.id,{state:"processing",pct:1,phase:"",encodePct:0,uploadPct:0,note:"preparing…"});
         let lastPhase="";
@@ -1181,7 +1191,20 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           setItem(v.id,{state:"error",pct:0,note:res.error||"upload failed"});
           addLog(`✕ ${label}: ${res.error||"upload failed"}`);
         }
+      };
+
+      for(const row of toUpload){
+        if(syncAbortRef.current) break;
+        // One clip's failure must not stop the queue — it is already reported
+        // per clip, and the ones behind it are independent.
+        const p=runOne(row).catch(e=>{
+          nFailed++;
+          addLog(`✕ ${row.name||row.title||row.id}: ${e instanceof Error?e.message:String(e)}`);
+        }).finally(()=>inFlight.delete(p));
+        inFlight.add(p);
+        if(inFlight.size>=DEPTH) await Promise.race(inFlight);
       }
+      await Promise.all(inFlight);
 
       // The retry already exists and nobody could tell: toUpload is filtered on
       // alreadyInCloud, so pressing the button again sends ONLY what failed.

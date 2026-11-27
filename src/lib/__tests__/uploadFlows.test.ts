@@ -78,15 +78,41 @@ describe('the two upload flows', () => {
     ])
   })
 
-  it('FLOW B — the TUS upload to Stream has exactly one caller, and it asks for the full ladder', () => {
+  it('TUS has exactly TWO callers: Flow B, and Flow A\'s resumable fallback', () => {
     // `EnabledResolutions` on the TUS request is the only place Bunny lets an
     // upload choose its own rungs, which is why the archive copy goes this way
-    // and the proxy (which arrives by videos/fetch) takes the library default.
+    // and the proxy normally arrives by videos/fetch on the library default.
+    //
+    // The second caller is deliberate and was added after a measurement, not a
+    // hunch: Bunny Storage cannot resume a PUT, uploadBlobToStorage restarts
+    // from byte zero on each of its three retries, and on field wifi a 23.6 MB
+    // proxy therefore failed twice in a row (27 Nov 2026). TUS resumes from the
+    // server's offset, so Flow A falls back to it once the PUT has given up.
+    //
+    // It must stay a FALLBACK. Uploading every proxy both ways would double the
+    // uplink on every good connection to help a bad one, and the Storage copy
+    // is what makes a clip watchable before any ladder exists. If this list
+    // grows a third entry, or the fallback stops being inside a catch, the
+    // architecture has changed and uploadFlows.ts needs rewriting with it.
     expect(callersOf('uploadFileToStream')).toEqual([
-      'components/ssa/useCloudSync.js',        // processOriginalsQueue
+      'components/ssa/useCloudSync.js',        // Flow B — processOriginalsQueue
+      'lib/video-rendition-sync.ts',           // Flow A — resumable fallback only
     ])
     const originals = files.find((f) => f.path === 'components/ssa/useCloudSync.js')!
     expect(originals.text).toContain('resolutions: FULL_LADDER')
+
+    // The proxy fallback asks for the FAST ladder — it is a review copy, and a
+    // 1080p rung off a 720p source is wasted encoding.
+    const rendition = files.find((f) => f.path === 'lib/video-rendition-sync.ts')!
+    expect(rendition.text).toContain('resolutions: FAST_LADDER')
+    // …and only after the normal path threw. Positions of the CALLS, not of the
+    // identifiers: both names appear in the comment that explains the fallback,
+    // so a lastIndexOf search finds the prose and not the code.
+    const put = rendition.text.indexOf('uploadBlobToStorage({')
+    const call = rendition.text.indexOf('uploadFileToStream(')
+    expect(put).toBeGreaterThan(-1)
+    expect(call).toBeGreaterThan(put)
+    expect(rendition.text.slice(put, call)).toContain('} catch')
   })
 
   it('nothing in the app writes bunny_stream_id except to FIND an existing row', () => {

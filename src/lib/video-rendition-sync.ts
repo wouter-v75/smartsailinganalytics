@@ -31,6 +31,9 @@
 import { generateProxy, type ProxyProgress } from './video-proxy'
 import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './bunny-storage-upload'
 import { awaitUplink, uplinkBusy } from './uplinkPriority'
+import { transcodeLock, uploadLock } from './phaseLocks'
+// The RESUMABLE path, borrowed from Flow B. See the fallback in putAndFetch.
+import { createStreamUpload, uploadFileToStream, FAST_LADDER } from './bunny'
 import { writeKey, proxyLeaf, originalLeaf, type StorageScope } from './storageKeys'
 
 /**
@@ -227,16 +230,78 @@ async function putAndFetch({
         emit({ phase: 'uploading', pct: 0, message: 'Waiting — the day\'s log goes first' })
         await awaitUplink()
       }
-      emit({ phase: 'uploading', pct: 0, message: 'Uploading…' })
-      const up = await uploadBlobToStorage({
-        key: path, blob, contentType: blob.type || 'video/mp4', signal,
-        onProgress: (u: UploadProgress) => emit({
-          phase: 'uploading', pct: u.fraction,
-          message: `${(u.bytesUploaded / 1048576).toFixed(0)} / ${(u.bytesTotal / 1048576).toFixed(0)} MB`,
-          bytesUploaded: u.bytesUploaded, bytesTotal: u.bytesTotal,
-        }),
-      })
-      bytes = up.bytes
+      // ONE clip's bytes at a time. Not for correctness — the uplink is shared,
+      // so parallel uploads finish no sooner in total and each is slower, while
+      // a clip is watchable the moment ITS bytes land. Holding it only around
+      // the transfer is what lets the next clip ENCODE meanwhile.
+      // ONE clip's bytes at a time. Not for correctness — the uplink is shared,
+      // so parallel uploads finish no sooner in total and each is slower, while
+      // a clip is watchable the moment ITS bytes land. Holding the lock only
+      // around the TRANSFER is what lets the next clip encode meanwhile.
+      const sentVia = await uploadLock.run(async (): Promise<
+        { kind: 'storage'; bytes: number } | { kind: 'tus'; streamId: string }
+      > => {
+        emit({ phase: 'uploading', pct: 0, message: 'Uploading…' })
+        try {
+          const up = await uploadBlobToStorage({
+            key: path, blob, contentType: blob.type || 'video/mp4', signal,
+            onProgress: (u: UploadProgress) => emit({
+              phase: 'uploading', pct: u.fraction,
+              message: `${(u.bytesUploaded / 1048576).toFixed(0)} / ${(u.bytesTotal / 1048576).toFixed(0)} MB`,
+              bytesUploaded: u.bytesUploaded, bytesTotal: u.bytesTotal,
+            }),
+          })
+          return { kind: 'storage', bytes: up.bytes }
+        } catch (e: unknown) {
+          // ── RESUMABLE FALLBACK ────────────────────────────────────────────
+          // Bunny STORAGE cannot resume a PUT. uploadBlobToStorage already
+          // retries the whole file three times with backoff and every attempt
+          // starts from byte zero, so a connection that drops every few MB never
+          // finishes a large clip however often it tries. Measured 27 Nov 2026
+          // on field wifi: a 23.6 MB proxy failed twice, "network error during
+          // upload", restarting from scratch each time.
+          //
+          // TUS resumes from the server's own offset, and Flow B already uses
+          // it. So when the PUT has given up, send the same bytes that way
+          // rather than lose the clip.
+          //
+          // NOT the primary path, deliberately. The Storage copy is what makes a
+          // clip watchable the moment its bytes land, before any ladder exists,
+          // and uploading both ways would double the uplink on every good
+          // connection to help a bad one. This costs nothing until the normal
+          // path has already failed.
+          if (signal?.aborted || (e instanceof DOMException && e.name === 'AbortError')) throw e
+          const reason = e instanceof Error ? e.message : String(e)
+          emit({ phase: 'uploading', pct: 0, message: `Storage upload failed — resuming over TUS (${reason})` })
+
+          const info = await createStreamUpload(`${title}.mp4`, blob.size)
+          if (!info?.streamId) throw e
+          const file = new File([blob], `${title}.mp4`, { type: blob.type || 'video/mp4' })
+          const sent = await uploadFileToStream(info, file, (pct: number) => emit({
+            phase: 'uploading',
+            pct: Math.max(0, Math.min(1, (pct || 0) / 100)),
+            message: `resumable upload ${pct}%`,
+          }), { resolutions: FAST_LADDER })
+          if (!sent?.ok) throw e
+          return { kind: 'tus', streamId: info.streamId }
+        }
+      }, () => emit({ phase: 'uploading', pct: 0, message: 'Queued — another clip is uploading' }))
+
+      if (sentVia.kind === 'tus') {
+        // In Stream, so there is no storage path to record — only the guid.
+        // renditionOrder's `proxy` step takes either.
+        emit({ phase: 'marking', pct: 0, message: 'Recording rendition…' })
+        const markedTus = await mark(kind === 'proxy'
+          ? { proxyStream: { streamId: sentVia.streamId, bytes: blob.size } }
+          : { original: { streamId: sentVia.streamId } })
+        if (!markedTus.ok) {
+          const j = await markedTus.json().catch(() => null)
+          throw new Error(`recording the rendition failed: ${j?.error || `HTTP ${markedTus.status}`}`)
+        }
+        emit({ phase: 'done', pct: 1, message: 'Uploaded resumably · adaptive encode queued' })
+        return { ok: true, streamId: sentVia.streamId }
+      }
+      bytes = sentVia.bytes
     }
 
     // Watchable from here.
@@ -335,7 +400,11 @@ export async function syncProxyForVideo({
     if (!proxyBlob) {
       emit({ phase: 'transcoding', pct: 0, message: 'Starting transcode…' })
       const t0 = Date.now()
-      const result = await generateProxy({
+      // ONE transcode at a time: ffmpeg.wasm is a single instance with one
+      // virtual filesystem, so two at once would overwrite each other's files.
+      // Holding the lock here (rather than around the whole clip) is what lets
+      // the NEXT clip encode while this one uploads — see phaseLocks.ts.
+      const result = await transcodeLock.run(() => generateProxy({
         source,
         inputStem: `v_${videoId}`,
         signal,
@@ -346,7 +415,8 @@ export async function syncProxyForVideo({
             message: pp.message,
           })
         },
-      })
+      }), () => emit({ phase: 'transcoding', pct: 0,
+        message: 'Queued — another clip is encoding' }))
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       proxyBlob = result.blob
       // eslint-disable-next-line no-console
