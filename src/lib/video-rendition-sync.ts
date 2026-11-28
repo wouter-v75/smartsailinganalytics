@@ -389,6 +389,18 @@ export async function syncProxyForVideo({
   proxyBlob?: Blob
   /** Storage key the rendition landed on — the caller records it locally. */
   proxyPath?: string
+  /**
+   * The source went up untouched — no transcode ran.
+   *
+   * Reported rather than left for the caller to infer, because the caller's
+   * only other evidence is the `strategy` it happened to see on a progress
+   * event, and a log that reconstructs what happened is a log that can be
+   * wrong about it. The first live run said "encoding to 720p…" and then
+   * "720p is up" over two clips that were never encoded at all.
+   */
+  sentAsIs?: boolean
+  /** Which column it was recorded under — 'original' for a full-resolution as-is send. */
+  registeredAs?: 'original' | 'proxy'
   /** Uploaded and playable, but the adaptive encode could not be queued. */
   streamError?: string
   error?: string
@@ -506,6 +518,8 @@ export async function syncProxyForVideo({
       proxyBytes: proxyBlob.size,
       proxyBlob,
       proxyPath: r.path,
+      sentAsIs: asIs,
+      registeredAs: kind,
       streamError: r.streamError,
     }
   } catch (e: unknown) {

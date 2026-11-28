@@ -99,6 +99,11 @@ export interface ProxyUploadResult {
   proxyPath?: string | null
   proxyStreamId?: string | null
   proxyBytes?: number
+  /** The source went up untouched — no transcode ran. Carried through so a
+   *  caller's log can say what happened rather than infer it. */
+  sentAsIs?: boolean
+  /** Which column it was recorded under. */
+  registeredAs?: 'original' | 'proxy'
   /** Uploaded and playable, but the adaptive encode could not be queued. */
   streamError?: string
   /** User-facing, and meant to be shown rather than logged. */
@@ -194,6 +199,8 @@ export async function uploadClipProxy({
     proxyPath: res.proxyPath || null,
     proxyStreamId: res.proxyStreamId || null,
     proxyBytes: res.proxyBytes,
+    sentAsIs: res.sentAsIs,
+    registeredAs: res.registeredAs,
     streamError: res.streamError,
   }
 }

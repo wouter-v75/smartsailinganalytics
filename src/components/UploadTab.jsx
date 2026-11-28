@@ -595,7 +595,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           proxyPath: res.proxyPath || null,
           proxyStreamId: res.proxyStreamId || null,
         } : v));
-        addLog(`✓ ${label} — 720p is up, the team can watch it now`);
+        addLog(`✓ ${label} — ${res.sentAsIs
+          ? (res.registeredAs==="original"?"the original is up":"it is up, as it was")
+          : "720p is up"}, the team can watch it now`);
         setWatchUploaded(n => n + 1);
       } catch (e) {
         addLog(`✕ ${label}: auto-upload failed — ${e?.message || e}. Upload it by hand when convenient.`);
@@ -1244,19 +1246,33 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             const step=queued?`${ph}-queued`:ph;
             if(step!==lastPhase){
               lastPhase=step;
+              // A DIRECT clip never enters the encoder, so it must not be
+              // narrated as though it had. The first live run logged
+              // "encoding to 720p…" and then "encoded, now uploading…" over
+              // two clips that were sent untouched — the decision line above
+              // said so correctly and the next two lines contradicted it.
+              // The `transcoding` phase still fires for a direct clip (it is
+              // where the decision is announced), so it is skipped here rather
+              // than relabelled: the → line has already said what is happening.
               if(queued)                 addLog(`[${at()}] ⟳ ${label} — ${pr.message}`);
-              else if(ph==="transcoding"){tEnc=Date.now();addLog(`[${at()}] ⟳ ${label} — encoding to 720p…`);}
-              else if(ph==="uploading")  {tUp=Date.now(); addLog(`[${at()}] ⟳ ${label} — encoded, now uploading…`);}
+              else if(ph==="transcoding"){
+                tEnc=Date.now();
+                if(strategy!=="direct") addLog(`[${at()}] ⟳ ${label} — encoding to 720p…`);
+              }
+              else if(ph==="uploading")  {tUp=Date.now(); addLog(`[${at()}] ⟳ ${label} — ${strategy==="direct"?"sending it as it is…":"encoded, now uploading…"}`);}
             }
+            // A direct clip spends none of the run encoding, so the weighted
+            // aggregate must not reserve 40% of the bar for a phase it skips.
+            const encShare=strategy==="direct"?0:40;
             if(ph==="transcoding"){
-              setItem(v.id,{state:"processing",phase:ph,encodePct:Math.round(f*100),
-                pct:Math.round(f*40),note:pr.message||"encoding 720p"});
+              setItem(v.id,{state:"processing",phase:ph,strategy,encodePct:Math.round(f*100),
+                pct:Math.round(f*encShare),note:pr.message||"encoding 720p"});
             }else if(ph==="uploading"){
-              setItem(v.id,{state:"active",phase:ph,encodePct:100,
-                uploadPct:Math.round(f*100),pct:40+Math.round(f*55),
+              setItem(v.id,{state:"active",phase:ph,strategy,encodePct:100,
+                uploadPct:Math.round(f*100),pct:encShare+Math.round(f*(95-encShare)),
                 note:pr.message||"uploading"});
             }else if(ph==="marking"){
-              setItem(v.id,{state:"active",phase:ph,encodePct:100,uploadPct:100,
+              setItem(v.id,{state:"active",phase:ph,strategy,encodePct:100,uploadPct:100,
                 pct:97,note:pr.message||"recording rendition"});
             }
           },
@@ -1278,12 +1294,21 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           // is silent, and a day that suddenly takes an hour longer is otherwise
           // unexplainable.
           const how=engine==="webcodecs"?" hardware":engine==="ffmpeg"?" SOFTWARE":"";
-          const spent=strategy==="direct"&&!engine
+          // WHAT WENT UP, from the uploader's own report rather than from
+          // what this loop thinks it asked for. "720p is up" was printed over
+          // a clip sent untouched; it happened to be true of the 27 Nov test
+          // files because they are already 720p, and would have been a plain
+          // falsehood for a 1080p clip sent as-is.
+          const asIs=res.sentAsIs??(strategy==="direct"&&!engine);
+          const spent=asIs
             ? `sent as it is, ${secs(tUp,Date.now())}`
             : `encode${how} ${secs(tEnc,tUp)}, upload ${secs(tUp,Date.now())}`;
+          const what=asIs
+            ? (res.registeredAs==="original"?"the original is up":"it is up, as it was")
+            : "720p is up";
           addLog(res.streamError
             ? `[${at()}] ⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`
-            : `[${at()}] ✓ ${label} — 720p is up (${spent})`);
+            : `[${at()}] ✓ ${label} — ${what} (${spent})`);
         }else{
           nFailed++;
           setItem(v.id,{state:"error",pct:0,note:res.error||"upload failed"});

@@ -73,7 +73,12 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
                   bad". */}
               {(it.state==="active"||it.state==="processing")&&(
                 <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                  <PhaseBar label="enc" pct={it.encodePct||0} colour="#F59E0B"/>
+                  {/* A clip sent as it is never enters the encoder, so it gets
+                      no encode bar. It used to show one at 100%, which reads as
+                      "encoded" — the same untruth the log was telling. */}
+                  {it.strategy!=="direct"&&(
+                    <PhaseBar label="enc" pct={it.encodePct||0} colour="#F59E0B"/>
+                  )}
                   <PhaseBar label="up"  pct={it.uploadPct||0} colour="#06B6D4"/>
                 </div>
               )}
