@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   chooseStrategy, predictProxyBytes, addSample, estimate, usableSample,
-  DIRECT_MAX_BYTES, PROXY_BITRATE_BPS,
+  DIRECT_MAX_BYTES, PROXY_BITRATE_BPS, crossoverUplinkBps, DIRECT_MARGIN,
 } from '../uploadStrategy'
 
 const MB = 1024 * 1024
@@ -116,16 +116,33 @@ describe('chooseStrategy', () => {
     expect(d.estTranscodeSec).toBeNull()   // no encoder measurement yet
   })
 
-  it('the 27 Nov test clip: 23.6 MB in 35 s, both links', () => {
+  it('the 27 Nov test clip goes direct on BOTH links — its proxy saved nothing', () => {
+    // 23.6 MB in 35 s. This case used to assert `transcode` on the slow link
+    // with the comment "encoding first halves the bytes", alongside a second
+    // assertion that the proxy "came out the same size as the original". Both
+    // cannot be true of one clip, and it is the second that was measured: at
+    // 35 s the predicted proxy is 21.6 MB, 8 % smaller, so the encode buys
+    // four seconds of upload on Kent wifi in exchange for the whole encode and
+    // a 720p file in place of a 1080p one.
     const clip = { sourceBytes: 23.6e6, durationSec: 35, height: 1080 }
-    // Kent field wifi — the PUT died twice at this size. Encoding first halves
-    // the bytes and is the right call.
-    const slow = chooseStrategy({ ...clip, uplinkBps: mbit(1.5), encodeBps: 3 * MB })
-    expect(slow.strategy).toBe('transcode')
-    // London flat. The "proxy" came out the same size as the original, so the
-    // encode bought nothing at all and the maths should see that.
-    const fast = chooseStrategy({ ...clip, uplinkBps: mbit(100), encodeBps: 3 * MB })
-    expect(fast.strategy).toBe('direct')
+    for (const uplink of [mbit(1.5), mbit(100)]) {
+      const d = chooseStrategy({ ...clip, uplinkBps: uplink, encodeBps: 3 * MB })
+      expect(d.strategy).toBe('direct')
+      expect(d.why).toContain('no smaller')
+    }
+  })
+
+  it('but a CARD FILE on the same wifi still transcodes — that is what it is for', () => {
+    // The point the case above was reaching for, with a clip that really does
+    // shrink: 2 minutes of 4K at 180 Mbit is 1.3 GB, and its proxy is 70 MB.
+    // Kent wifi would take five hours over the original and half an hour over
+    // the proxy, so the bytes are unambiguously the constraint.
+    const d = chooseStrategy({
+      sourceBytes: 1350 * MB, durationSec: 120, height: 2160,
+      uplinkBps: mbit(1.5), encodeBps: 3 * MB,
+    })
+    expect(d.strategy).toBe('transcode')
+    expect(predictProxyBytes(120)! / (1350 * MB)).toBeLessThan(0.1)
   })
 })
 
@@ -181,5 +198,54 @@ describe('usableSample', () => {
   it('accepts a real one', () => {
     expect(usableSample(6.7e6, 3.2)).toBe(true)
     expect(usableSample(4 * MB, 1.0)).toBe(true)
+  })
+})
+
+describe('crossoverUplinkBps — where the answer flips', () => {
+  // A 200 MB, 2-minute 1080p clip: the readout's sample case.
+  const clip = { sourceBytes: 200 * MB, durationSec: 120 }
+
+  it('scales with the encoder, so a HARDWARE encoder almost never gives way', () => {
+    // This is the finding that corrects the obvious intuition. A fast encoder
+    // makes transcoding cheap, so the link has to be extraordinary before
+    // sending 200 MB raw beats sending 70 MB after a few seconds of CPU.
+    const hw = crossoverUplinkBps({ ...clip, encodeBps: 18 * MB })!
+    expect((hw * 8) / 1e6).toBeCloseTo(136, 0)       // Mbit/s — faster than most fibre uplinks
+
+    const sw = crossoverUplinkBps({ ...clip, encodeBps: 1 * MB })!
+    expect((sw * 8) / 1e6).toBeCloseTo(8, 0)         // software: ordinary broadband clears it
+    expect(sw).toBeLessThan(hw)
+  })
+
+  it('agrees with chooseStrategy on both sides of its own threshold', () => {
+    // The whole point of publishing a threshold is that it is the SAME
+    // threshold. A readout that disagreed with the decision would be worse
+    // than no readout.
+    const encodeBps = 8 * MB
+    const x = crossoverUplinkBps({ ...clip, encodeBps })!
+    const at = (uplinkBps: number) =>
+      chooseStrategy({ ...clip, height: 1080, uplinkBps, encodeBps }).strategy
+    expect(at(x * 1.02)).toBe('direct')
+    expect(at(x * 0.98)).toBe('transcode')
+  })
+
+  it('is zero when the proxy would save nothing — no link is slow enough to justify it', () => {
+    // 10 s of 1080p at 2 Mbit: the predicted proxy is LARGER than the source,
+    // so the encode is pure cost. That is the 27 Nov clip whose proxy came out
+    // the same size as the original.
+    const p = predictProxyBytes(10)!
+    expect(crossoverUplinkBps({ sourceBytes: p, durationSec: 10, encodeBps: 8 * MB })).toBe(0)
+    // And it is zero across the whole no-gain band, not only at P === S. This
+    // is the half DIRECT_MARGIN got wrong on its own: at P/S = 0.9 the margin
+    // left a positive threshold of E·0.35, so below ~16 Mbit/s a clip whose
+    // proxy saved 10 % was still sent off to spend the entire encode.
+    expect(crossoverUplinkBps({ sourceBytes: p / 0.9, durationSec: 10, encodeBps: 8 * MB })).toBe(0)
+    expect(DIRECT_MARGIN - 0.9).toBeGreaterThan(0)
+  })
+
+  it('answers null rather than guessing when the encoder is unmeasured', () => {
+    expect(crossoverUplinkBps({ ...clip, encodeBps: null })).toBeNull()
+    expect(crossoverUplinkBps({ ...clip, encodeBps: 0 })).toBeNull()
+    expect(crossoverUplinkBps({ sourceBytes: 200 * MB, encodeBps: 8 * MB })).toBeNull() // no duration
   })
 })

@@ -119,6 +119,17 @@ export const DIRECT_MARGIN = 1.25
  */
 export const DIRECT_MAX_BYTES = 600 * 1024 * 1024
 
+/**
+ * Below this much saving the transcode is not worth making, whatever the link.
+ *
+ * 0.83 rather than 1.0 because a proxy within a fifth of the source saves
+ * nothing a slow link would notice while still costing the whole encode, and
+ * because the predicted size carries VBR slop in both directions. It is the
+ * same ratio the old `sourceBytes <= proxyBytes * 1.2` rule used, now applied
+ * without the 720p condition that limited it.
+ */
+export const NO_GAIN_RATIO = 0.83
+
 export function chooseStrategy(i: StrategyInput): Decision {
   const { sourceBytes, durationSec, height, uplinkBps, encodeBps } = i
   const proxyBytes = predictProxyBytes(durationSec)
@@ -129,13 +140,25 @@ export function chooseStrategy(i: StrategyInput): Decision {
       ? sourceBytes / encodeBps + proxyBytes / uplinkBps
       : null
 
-  // A clip that is ALREADY a review copy has nothing to gain from a re-encode,
-  // whatever the link is doing. clips:day output is exactly this, which is most
-  // of what the watch folder ever sees.
-  if (height && height > 0 && height <= 720 && proxyBytes != null && sourceBytes <= proxyBytes * 1.2) {
+  // NOTHING TO GAIN: the predicted proxy is not meaningfully smaller than the
+  // source, so the transcode has no upside at ANY link speed. Transcoding costs
+  // S/E + P/U against direct's S/U, so with P ≈ S direct is faster by exactly
+  // the encode, produces a better file, and leaves the full-resolution archive
+  // in the cloud. There is no trade-off here for DIRECT_MARGIN to bias.
+  //
+  // This generalises the rule it replaces, which required `height <= 720` and
+  // so only caught clips:day output. A long calm 1080p clip at a low bitrate
+  // has the same property and used to fall through to the arithmetic — where,
+  // below ~16 Mbit/s, it was sent off to spend CPU saving no bytes at all. The
+  // crossover test is what surfaced that: `crossoverUplinkBps` came back at
+  // E·(1.25 − 1) rather than zero for a clip whose proxy equalled its source.
+  if (proxyBytes != null && proxyBytes >= sourceBytes * NO_GAIN_RATIO) {
+    const alreadySmall = !!height && height > 0 && height <= 720
     return {
       strategy: 'direct',
-      why: 'already a 720p review copy — nothing to re-encode',
+      why: alreadySmall
+        ? 'already a 720p review copy — nothing to re-encode'
+        : 'the proxy would be no smaller than the source — nothing to re-encode',
       estDirectSec, estTranscodeSec,
     }
   }
@@ -224,4 +247,41 @@ export function estimate(e: Ewma | null | undefined): number | null {
  */
 export function usableSample(bytes: number, seconds: number): boolean {
   return bytes >= 256 * 1024 && seconds >= 0.75 && Number.isFinite(seconds)
+}
+
+/**
+ * The uplink at which this device would STOP transcoding, bytes/sec.
+ *
+ * Worth exposing because the answer is counter-intuitive and was got wrong
+ * here: a hardware encoder is so fast that transcoding nearly always wins, and
+ * sending as-is is mostly a rescue for a device that has fallen back to
+ * software. Measured on a 200 MB / 2-minute 1080p clip:
+ *
+ *      1 MB/s of source (software)  →  as-is above    8 Mbit/s
+ *      2 MB/s           (software)  →                15 Mbit/s
+ *      8 MB/s           (hardware)  →                60 Mbit/s
+ *     18 MB/s           (hardware)  →               136 Mbit/s
+ *
+ * so a laptop with WebCodecs will keep making proxies on all but a datacentre
+ * link, and that is the right answer rather than a missed optimisation — a
+ * nearly-free encode that cuts the bytes by two thirds is simply worth doing.
+ * Without this printed somewhere, "it always transcodes" reads as broken.
+ *
+ * Direct is chosen when `U > E·(DIRECT_MARGIN − P/S)`, so the threshold scales
+ * with the encoder and falls to zero once the predicted proxy saves nothing.
+ */
+export function crossoverUplinkBps(i: {
+  sourceBytes: number
+  durationSec?: number | null
+  encodeBps?: number | null
+}): number | null {
+  const { sourceBytes, durationSec, encodeBps } = i
+  const proxyBytes = predictProxyBytes(durationSec)
+  if (!encodeBps || encodeBps <= 0 || proxyBytes == null || !sourceBytes) return null
+  // Agrees with chooseStrategy's NO_GAIN rule, which short-circuits before the
+  // arithmetic: a proxy that saves nothing is never worth the CPU, so there is
+  // no link slow enough to justify it and the threshold is zero.
+  if (proxyBytes >= sourceBytes * NO_GAIN_RATIO) return 0
+  const factor = DIRECT_MARGIN - proxyBytes / sourceBytes
+  return factor <= 0 ? 0 : encodeBps * factor
 }

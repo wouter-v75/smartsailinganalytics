@@ -755,6 +755,27 @@ costs some CPU on a good one.
 
 - **With no measurements it transcodes** — the old behaviour exactly. A first
   upload on an unknown link is the worst moment to gamble.
+- **With a HARDWARE encoder it will nearly always still transcode, and that is
+  correct.** The crossover is `U > E·(1.25 − P/S)`, so on a 200 MB 2-minute
+  1080p clip it takes **60 Mbit/s of uplink at 8 MB/s of source and 136 at
+  18 MB/s** before sending as-is wins — faster than most fibre upstream. A
+  nearly-free encode that cuts the bytes by two thirds is simply worth doing.
+  Sending as-is is really a rescue for a device that has fallen back to
+  **software**, where the threshold drops to 8-15 Mbit/s. Without the number on
+  screen "it always transcodes" reads as broken, so **Check this device** prints
+  the crossover (`crossoverUplinkBps`) beside the verdict.
+- **A proxy that saves nothing is never made, at any link speed**
+  (`NO_GAIN_RATIO`, 0.83). Transcoding costs `S/E + P/U` against direct's `S/U`,
+  so with P ≈ S direct is faster by exactly the encode AND keeps the
+  full-resolution archive — there is no trade-off for the margin to bias. This
+  started as a `height <= 720` short-circuit for clips:day output and only
+  caught that; a long calm 1080p clip at a low bitrate has the same property and
+  used to fall through to the arithmetic, where the 1.25 margin left a positive
+  threshold of `E·0.35` at P/S = 0.9 — so below ~16 Mbit/s a clip whose proxy
+  saved 10 % was still sent off to spend the whole encode. The 27 Nov test clip
+  is exactly that case (23.6 MB in 35 s, proxy 8 % smaller) and its own test
+  used to assert both "encoding first halves the bytes" and "the proxy came out
+  the same size as the original", which cannot both be true of one clip.
 - **`DIRECT_MAX_BYTES` (600 MB) is a hard ceiling**, and not for speed: one
   lucky sample off a 4 MB log upload can make cafe wifi look like a datacentre,
   and acting on that with a 2 GB file is an upload that cannot finish.

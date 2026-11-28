@@ -25,7 +25,7 @@ import { clipTimestampSettled, extractVideoCreationTime, probeVideo, resolveStar
 import { canWatchFolders, collectNewClips, ensureFolderPermission } from '../lib/watchFolder';
 import { checkDevice, verdict, probeEncoderCdn, probeLocalStore } from '../lib/uploadReadiness';
 import { measurementSummary } from '../lib/uploadStats';
-import { chooseStrategy } from '../lib/uploadStrategy';
+import { chooseStrategy, crossoverUplinkBps } from '../lib/uploadStrategy';
 import { webCodecsCanEncodeH264 } from '../lib/video-proxy';
 import { getPref, setPref, WATCH_FOLDER_PREF } from '../lib/prefsStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
@@ -386,6 +386,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       const d = chooseStrategy({ sourceBytes: 200*1024*1024, durationSec: 120, height: 1080,
         uplinkBps: m.uplinkBps, encodeBps });
       addLog(`· a 200 MB 2-minute clip would go: ${d.strategy === "direct" ? "straight up, as it is" : "encoded to 720p first"} — ${d.why}`);
+      // And WHERE the answer changes. Without this, "it always transcodes"
+      // reads as broken, when for a hardware encoder it is simply correct: the
+      // encode is nearly free and cuts the bytes by two thirds.
+      const x = crossoverUplinkBps({ sourceBytes: 200*1024*1024, durationSec: 120, encodeBps });
+      if (x != null) addLog(`· that flips to sending as-is above ${((x*8)/1e6).toFixed(0)} Mbit/s of uplink`
+        + (m.lastEngine === "webcodecs" ? " — a hardware encoder is quick enough that the proxy usually wins" : ""));
     }catch{ addLog("· (no measurements stored on this device yet)"); }
   }, [addLog]);
 
