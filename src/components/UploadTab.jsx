@@ -145,6 +145,17 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // render. setLog's updater form means it needs nothing from the closure.
   const addLog=useCallback(msg=>setLog(p=>[...p.slice(-30),msg]),[]);
 
+  // THE LOG BOX HAS NOTHING BELOW IT, so it needs no cap to protect a button —
+  // and a cap is how the same mistake has now been made three times in this
+  // repo (the debrief note boxes, then the transcript box underneath them).
+  // 150px at 10px monospace is ELEVEN LINES: the device check alone emits nine
+  // before a single clip is touched, and the scrollbar on navy is close to
+  // invisible, so the readout looked truncated and was read out a line at a
+  // time. Tall enough for a whole device check plus a few clips, with the tail
+  // pinned so a long push still shows the newest line.
+  const logRef = useRef(null);
+  useEffect(()=>{ const el=logRef.current; if(el) el.scrollTop=el.scrollHeight; },[log]);
+
   const TzSelect=({value,onChange,label})=>{
     // Always include the current value (e.g. a viewer in NZ on UTC+12/+13, or a
     // log-derived offset) even if it isn't one of the preset options.
@@ -1669,7 +1680,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             </div>
           </div>
         )}
-        {log.length>0&&<div style={{background:"#050E1C",border:"1px solid #1E3A5A",borderRadius:7,padding:"8px 11px",maxHeight:150,overflowY:"auto"}}>
+        {log.length>0&&<div ref={logRef} style={{background:"#050E1C",border:"1px solid #1E3A5A",borderRadius:7,padding:"8px 11px",maxHeight:460,overflowY:"auto"}}>
           {log.map((line,i)=><div key={i} style={{fontSize:10,color:line.startsWith("✕")?"#EF4444":line.startsWith("✓")?"#1D9E75":line.startsWith("⚠")?"#F59E0B":"#475569",marginBottom:2,fontFamily:"monospace"}}>{line}</div>)}
         </div>}
       </div>
