@@ -63,7 +63,29 @@ const db = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
   global: { fetch: retryingFetch },
 })
 
-interface Vid { guid: string; status: number; storageSize: number; height: number; availableResolutions: string | null }
+interface Vid {
+  guid: string
+  status: number
+  storageSize: number
+  height: number
+  availableResolutions: string | null
+  /** ISO, from Bunny. Needed to tell an upload IN FLIGHT from an abandoned stub. */
+  dateUploaded?: string
+  encodeProgress?: number
+}
+
+/**
+ * Bunny's own status codes, so a ✕ can say which kind it is.
+ * 0 queued · 1 processing · 2 encoding · 3 finished(ish) · 4 resolution ready
+ * · 5 failed. Only 4 is "a player can have it".
+ */
+const STATUS_WORD: Record<number, string> = {
+  0: 'queued', 1: 'processing', 2: 'encoding', 3: 'finished',
+  4: 'ready', 5: 'FAILED',
+}
+
+/** A Stream video with no bytes yet is ambiguous until you know its age. */
+const IN_FLIGHT_MINUTES = 20
 
 async function streamLibrary(): Promise<Map<string, Vid>> {
   const out = new Map<string, Vid>()
@@ -170,6 +192,42 @@ async function main() {
     liveGuid(g) && lib.get(g!)?.status === 4
   const realPath = (p: string | null | undefined) => !!p && /\.mp4$/i.test(p)
 
+  /**
+   * WHY a guid is not counted as delivered — because "✕" was doing two
+   * completely different jobs and the difference decides what to do next.
+   *
+   * A Stream video reports `storageSize: 0` until Bunny has accounted for the
+   * bytes, so a TUS upload that finished SECONDS ago looks exactly like one of
+   * the 192 abandoned stubs in this library. The only thing separating them is
+   * AGE. Reported, not guessed: the verdict says "still landing" inside the
+   * window and "no bytes" outside it, and a reader can see which.
+   */
+  const guidNote = (g: string | null | undefined): { text: string; inFlight: boolean } => {
+    if (!g) return { text: '', inFlight: false }
+    const v = lib.get(g)
+    if (!v) return { text: 'not in the Stream library at all', inFlight: false }
+    const word = STATUS_WORD[v.status] ?? `status ${v.status}`
+    if ((v.storageSize || 0) > 0) {
+      return { text: `${word}${v.encodeProgress != null ? ` ${v.encodeProgress}%` : ''}`, inFlight: false }
+    }
+    const ageMin = v.dateUploaded
+      ? (Date.now() - Date.parse(v.dateUploaded)) / 60000
+      : Number.POSITIVE_INFINITY
+    if (Number.isFinite(ageMin) && ageMin < IN_FLIGHT_MINUTES) {
+      return {
+        text: `no bytes YET — ${word}, created ${Math.max(0, Math.round(ageMin))} min ago: `
+          + `the upload is probably still landing, re-run this in a minute`,
+        inFlight: true,
+      }
+    }
+    return {
+      text: `0 bytes, ${word}`
+        + (Number.isFinite(ageMin) ? `, ${Math.round(ageMin)} min old` : '')
+        + ' — an abandoned upload, not a copy',
+      inFlight: false,
+    }
+  }
+
   console.log(`${date}: ${rows.length} clip row(s)${boatName ? ` on ${boatName}` : ''}` +
     ` · ${lib.size} videos in the Stream library\n`)
   if (!rows.length) { console.log('nothing to check.'); return }
@@ -191,10 +249,21 @@ async function main() {
     }
     const served = renditionOrder('auto').find((s) => exists[s]) || null
 
+    // An upload Bunny has not yet accounted for is a RACE, not a lie. Calling
+    // it one makes the instrument cry wolf on the very run that is testing a
+    // fresh upload — which is what it did on 28 Nov 2026, seconds after Flow B
+    // finished.
+    const origLanding = guidNote(r.bunny_original_stream_id).inFlight
+    const proxyLanding = guidNote(r.bunny_proxy_stream_id).inFlight
+
     const flagIssues: string[] = []
-    if (r.has_proxy && !A) flagIssues.push('has_proxy set, no proxy exists')
+    if (r.has_proxy && !A && !proxyLanding) flagIssues.push('has_proxy set, no proxy exists')
     if (!r.has_proxy && A) flagIssues.push('proxy exists, has_proxy NOT set')
-    if (r.has_original && !B) flagIssues.push('has_original set, no original exists')
+    // An upload Bunny has not yet accounted for is a RACE, not a lie. Calling
+    // it one makes the instrument cry wolf on the very run that is testing a
+    // fresh upload — which is exactly what it did on 28 Nov 2026, seconds
+    // after Flow B finished.
+    if (r.has_original && !B && !origLanding) flagIssues.push('has_original set, no original exists')
     if (!r.has_original && B) flagIssues.push('original exists, has_original NOT set')
 
     const titleDay = dayFromTitle(r.title)
@@ -224,6 +293,14 @@ async function main() {
     console.log(`   B original ${B ? '✓ delivered' : '— not uploaded'}` +
       `   ${r.bunny_original_stream_id ? `stream ${r.bunny_original_stream_id.slice(0, 8)}${liveGuid(r.bunny_original_stream_id) ? '✓' : '✕'}` : ''}` +
       `${r.bunny_original_path ? `  path ${realPath(r.bunny_original_path) ? '✓' : '✕'}` : ''}`)
+    for (const [which, guid, ok] of [
+      ['proxy', r.bunny_proxy_stream_id, A], ['original', r.bunny_original_stream_id, B],
+    ] as [string, string | null, boolean][]) {
+      if (guid && !ok) {
+        const n = guidNote(guid)
+        if (n.text) console.log(`   · the ${which} Stream video ${guid.slice(0, 8)}: ${n.text}`)
+      }
+    }
     console.log(`   a player gets: ${served || '✕ NOTHING — every locator on this row is empty or dead'}`)
     // Name a ladder still being built, so "serves the MP4" is not read as a
     // fault. Bunny's free queue can take hours to days, and until it finishes
