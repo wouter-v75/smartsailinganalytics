@@ -23,6 +23,7 @@ import { uploadIsGone } from './tusUploadError';
 import { hashLogPayload, hashXmlPayload } from "./contentHash";
 import { readSyncManifest, updateSyncManifest } from "./syncManifest";
 import { readCandidates, writeKey, SESSION_LEAVES, photoLeaves } from "./storageKeys";
+import { chunkSizeFor } from './uploadChunk';
 
 // ── Cached storage write credentials ─────────────────────────────────────────
 let _storageCreds = null;
@@ -188,13 +189,22 @@ export const FULL_LADDER = '240p,360p,480p,720p,1080p'        // the archive cop
 /**
  * @param {{streamId: string}} uploadInfo
  * @param {File|Blob} file
- * @param {(pct: number) => void} [onProgress]
- * @param {{resolutions?: string, jit?: boolean}} [opts]
+ * @param {(pct: number, bytesUploaded?: number, bytesTotal?: number) => void} [onProgress]
+ * @param {{resolutions?: string, jit?: boolean, chunkSize?: number, uplinkBps?: number|null}} [opts]
  *   resolutions — comma-separated rungs; omit to inherit the library default.
  *   jit         — Just-in-Time encoding. Premium only, and Bunny warn it "is
  *                 only supported by the Bunny player", so it is off unless
  *                 asked for explicitly and is worth testing against the app's
  *                 own hls.js player before being relied on.
+ *   chunkSize   — bytes per PATCH. Omit and it is derived from `uplinkBps`.
+ *                 NEVER leave both out and expect the tus default: that is
+ *                 Infinity, i.e. the whole file in one request.
+ *   uplinkBps   — the measured link, for deriving chunkSize. See uploadChunk.ts.
+ * @returns {Promise<{ok: boolean, gone: boolean, chunkSize?: number,
+ *                    bytesSent?: number, seconds?: number}>}
+ *   bytesSent is what MOVED in this attempt, which is not the file size when
+ *   the upload resumed from an offset — the difference matters because the
+ *   caller feeds it to the uplink estimate.
  */
 export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}) {
   const { streamId } = uploadInfo;
@@ -209,9 +219,26 @@ export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}
   }
   const { signature, expiry, libraryId } = await credRes.json();
   const tus = await loadTus();
+  // CHUNK IT. tus-js-client 3.x defaults chunkSize to Infinity — "the entire
+  // file will be sent in one request" — so this used to put a day's
+  // multi-gigabyte card file up as a SINGLE PATCH. Resumable across attempts,
+  // not resumable within the one request that matters, and the shape most
+  // likely to be killed by a proxy, a sleep or the browser itself. The size
+  // comes from the measured link; see uploadChunk.ts for why "a few seconds of
+  // data" is the rule.
+  const chunkSize = opts.chunkSize && opts.chunkSize > 0
+    ? opts.chunkSize
+    : chunkSizeFor({ fileBytes: file.size, uplinkBps: opts.uplinkBps });
+  // What was actually TRANSFERRED, which is not the file size when an upload
+  // resumes from an offset. Measuring the rate off file.size would then report
+  // a link several times faster than it is, and that estimate decides whether
+  // the next clip is transcoded at all.
+  let firstOffset = null, lastOffset = 0;
+  const startedAt = Date.now();
   return new Promise((resolve) => {
     const upload = new tus.Upload(file, {
       endpoint: "https://video.bunnycdn.com/tusupload",
+      chunkSize,
       retryDelays: [0, 3000, 5000, 10000, 20000],
       headers: {
         AuthorizationSignature: signature,
@@ -226,9 +253,17 @@ export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}
       },
       metadata: { filetype: file.type, title: file.name },
       onProgress(bytesUploaded, bytesTotal) {
-        onProgress?.(Math.round((bytesUploaded / bytesTotal) * 100));
+        if (firstOffset === null) firstOffset = bytesUploaded;
+        lastOffset = bytesUploaded;
+        onProgress?.(Math.round((bytesUploaded / bytesTotal) * 100), bytesUploaded, bytesTotal);
       },
-      onSuccess() { resolve({ ok: true, gone: false }); },
+      onSuccess() {
+        resolve({
+          ok: true, gone: false, chunkSize,
+          bytesSent: Math.max(0, (lastOffset || file.size) - (firstOffset || 0)),
+          seconds: (Date.now() - startedAt) / 1000,
+        });
+      },
       async onError(err) {
         // An EXPIRED upload is not a failed one. Bunny holds a TUS upload until
         // its AuthorizationExpire — 24 h, set in /api/stream/upload — and then
@@ -242,7 +277,11 @@ export async function uploadFileToStream(uploadInfo, file, onProgress, opts = {}
         // our own guid is not enough: findPreviousUploads would hand the next
         // attempt the same dead URL against a brand-new video object.
         if (gone) await forgetTusUpload(tus, upload);
-        resolve({ ok: false, gone });
+        resolve({
+          ok: false, gone, chunkSize,
+          bytesSent: Math.max(0, lastOffset - (firstOffset || 0)),
+          seconds: (Date.now() - startedAt) / 1000,
+        });
       },
     });
     upload.findPreviousUploads().then(previous => {

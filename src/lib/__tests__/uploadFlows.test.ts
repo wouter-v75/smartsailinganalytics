@@ -115,6 +115,40 @@ describe('the two upload flows', () => {
     expect(rendition.text.slice(put, call)).toContain('} catch')
   })
 
+  it('no TUS upload is left on the tus default chunk size', () => {
+    // tus-js-client 3.x defaults `chunkSize` to Infinity — "the entire file
+    // will be sent in one request". Flow B never set it, so a day's
+    // multi-gigabyte card file went up as ONE PATCH: resumable across
+    // attempts, not resumable inside the request that actually matters, and
+    // the shape most likely to be killed by a proxy or a sleeping laptop.
+    //
+    // It is a default, so its absence has no symptom until a big upload on a
+    // bad link — which is the one case the whole subsystem exists for. Hence a
+    // test: `chunkSize` is passed to tus.Upload, and uploadFileToStream always
+    // has a size to pass whether or not the caller named one.
+    const bunny = files.find((f) => f.path === 'lib/bunny.js')!
+    const tusCall = bunny.text.slice(bunny.text.indexOf('new tus.Upload('))
+    expect(tusCall.slice(0, 400)).toMatch(/\bchunkSize\b/)
+    expect(bunny.text).toContain('chunkSizeFor(')
+
+    // And both callers hand it the measured link rather than letting the
+    // fallback stand in silently.
+    for (const path of ['components/ssa/useCloudSync.js', 'lib/video-rendition-sync.ts']) {
+      const f = files.find((x) => x.path === path)!
+      expect(f.text, `${path} must pass a chunk size or the link it is derived from`)
+        .toMatch(/chunkSize:|uplinkBps:/)
+    }
+  })
+
+  it('both flows take the SAME upload lock, so they cannot halve each other', () => {
+    // One uplink, two flows. An archive copy and a proxy running at once on a
+    // dock link is the difference between one finishing and neither.
+    for (const path of ['components/ssa/useCloudSync.js', 'lib/video-rendition-sync.ts']) {
+      const f = files.find((x) => x.path === path)!
+      expect(f.text, `${path} must serialise its uploads`).toContain('uploadLock.run(')
+    }
+  })
+
   it('nothing in the app writes bunny_stream_id except to FIND an existing row', () => {
     // The legacy column is read-only to the app now. `ensureCloudVideoId` still
     // SENDS it, deliberately — it is how a clip whose local record carries a

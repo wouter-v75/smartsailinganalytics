@@ -33,7 +33,7 @@ import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './b
 import { awaitUplink, uplinkBusy } from './uplinkPriority'
 import { transcodeLock, uploadLock } from './phaseLocks'
 import { chooseStrategy } from './uploadStrategy'
-import { likelyEngine, measuredThroughput, recordEncode, recordUpload } from './uploadStats'
+import { likelyEngine, measuredThroughput, recordEncode, recordUpload, uplinkBps } from './uploadStats'
 import { webCodecsCanEncodeH264 } from './video-proxy'
 // The RESUMABLE path, borrowed from Flow B. See the fallback in putAndFetch.
 import { createStreamUpload, uploadFileToStream, FAST_LADDER } from './bunny'
@@ -294,8 +294,12 @@ async function putAndFetch({
             phase: 'uploading',
             pct: Math.max(0, Math.min(1, (pct || 0) / 100)),
             message: `resumable upload ${pct}%`,
-          }), { resolutions: FAST_LADDER })
+          }), { resolutions: FAST_LADDER, uplinkBps: await uplinkBps().catch(() => null) })
           if (!sent?.ok) throw e
+          // The PUT that got us here already failed, so this transfer is the
+          // only honest measurement of the link in the moment it is bad. Taken
+          // even on failure: bytesSent is what actually moved.
+          if (sent?.bytesSent && sent.seconds) await recordUpload(sent.bytesSent, sent.seconds).catch(() => {})
           return { kind: 'tus', streamId: info.streamId }
         }
       }, () => emit({ phase: 'uploading', pct: 0, message: 'Queued — another clip is uploading' }))

@@ -813,6 +813,43 @@ what reduces the whole question to arithmetic.
 *eventually*. `EnabledResolutions` is settable only on the TUS path, and only
 the request that COMPLETES the upload is read.
 
+**Flow B put a multi-GB archive file up as ONE PATCH.** `tus-js-client` 3.x
+defaults `chunkSize` to **Infinity** — "the entire file will be sent in one
+request" — and Flow B never set it. The resume record made it look resumable,
+and across *attempts* it is, but inside that one request nothing is: a drop at
+90 % loses the transfer, and a single multi-hour request is also the shape most
+likely to be killed by a proxy, a sleeping laptop or the browser itself. Being
+a DEFAULT, its absence has no symptom until a big upload on a bad link — which
+is the one case the whole subsystem exists for — so `uploadFlows.test.ts` now
+asserts a chunk size is passed.
+
+`src/lib/uploadChunk.ts` sizes it from the measured link, and the rule is **a
+chunk should take a few seconds to send** (`TARGET_CHUNK_SECONDS = 5`): too
+small and the upload is latency-bound, a round trip per chunk on the link least
+able to afford round trips; too large and a drop costs more than it needs to
+while progress moves in steps too coarse to tell stalled from slow. Clamped to
+**5 MiB-64 MiB** and aligned to 256 KiB. The floor, the ceiling and the
+alignment are **Cloudflare's** numbers for their own TUS endpoint (5 MiB
+minimum, 50 MiB recommended, 200 MiB refused, multiples of 256 KiB) — Bunny
+documents no such constraints, so they are borrowed and defensive, not
+measured against Bunny. At the London flat's 39.5 Mbit/s it comes out ~24 MiB,
+which lands near **Mux UpChunk's 30 MB default** — reassuring, since the rule
+was derived from "a few seconds" rather than reverse-engineered from the
+number. **With no measurement it takes the FLOOR, not a guess**: an unmeasured
+link is more likely to be bad than good, and a big first chunk on dock wifi is
+the one mistake that cannot be undone cheaply.
+
+**Both flows now take the same `uploadLock`**, so an archive copy and a proxy
+can no longer halve each other's uplink — on a dock link that is the difference
+between one finishing and neither. And `uploadFileToStream` returns
+**`bytesSent`** (what actually moved) with `seconds`, which both callers feed to
+the uplink estimate: these are the biggest transfers the app makes and so the
+best evidence about the link, and Flow A's transcode decision rests on it.
+Measuring the rate off `file.size` instead would report a link several times
+faster than it is on any upload that RESUMED from an offset. The sample is taken
+on failure too, since a transfer that died at 60 % still measured something
+real.
+
 **Bunny Storage cannot resume a PUT.** `uploadBlobToStorage` retries the whole
 file three times with backoff and every attempt restarts from byte zero, so a
 link that drops every few MB never finishes a large clip — measured on field

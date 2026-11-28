@@ -12,6 +12,9 @@ import { getBrowserSupabase } from '../../lib/supabase/browser';
 import { daySyncRefusal } from '../../lib/syncBoatGuard';
 import { sortForUpload } from '../../lib/uploadOrder';
 import { uploadClipProxy } from '../../lib/uploadFlows';
+import { uploadLock } from '../../lib/phaseLocks';
+import { chunkSizeFor, describeChunking } from '../../lib/uploadChunk';
+import { recordUpload, uplinkBps } from '../../lib/uploadStats';
 import { ROLES } from '../ssa/constants';
 import { fmtDate } from '../ssa/format';
 
@@ -202,6 +205,8 @@ export function useCloudSync({
   // (no transcode). Runs only when the user explicitly presses the
   // "Upload originals" button; originals are multi-GB so they are never
   // uploaded automatically.
+  const mbLabel = (b) => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`;
+
   async function processOriginalsQueue(){
     if (originalsSyncRef.current.running) return;
     if (autoSyncRef.current.activePromise) return;        // let proxies finish first
@@ -262,26 +267,52 @@ export function useCloudSync({
             originalsSyncRef.current.done = idx; continue;
           }
 
-          // Resumable TUS upload to Bunny Stream. uploadFileToStream auto-
-          // retries dropped chunks and resumes from localStorage; a hard
-          // failure leaves the pending streamId so the next run continues it.
-          const uploaded = await uploadFileToStream(
-            { streamId },
-            fileForUpload,
-            (pct) => {
-              setMobileSyncState({
-                phase: 'pushing',
-                message: `Uploading HD ${idx}/${total} · ${label}`,
-                progress: pct,
-              });
-            },
-            // This is the archive copy, so it carries the whole ladder. The
-            // FAST path cannot set one — it arrives through videos/fetch, which
-            // takes no encoding options — so its rungs are the LIBRARY default.
-            // Set that to FAST_LADDER in Stream -> library -> Encoding, and the
-            // two paths then ask for exactly what each is for.
-            { resolutions: FULL_LADDER }
+          // CHUNK SIZE from the measured link, before the upload starts. The
+          // default was Infinity — the whole archive file in one PATCH — so
+          // this is the difference between a drop costing one chunk and a drop
+          // costing the morning. See uploadChunk.ts.
+          const linkBps = await uplinkBps().catch(() => null);
+          const chunkBytes = chunkSizeFor({ fileBytes: blob.size, uplinkBps: linkBps });
+          addLog(`⟳ ${label}: ${mbLabel(blob.size)} at full size — ${describeChunking(chunkBytes, linkBps)}`);
+
+          // ONE UPLOAD AT A TIME, across both flows. Flow A takes the same
+          // lock, so an archive copy and a proxy can no longer halve each
+          // other's uplink — which on a dock link is the difference between
+          // one finishing and neither.
+          const uploaded = await uploadLock.run(
+            () => uploadFileToStream(
+              { streamId },
+              fileForUpload,
+              (pct) => {
+                setMobileSyncState({
+                  phase: 'pushing',
+                  message: `Uploading HD ${idx}/${total} · ${label}`,
+                  progress: pct,
+                });
+              },
+              // This is the archive copy, so it carries the whole ladder. The
+              // FAST path cannot set one — it arrives through videos/fetch,
+              // which takes no encoding options — so its rungs are the LIBRARY
+              // default. Set that to FAST_LADDER in Stream -> library ->
+              // Encoding, and the two paths then ask for exactly what each is
+              // for.
+              { resolutions: FULL_LADDER, chunkSize: chunkBytes }
+            ),
+            () => setMobileSyncState({
+              phase: 'pushing',
+              message: `Queued ${idx}/${total} · ${label} — another clip is uploading`,
+              progress: 0,
+            })
           );
+          // These are the BIGGEST transfers the app ever makes, so they are the
+          // best evidence about the link — and Flow A's whole decision rests on
+          // that estimate. A failed upload still measured something real up to
+          // the point it died, so the sample is taken either way. bytesSent is
+          // what moved, not the file size: an upload resuming from 90 % would
+          // otherwise report a link ten times faster than it is.
+          if (uploaded?.bytesSent && uploaded.seconds) {
+            await recordUpload(uploaded.bytesSent, uploaded.seconds).catch(() => {});
+          }
           if (!uploaded.ok) {
             // GONE vs interrupted. An interrupted upload is resumed next run
             // from the guid we kept; an EXPIRED one can only ever answer 404,
@@ -319,6 +350,12 @@ export function useCloudSync({
           setAllVideos(p => p.map(v => v.id === item.videoId
             ? { ...v, hasOriginal: true, originalStreamId: streamId }
             : v));
+          // Flow B used to log only its failures, so a finished archive upload
+          // left no record of how long it took or how much went — the two
+          // things anyone asks afterwards.
+          addLog(`✓ ${label}: full-size original is up (${mbLabel(uploaded.bytesSent || blob.size)}`
+            + `${uploaded.seconds ? ` in ${Math.round(uploaded.seconds)}s` : ''}). `
+            + `Bunny is encoding the full ladder.`);
         } catch (e) {
           console.error('[originals] failed for', item.videoId, e);
           addLog(`✕ ${label}: ${e?.message || 'original upload failed'}`);
