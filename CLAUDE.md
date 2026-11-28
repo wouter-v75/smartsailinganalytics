@@ -885,6 +885,16 @@ Three things hid it, and the third is the one to learn from:
   and every unit test in the repo checked **nothing** about the options. The
   import is typed now, which makes the same mistake a compile error.
 
+**What the fix was worth, measured on the same clip on the same machine
+(28 Nov 2026, M-series MacBook, 60 s of 1080p at 25 Mbit):** software
+**3 MB/s** of source and a **62 s** encode, hardware **25 MB/s** and single
+digits — **8.3×**, inside the 5-20× the comments had been claiming on borrowed
+authority. It also moves the strategy back the other way: the crossover on a
+51 Mbit/s link went from **22 Mbit/s to 191**, so a real clip is proxied again
+rather than sent as-is, which is the right answer once the encode is nearly
+free. Both halves of that behaviour are correct and they look opposite, which
+is why the crossover is printed.
+
 `webCodecsCanEncodeH264()` was never wrong: `VideoEncoder.isConfigSupported`
 genuinely reported a working H.264 encoder. The engine died on its own options
 object, which is why "✓ hardware encoder in this browser" sat beside a software
