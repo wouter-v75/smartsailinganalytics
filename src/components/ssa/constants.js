@@ -10,7 +10,7 @@ const ROLES = {
 const TZ_OPTIONS = [
   { label:"UTC+0  (UTC / UK winter / Portugal summer)", offsetMin: 0   },
   { label:"UTC+1  (CET / BST / UK summer / W.Europe winter)", offsetMin: 60  },
-  { label:"UTC+2  (CEST / Central Europe summer — default)", offsetMin: 120 },
+  { label:"UTC+2  (CEST / Central Europe summer)", offsetMin: 120 },
   { label:"UTC+3  (EEST / Eastern Europe summer)", offsetMin: 180 },
   { label:"UTC-1  (Azores summer)", offsetMin: -60  },
   { label:"UTC-3  (Brazil / Argentina)", offsetMin: -180 },
@@ -18,7 +18,11 @@ const TZ_OPTIONS = [
   { label:"UTC-5  (US Eastern winter / EST)", offsetMin: -300 },
 ];
 
-const DEFAULT_TZ = 120;
+// DEFAULT_TZ is GONE, deliberately. It was 120 — CEST, the SUMMER offset — and
+// being a constant it asserted both a continent and a season. A November day
+// therefore displayed every clip an hour late, and a UK November day two.
+// `defaultTzOffsetMin(sessionDate)` in src/lib/defaultTzOffset.ts replaces it
+// and is DST-correct by construction; a stored session offset still wins.
 
 const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','#34D399','#60A5FA','#A78BFA','#FCD34D'];
 
@@ -29,4 +33,4 @@ const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','
 // caller cannot push into the shared instance.
 const EMPTY=Object.freeze([]);
 
-export { ROLES, TZ_OPTIONS, DEFAULT_TZ, TACK_COLORS, EMPTY };
+export { ROLES, TZ_OPTIONS, TACK_COLORS, EMPTY };

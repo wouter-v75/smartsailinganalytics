@@ -30,7 +30,8 @@ import { webCodecsCanEncodeH264 } from '../lib/video-proxy';
 import { getPref, setPref, WATCH_FOLDER_PREF } from '../lib/prefsStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { SrcBadge } from './ssa/SrcBadge';
-import { DEFAULT_TZ, ROLES, TZ_OPTIONS } from './ssa/constants';
+import { ROLES, TZ_OPTIONS } from './ssa/constants';
+import { defaultTzOffsetMin } from '../lib/defaultTzOffset';
 import { fmtDate, fmtDateTime, fmtSize, fmtT } from './ssa/format';
 import { SyncProgressPanel } from './sync/SyncProgressPanel';
 
@@ -129,9 +130,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const[syncProgress,setSyncProgress]=useState(null);
   const syncTimerRef=useRef(null);
   const syncAbortRef=useRef(false);
-  const[csvTz, setCsvTz] =useState(DEFAULT_TZ);
-  const[xmlTz, setXmlTz] =useState(DEFAULT_TZ);
-  const[vidTz, setVidTz] =useState(DEFAULT_TZ);
+  // This device's own offset TODAY, not a hardcoded +2. The selectors are what
+  // turn a filename's wall clock into a UTC instant, so a default that is an
+  // hour out in winter mis-files every clip imported without touching them.
+  const[csvTz, setCsvTz] =useState(()=>defaultTzOffsetMin());
+  const[xmlTz, setXmlTz] =useState(()=>defaultTzOffsetMin());
+  const[vidTz, setVidTz] =useState(()=>defaultTzOffsetMin());
   // Ref mirror of vidTz so the log-driven auto-tz can re-base already-queued
   // videos without a stale closure (parseCsvWithTz is a deps-[] callback).
   const vidTzRef=useRef(vidTz); useEffect(()=>{vidTzRef.current=vidTz;},[vidTz]);
@@ -1374,7 +1378,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     setPendingVids([]);setCsvParsed(null);setXmlParsed(null);setCsvFile(null);setXmlFile(null);
     setPolarParsed(null);setPolarFile(null);
     setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);
-    setCsvTz(DEFAULT_TZ);setXmlTz(DEFAULT_TZ);setVidTz(DEFAULT_TZ);
+    const tz=defaultTzOffsetMin();setCsvTz(tz);setXmlTz(tz);setVidTz(tz);
   };
 
   // The watch strip, drawn in BOTH views. It used to live inside the import view

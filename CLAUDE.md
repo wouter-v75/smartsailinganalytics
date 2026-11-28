@@ -137,6 +137,42 @@ Markdown → HTML → PDF through headless Google Chrome. Two traps:
 
 ## Traps that have each cost a day
 
+**The default venue offset was CEST — the SUMMER offset — all year.**
+`DEFAULT_TZ = 120` in `ssa/constants.js`, labelled "Central Europe summer —
+default", was what the app assumed whenever a session carried no
+`tz_offset_minutes` and its log no `tzOffset`. Being a constant it asserted two
+things at once: that the venue is Central Europe, and that it is summer. From
+the last Sunday in October to the last Sunday in March the second is false.
+
+Found 28 Nov 2026 on clips whose filenames stamp **12:00 and 12:15**, displayed
+in the Videos tab AND the Timeline as **13:00 and 13:15**. The two tabs
+agreeing is exactly what made it read as a convention rather than a fault — and
+the import was right, reading the filenames at +1 (CET), so the hour appeared
+between storage and display. Away from the Med it is two hours: the UK in
+November is UTC+0. Same trap as `drone:coverage --tz`, whose own note already
+says the venue is not always the Med.
+
+`src/lib/defaultTzOffset.ts` replaces it with **the browser's own offset for
+THAT SESSION'S DATE** — DST-correct by construction, because
+`getTimezoneOffset` asked about a day in November answers for November. The
+reasoning for using the device at all: whoever imports a day's footage is
+almost always at the venue or in a matching zone, the laptop that cut the clips
+being the best available witness to where they were cut; and when it is wrong
+it is wrong LEGIBLY ("my computer is set to London") rather than silently
+asserting a continent and a season. It probes **noon UTC**, so a DST change at
+01:00 local cannot land on the wrong side of itself and a venue within twelve
+hours of UTC stays inside the intended calendar day. A stored session offset
+still wins — callers write `log.tzOffset ?? defaultTzOffsetMin(date)`, in that
+order.
+
+Two smaller things fixed with it. The offset used to be set **only inside
+`if (log)`**, so a day with no log — any video-only day — kept whatever the
+previously-viewed day had left in state, or the hardcoded +2 on a cold start;
+it is now set on every date change. And the Upload tab's three tz selectors
+(`csvTz`/`xmlTz`/`vidTz`) defaulted to +2 as well, which mis-files every clip
+imported without touching them. `DEFAULT_TZ` is **deleted** rather than
+corrected, so nothing can reach for a constant here again.
+
 **Clocks are local wall-time even when something calls them UTC.** The log
 exports' time column, EXIF `DateTimeOriginal`, and Drime's `captured_at` (which
 is literally suffixed `Z`) are all venue-local. Read any of them as UTC and the

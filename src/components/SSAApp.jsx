@@ -30,7 +30,8 @@ import { AdminTab, BoatConfigTab, CampaignTab, PhotosTab, TaggerTab, TimelineTab
 import { SrcBadge } from './ssa/SrcBadge';
 import { TzCtx } from './ssa/TzContext';
 import { RoleCtx } from './ssa/RoleContext';
-import { DEFAULT_TZ, ROLES } from './ssa/constants';
+import { ROLES } from './ssa/constants';
+import { defaultTzOffsetMin } from '../lib/defaultTzOffset';
 import { fmtDate, fmtT } from './ssa/format';
 import { useIsMobile } from './ssa/useIsMobile';
 import { BatchSyncPanel } from './sync/BatchSyncPanel';
@@ -63,7 +64,10 @@ function SSAApp(){
   const [uploadWatching, setUploadWatching] = useState(false);
   const[allVideos,setAllVideos]=useState([]);
   const[logData,setLogData]=useState(null);
-  const[sessionTzOffset,setSessionTzOffset]=useState(DEFAULT_TZ);
+  // Not a constant: the old DEFAULT_TZ was 120 = CEST, the SUMMER offset,
+  // applied all year — so a November day showed every clip an hour late, and a
+  // UK November day two. See src/lib/defaultTzOffset.ts.
+  const[sessionTzOffset,setSessionTzOffset]=useState(()=>defaultTzOffsetMin());
   const[sessionTagList,setSessionTagList]=useState([]);
   const[xmlData,setXmlData]=useState(null);
   const[selectedVideo,setSelectedVideo]=useState(null);
@@ -575,7 +579,12 @@ function SSAApp(){
 
       // Reuse the per-date cache — latestDate was almost always already read above.
       const {log:latestLog,xml:latestXml}=await _getLX(latestDate);
-      if(latestLog){setLogData({...latestLog,source:"local"});setSessionTzOffset(latestLog.tzOffset??DEFAULT_TZ);}
+      if(latestLog){setLogData({...latestLog,source:"local"});}
+      // Set the offset whether or not there is a log. It used to be inside the
+      // `if`, so a day with NO log — every day of synthetic or
+      // video-only material — silently kept whatever the last day left behind,
+      // or the hardcoded +2 on a cold start.
+      setSessionTzOffset(latestLog?.tzOffset??defaultTzOffsetMin(latestDate));
       if(latestXml)setXmlData({...latestXml,source:"local"});
       setActiveDate(latestDate);
       // Tag list — paint from the LOCAL list immediately, then refresh from the
@@ -731,7 +740,7 @@ function SSAApp(){
     // Null when this is a cloud-only day; the background pass fills it in when
     // the download lands.
     setLogData(log?{...log,source:log.source||"local"}:null);
-    if(log)setSessionTzOffset(log.tzOffset??DEFAULT_TZ);
+    setSessionTzOffset(log?.tzOffset??defaultTzOffsetMin(date));
     setXmlData(xml?{...xml,source:xml.source||"local"}:null);
 
     // Self-heal sync state against the cloud manifest, then refresh the unsynced
@@ -881,7 +890,7 @@ function SSAApp(){
         }
         if(loadDateSeqRef.current!==loadSeq) return; // superseded by a newer loadDate
 
-        if(logChanged && log){ setLogData({...log,source:log.source||"cloud"}); setSessionTzOffset(log.tzOffset??DEFAULT_TZ); }
+        if(logChanged && log){ setLogData({...log,source:log.source||"cloud"}); setSessionTzOffset(log.tzOffset??defaultTzOffsetMin(date)); }
         if(xmlChanged && xml){ setXmlData({...xml,source:xml.source||"cloud"}); }
 
         // Auto-build this day's Timeline Tree (needs xml) — best-effort, persists
