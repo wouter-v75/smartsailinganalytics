@@ -1219,7 +1219,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           return;
         }
         setItem(v.id,{state:"processing",pct:1,phase:"",encodePct:0,uploadPct:0,note:"preparing…"});
-        let lastPhase="", tEnc=0, tUp=0, engine="", strategy="";
+        let lastPhase="", tEnc=0, tUp=0, engine="", strategy="", fellBack=false;
         const res=await uploadClipProxy({
           video:v,
           sessionDate:savedDate,
@@ -1237,6 +1237,14 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             // was logged as "encoding to 720p…" — which is the kind of small
             // untruth that makes a log useless for working out where time went.
             if(pr.engine) engine=pr.engine;
+            // A 5-20× slowdown, named at the moment it happens. It was already
+            // being captured — into console.warn, in a console nobody had open
+            // — so the symptom was "the upload is slow today" and the cause was
+            // unreachable.
+            if(pr.fallbackReason&&!fellBack){
+              fellBack=true;
+              addLog(`[${at()}] ⚠ ${label} — the hardware encoder failed, using SOFTWARE (5-20× slower): ${pr.fallbackReason}`);
+            }
             // Announced once, before any work: which route this clip is taking
             // and why. The reason is the useful half — "the link is faster than
             // the encoder (~4s against ~19s)" is something you can disagree

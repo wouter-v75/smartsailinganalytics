@@ -141,3 +141,46 @@ describe('likelyEngine — what will actually run, not what is allowed', () => {
     expect(m.lastEngine).toBe('webcodecs')
   })
 })
+
+describe('a remembered engine does not outlive the code that learned it', () => {
+  // likelyEngine trusts the remembered engine OVER the capability probe, which
+  // is right while the code is unchanged: the fallback is silent, so a probe
+  // saying "hardware" on a device that always falls back is optimistic by
+  // 5-20× in the one direction that skips a proxy the link needed.
+  //
+  // It is wrong the moment the engine itself is fixed. On 28 Nov 2026 the
+  // WebCodecs path was repaired after never once having run, and every device
+  // still remembered `ffmpeg` at 3 MB/s — which on a 50 Mbit link says "send
+  // it as it is", so the fix would have reached nobody. The version is what
+  // lets a device find out for itself again.
+
+  it('ignores a record from an older pipeline version', async () => {
+    const { PROXY_PIPELINE_VERSION } = await import('../video-proxy')
+    store.set('lastTranscodeEngine', { engine: 'ffmpeg', v: PROXY_PIPELINE_VERSION - 1 })
+    forgetCachedStats()
+    expect(await likelyEngine(true)).toBe('webcodecs')   // back to the probe
+    expect((await measurementSummary()).lastEngine).toBeNull()
+  })
+
+  it('ignores a BARE STRING — the shape written before versions existed', async () => {
+    // This is what is actually on every device in the field today.
+    store.set('lastTranscodeEngine', 'ffmpeg')
+    forgetCachedStats()
+    expect(await likelyEngine(true)).toBe('webcodecs')
+  })
+
+  it('still trusts a record from the current version', async () => {
+    const { PROXY_PIPELINE_VERSION } = await import('../video-proxy')
+    store.set('lastTranscodeEngine', { engine: 'ffmpeg', v: PROXY_PIPELINE_VERSION })
+    forgetCachedStats()
+    expect(await likelyEngine(true)).toBe('ffmpeg')      // the probe is overruled
+  })
+
+  it('recordEngine writes the versioned shape', async () => {
+    const { PROXY_PIPELINE_VERSION } = await import('../video-proxy')
+    await recordEncode(50 * 1024 * 1024, 4, 'webcodecs')
+    expect(store.get('lastTranscodeEngine')).toEqual({
+      engine: 'webcodecs', v: PROXY_PIPELINE_VERSION,
+    })
+  })
+})

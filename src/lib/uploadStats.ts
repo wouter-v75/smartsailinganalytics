@@ -25,6 +25,7 @@
 
 import { getPref, setPref } from './prefsStore'
 import { addSample, estimate, usableSample, type Ewma } from './uploadStrategy'
+import { PROXY_PIPELINE_VERSION } from './video-proxy'
 
 export type Engine = 'webcodecs' | 'ffmpeg'
 
@@ -74,7 +75,12 @@ export async function recordEncode(sourceBytes: number, seconds: number, engine?
   // Remember WHICH engine ran even when the sample itself is too small to
   // learn a rate from — the fallback having happened at all is the fact that
   // matters most for the next prediction.
-  try { await setPref(LAST_ENGINE_KEY, engine) } catch { /* optimisation only */ }
+  // Stamped with the pipeline version that produced it — see
+  // PROXY_PIPELINE_VERSION. A remembered engine from older code is worse than
+  // no memory at all, because it is trusted over the probe.
+  try {
+    await setPref(LAST_ENGINE_KEY, { engine, v: PROXY_PIPELINE_VERSION })
+  } catch { /* optimisation only */ }
   if (!usableSample(sourceBytes, seconds)) return
   await write(ENCODE_KEY(engine), addSample(await read(ENCODE_KEY(engine)), sourceBytes / seconds))
 }
@@ -100,11 +106,28 @@ export async function encodeBps(engine: Engine): Promise<number | null> {
  * device that has never transcoded anything.
  */
 export async function likelyEngine(probeSaysHardware: boolean): Promise<Engine> {
+  const last = await rememberedEngine()
+  if (last) return last
+  return probeSaysHardware ? 'webcodecs' : 'ffmpeg'
+}
+
+/**
+ * The engine this device last used, or null if there is nothing to trust.
+ *
+ * A bare string is a pre-versioned record, written before the pipeline carried
+ * a version, and is DISCARDED — those are the devices that remember falling
+ * back to software from code that could never have done anything else.
+ */
+async function rememberedEngine(): Promise<Engine | null> {
   try {
     const last = await getPref(LAST_ENGINE_KEY)
-    if (last === 'ffmpeg' || last === 'webcodecs') return last
-  } catch { /* fall through to the probe */ }
-  return probeSaysHardware ? 'webcodecs' : 'ffmpeg'
+    if (last && typeof last === 'object') {
+      const { engine, v } = last as { engine?: unknown; v?: unknown }
+      if (v !== PROXY_PIPELINE_VERSION) return null
+      if (engine === 'ffmpeg' || engine === 'webcodecs') return engine
+    }
+  } catch { /* nothing to trust */ }
+  return null
 }
 
 /** Everything the strategy needs, for the engine that WILL run on this device. */
@@ -124,11 +147,7 @@ export async function measurementSummary(): Promise<{
   lastEngine: Engine | null
 }> {
   const [u, hw, sw] = await Promise.all([uplinkBps(), encodeBps('webcodecs'), encodeBps('ffmpeg')])
-  let lastEngine: Engine | null = null
-  try {
-    const v = await getPref(LAST_ENGINE_KEY)
-    if (v === 'ffmpeg' || v === 'webcodecs') lastEngine = v
-  } catch { /* nothing learned */ }
+  const lastEngine = await rememberedEngine()
   return { uplinkBps: u, hardwareBps: hw, softwareBps: sw, lastEngine }
 }
 

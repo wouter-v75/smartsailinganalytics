@@ -30,6 +30,19 @@ export interface ProxyProgress {
   engine?: 'webcodecs' | 'ffmpeg'
   /** Status line, useful for diagnostics / the progress UI. */
   message?: string
+  /**
+   * Why the hardware engine was abandoned, reported once as the software
+   * engine takes over.
+   *
+   * THE REASON THIS EXISTS. The fallback is silent by design — a clip that
+   * encodes slowly is better than a clip that fails — but silence turned a
+   * 5-20× slowdown into something nobody could see. On 28 Nov 2026 a 60 s
+   * 1080p clip took 62 SECONDS to encode at 3 MB/s of source on a Mac whose
+   * own probe reports a working hardware encoder, and the only record of why
+   * was a console.warn in a browser console nobody had open. Every clip this
+   * app has ever made may have gone this way.
+   */
+  fallbackReason?: string
 }
 
 export interface GenerateProxyArgs {
@@ -109,16 +122,59 @@ export function webCodecsCanEncodeH264(): Promise<boolean> {
   return webCodecsProbe
 }
 
+/**
+ * Where the moov atom goes — the difference between a progressive MP4 and one
+ * a player must download in full before it can start.
+ *
+ * IT WAS `'in-place'`, WHICH IS NOT A VALUE MEDIABUNNY ACCEPTS. It takes
+ * `false | 'in-memory' | 'reserve' | 'fragmented'` and throws a TypeError on
+ * anything else — from the Mp4OutputFormat CONSTRUCTOR, before a frame is
+ * read. generateProxy catches that and falls back to ffmpeg.wasm, so the
+ * hardware engine had never once run: every proxy this app has ever made was
+ * software, 5-20× slower, and the only trace was a console.warn. Measured on
+ * 28 Nov 2026: 62 s of CPU for a 60 s clip, at 3 MB/s of source.
+ *
+ * `'in-memory'` is the right one here and costs nothing extra, because the
+ * target is a BufferTarget — the whole output is already held in memory.
+ * `'reserve'` needs the size up front and `'fragmented'` produces fMP4, which
+ * is a different file for no gain when the bytes are buffered anyway.
+ *
+ * Exported so a test can hand the real value to the real library. The bug
+ * survived because `mb: any` meant tsc checked none of this.
+ */
+export const PROXY_FAST_START = 'in-memory' as const
+
+/**
+ * Bumped whenever a change could alter WHICH ENGINE runs or how fast it runs.
+ *
+ * uploadStats remembers the engine that last ran and trusts it over the
+ * capability probe, which is right — the fallback is silent, so a probe saying
+ * "hardware" on a device that always falls back would be optimistic by 5-20×
+ * in the one direction that skips a proxy the link needed.
+ *
+ * But that memory outlives the code. On 28 Nov 2026 the hardware engine was
+ * fixed after never once having run, and every existing device still
+ * remembered `ffmpeg` at 3 MB/s — which on a 50 Mbit link says "send it as it
+ * is" and so would never retry the engine that had just been repaired. The fix
+ * would have shipped to nobody.
+ *
+ * So the remembered engine carries the version it was learned under and is
+ * ignored when that does not match, falling back to the probe and letting the
+ * next clip find out for itself. Same pattern as SAILTRIM_VERSION, for the
+ * same reason: a stored measurement is only as good as the code that made it.
+ *
+ * 2 — fastStart fixed; the WebCodecs engine can run for the first time.
+ */
+export const PROXY_PIPELINE_VERSION = 2
+
 async function generateProxyWebCodecs({
   source,
   onProgress,
   signal,
 }: GenerateProxyArgs): Promise<ProxyResult> {
-  // Mediabunny is an optional/lazy dependency — bundled once installed via
-  // `npm install`. The ts-ignore keeps the sandbox typecheck green before the
-  // package lands; the bundler resolves the literal specifier at build time.
-  // @ts-ignore — resolved at build time once `mediabunny` is installed
-  const mb: any = await import('mediabunny')
+  // Mediabunny is a lazy import so it code-splits out of the main bundle. It
+  // is TYPED, deliberately: the `any` that used to be here is what let an
+  // invalid fastStart through every check this repo runs.
   const {
     Input,
     Output,
@@ -127,15 +183,14 @@ async function generateProxyWebCodecs({
     BlobSource,
     BufferTarget,
     Mp4OutputFormat,
-  } = mb
+  } = await import('mediabunny')
 
   const input = new Input({
     formats: ALL_FORMATS,
     source: new BlobSource(source),
   })
   const output = new Output({
-    // faststart 'in-place' → moov atom at the front → streamable.
-    format: new Mp4OutputFormat({ fastStart: 'in-place' }),
+    format: new Mp4OutputFormat({ fastStart: PROXY_FAST_START }),
     target: new BufferTarget(),
   })
 
@@ -366,6 +421,14 @@ export async function generateProxy(
         e?.message || e
       )
       webCodecsReason = e?.message || String(e)
+      // Say it where someone will see it. console.warn above is for a
+      // developer with the console open; this reaches the upload log.
+      args.onProgress?.({
+        progress: 0,
+        engine: 'ffmpeg',
+        message: 'falling back to the software encoder',
+        fallbackReason: webCodecsReason || 'unknown',
+      })
     }
   }
   // If the fallback ALSO fails, surface both reasons — otherwise the ffmpeg error

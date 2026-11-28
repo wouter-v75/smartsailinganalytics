@@ -867,6 +867,46 @@ is a single instance with one virtual filesystem, so two at once would write
 each other's files. Queue depth 2, because each clip waiting to upload holds a
 ~20 MB proxy in memory.
 
+**THE HARDWARE ENCODER HAD NEVER RUN — ONCE — AND THE PROBE SAID IT WAS
+WORKING.** `generateProxyWebCodecs` passed `fastStart: 'in-place'` to
+mediabunny's `Mp4OutputFormat`, and that is **not a value mediabunny accepts**:
+it takes `false | 'in-memory' | 'reserve' | 'fragmented'` and throws a
+TypeError **from the constructor**, before a frame is read. `generateProxy`
+catches any throw from the fast engine and falls back to ffmpeg.wasm, by
+design — a slow clip beats a failed one — so every proxy this app has ever
+made was **software**. Measured 28 Nov 2026: **62 s of CPU for a 60 s 1080p
+clip, 3 MB/s of source**, where hardware should do 20-30.
+
+Three things hid it, and the third is the one to learn from:
+- the fallback is SILENT on purpose;
+- the only record was a `console.warn`, in a console nobody had open;
+- the module was imported as **`mb: any` behind a `@ts-ignore`** ("resolved at
+  build time once mediabunny is installed" — it was installed), so tsc, eslint
+  and every unit test in the repo checked **nothing** about the options. The
+  import is typed now, which makes the same mistake a compile error.
+
+`webCodecsCanEncodeH264()` was never wrong: `VideoEncoder.isConfigSupported`
+genuinely reported a working H.264 encoder. The engine died on its own options
+object, which is why "✓ hardware encoder in this browser" sat beside a software
+transcode for the life of the feature. `PROXY_FAST_START` is exported and
+`proxyFastStart.test.ts` hands the real value to the real library — a mocked
+mediabunny would have passed throughout.
+
+**A device REMEMBERS the engine that ran, so the fix needed a version to
+reach anybody.** `likelyEngine` trusts the remembered engine over the probe,
+rightly — a silent fallback makes the probe optimistic by 5-20× in the one
+direction that skips a proxy the link needed. But the memory outlives the code:
+every device still held `ffmpeg` at 3 MB/s, which on a 50 Mbit link says "send
+it as it is", so the repaired engine would never have been tried.
+**`PROXY_PIPELINE_VERSION`** is stamped on the record and a mismatch discards
+it (a bare string, the pre-version shape, is discarded too) — same pattern and
+same reason as `SAILTRIM_VERSION`. Bump it for any change that could alter
+which engine runs or how fast.
+
+**And the fallback REASON now reaches the upload log** (`fallbackReason` on
+ProxyProgress → RenditionProgress → a ⚠ line). The symptom used to be "the
+upload is slow today" with the cause unreachable.
+
 **Nothing is installed for any of this**, which is why **Check this device** (in
 the Upload tab) exists: the encoder is either the browser's own hardware one or
 a runtime download from unpkg.com, and no folder has to exist. Only the absence

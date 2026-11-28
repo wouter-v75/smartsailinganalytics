@@ -75,6 +75,9 @@ export interface RenditionProgress {
   message?: string
   /** Which transcode engine ran — hardware or the software fallback. */
   engine?: 'webcodecs' | 'ffmpeg'
+  /** Why the hardware engine was abandoned. Worth a line in the log: it is a
+   *  5-20× slowdown that otherwise shows up only as a slow day. */
+  fallbackReason?: string
   /**
    * Which route this clip is taking, announced once before any work starts.
    * 'direct' means the file is going up as it is because the link is faster
@@ -478,6 +481,7 @@ export async function syncProxyForVideo({
             pct: pp.progress,
             message: pp.message,
             engine: pp.engine,
+            fallbackReason: pp.fallbackReason,
           })
         },
       }), () => emit({ phase: 'transcoding', pct: 0,
