@@ -150,8 +150,24 @@ async function main() {
   const rows = (data || []) as unknown as Row[]
   const lib = settled[1].value
 
+  // Bytes are in Stream. Enough to say a copy EXISTS and is not an abandoned
+  // TUS stub, which is what the A/B delivery lines are asking.
   const liveGuid = (g: string | null | undefined) =>
     !!g && (lib.get(g)?.storageSize || 0) > 0
+  /**
+   * Bytes in Stream AND the ladder finished — Bunny status 4.
+   *
+   * Not the same question, and conflating them made this script over-report.
+   * `resolveOriginalHls` and `resolveProxy` both return null while an encode is
+   * pending and fall through to the Storage MP4, so a fresh upload is served
+   * progressive while the script was naming HLS. Harmless there, but the same
+   * gap hides a real failure: a row whose Stream video never finishes encoding
+   * and has no Storage path serves NOTHING, and this script would have called
+   * it `originalHls` and `playable ✓`. Bunny's free queue "may take anywhere
+   * from several hours to multiple days", so that is not a hypothetical.
+   */
+  const encodedGuid = (g: string | null | undefined) =>
+    liveGuid(g) && lib.get(g!)?.status === 4
   const realPath = (p: string | null | undefined) => !!p && /\.mp4$/i.test(p)
 
   console.log(`${date}: ${rows.length} clip row(s)${boatName ? ` on ${boatName}` : ''}` +
@@ -164,11 +180,13 @@ async function main() {
     const B = liveGuid(r.bunny_original_stream_id) || realPath(r.bunny_original_path)
 
     // What a player is actually handed — the app's own order over what EXISTS.
+    // Each step gated the way the ROUTE gates it: an HLS step needs a finished
+    // ladder, an MP4 step needs an object.
     const exists: Record<string, boolean> = {
-      originalHls: liveGuid(r.bunny_original_stream_id),
-      proxy: liveGuid(r.bunny_proxy_stream_id) || realPath(r.bunny_proxy_path),
+      originalHls: encodedGuid(r.bunny_original_stream_id),
+      proxy: encodedGuid(r.bunny_proxy_stream_id) || realPath(r.bunny_proxy_path),
       originalMp4: realPath(r.bunny_original_path),
-      legacyStream: liveGuid(r.bunny_stream_id),
+      legacyStream: encodedGuid(r.bunny_stream_id),
       legacy: realPath(r.bunny_storage_path),
     }
     const served = renditionOrder('auto').find((s) => exists[s]) || null
@@ -207,6 +225,18 @@ async function main() {
       `   ${r.bunny_original_stream_id ? `stream ${r.bunny_original_stream_id.slice(0, 8)}${liveGuid(r.bunny_original_stream_id) ? '✓' : '✕'}` : ''}` +
       `${r.bunny_original_path ? `  path ${realPath(r.bunny_original_path) ? '✓' : '✕'}` : ''}`)
     console.log(`   a player gets: ${served || '✕ NOTHING — every locator on this row is empty or dead'}`)
+    // Name a ladder still being built, so "serves the MP4" is not read as a
+    // fault. Bunny's free queue can take hours to days, and until it finishes
+    // the Storage copy is the ONLY thing standing between the team and a
+    // blank player — which is the whole reason the upload puts one there.
+    for (const [which, guid] of [
+      ['proxy', r.bunny_proxy_stream_id], ['original', r.bunny_original_stream_id],
+    ] as [string, string | null][]) {
+      if (liveGuid(guid) && lib.get(guid!)?.status !== 4) {
+        console.log(`   · the ${which} ladder is still encoding on Bunny ` +
+          `(status ${lib.get(guid!)?.status}) — the Storage MP4 is carrying playback`)
+      }
+    }
     if (viaRemovedFlow) {
       console.log(`   ⚠ delivered ONLY by the upload flow removed in 70dc9ba — it plays, but`)
       console.log(`     nothing in the app can produce this any more. A warm browser bundle is`)
